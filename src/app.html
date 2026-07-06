@@ -1,7 +1,15 @@
 <!doctype html>
-<html lang="en" data-theme="%delightmail.theme%">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
+		<script>
+			// Flash-free theme: apply the saved preference before first paint.
+			try {
+				const t = localStorage.getItem('dm-theme') || 'system';
+				const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+				document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+			} catch (e) {}
+		</script>
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
 		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />

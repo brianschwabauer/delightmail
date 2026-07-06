@@ -3,10 +3,12 @@
  * shares the org/session guard. Handlers are added per-phase.
  */
 import type { Handle, RequestEvent } from '@sveltejs/kit';
+import { dev } from '$app/environment';
 import { DelightError } from '@delightstack/utilities';
 import { handleGoogleStart, handleGoogleCallback } from './accounts';
 import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
+import { handleDevSeed } from './dev-seed';
 
 export function createMailHandle(): Handle {
 	return async ({ event, resolve }) => {
@@ -56,6 +58,11 @@ async function route(event: RequestEvent): Promise<Response> {
 		return handleThreadActions(event);
 	}
 
+	// --- dev-only seed (never reachable in production) ---
+	if (dev && pathname === '/api/dev/seed' && method === 'POST') {
+		return handleDevSeed(event);
+	}
+
 	return new DelightError({
 		message: `Not implemented yet: ${method} ${pathname}`,
 		status: 501,
@@ -71,6 +78,7 @@ const MAIL_PREFIXES = [
 	'/api/unsubscribe/',
 	'/api/push/',
 	'/api/triage/',
+	'/api/dev/',
 ];
 
 function isMailRoute(pathname: string): boolean {

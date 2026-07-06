@@ -8,8 +8,10 @@
 	interface Props {
 		messageId: string;
 		excerpt: string;
+		/** Whether the message has a stored HTML body (else render the excerpt). */
+		hasHtml?: boolean;
 	}
-	const { messageId, excerpt }: Props = $props();
+	const { messageId, excerpt, hasHtml = false }: Props = $props();
 
 	let iframe = $state<HTMLIFrameElement>();
 	let frameHeight = $state(120);
@@ -28,8 +30,8 @@
 	}
 </script>
 
-{#if failed}
-	<pre class="excerpt">{excerpt}</pre>
+{#if failed || !hasHtml}
+	<pre class="excerpt">{excerpt || '(no content)'}</pre>
 {:else}
 	<iframe
 		bind:this={iframe}

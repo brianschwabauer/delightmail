@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Message } from '$lib/schema';
 	import MessageBody from './MessageBody.svelte';
@@ -9,53 +10,63 @@
 	}
 	const { db, threadId }: Props = $props();
 
-	// Live messages for the open thread, oldest first.
-	const messages = $derived(
-		threadId
-			? db.search('message', {
-					where: { thread_id: threadId },
-					order: [{ key: 'date', direction: 'ASC' }],
-					limit: 200,
-				})
-			: null,
-	);
+	// Reactive query function — the search re-queries when the open thread changes.
+	const messages = db.search('message', () => ({
+		where: { thread_id: threadId ?? '' },
+		order: [{ key: 'date', direction: 'ASC' }],
+		limit: 200,
+	}));
 
-	const docs = $derived((messages?.docs ?? []) as Message[]);
+	const docs = $derived(threadId ? ((messages.docs ?? []) as Message[]) : []);
+	const latestId = $derived(docs.length ? docs[docs.length - 1].id : null);
 
-	// Which messages are expanded — latest expanded by default.
-	let expanded = $state<Set<string>>(new Set());
-	let lastThread = $state<string | null>(null);
+	// Expansion: latest message open by default, plus explicit user toggles.
+	// Reset the overrides when the open thread changes (untracked to avoid loops).
+	let overrides = $state<Map<string, boolean>>(new Map());
+	let currentThread = $state<string | null>(null);
 	$effect(() => {
-		if (threadId !== lastThread) {
-			lastThread = threadId;
-			const next = new Set<string>();
-			if (docs.length) next.add(docs[docs.length - 1].id);
-			expanded = next;
-			// Mark the thread read on open (optimistic).
-			markRead();
+		const t = threadId;
+		if (t !== untrack(() => currentThread)) {
+			untrack(() => {
+				currentThread = t;
+				overrides = new Map();
+			});
 		}
 	});
 
-	async function markRead() {
-		if (!threadId) return;
-		for (const m of docs) {
-			if (!m.is_read) {
-				try {
-					const e = db.entity('message', m.id);
-					await e.load();
-					await e.save({ is_read: true });
-				} catch {
-					/* ignore */
-				}
-			}
-		}
+	function isExpanded(id: string): boolean {
+		return overrides.has(id) ? overrides.get(id)! : id === latestId;
+	}
+	function toggle(id: string) {
+		const next = new Map(overrides);
+		next.set(id, !isExpanded(id));
+		overrides = next;
 	}
 
-	function toggle(id: string) {
-		const next = new Set(expanded);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		expanded = next;
+	// Mark unread messages read on open. Guarded to run once per thread so the
+	// save→re-query→effect cycle can't thrash the reactive engine.
+	let markedThread = $state<string | null>(null);
+	$effect(() => {
+		const tid = threadId;
+		if (!tid || docs.length === 0) return;
+		if (untrack(() => markedThread) === tid) return;
+		const unread = docs.filter((m) => !m.is_read);
+		untrack(() => {
+			markedThread = tid;
+			if (unread.length) void markRead(unread);
+		});
+	});
+
+	async function markRead(unread: Message[]) {
+		for (const m of unread) {
+			try {
+				const e = db.entity('message', m.id);
+				await e.load();
+				await e.save({ is_read: true });
+			} catch {
+				/* ignore */
+			}
+		}
 	}
 
 	function who(m: Message): string {
@@ -72,7 +83,7 @@
 	<article class="thread">
 		<h1 class="subject">{docs[0]?.subject || '(no subject)'}</h1>
 		{#each docs as m (m.id)}
-			<section class="message" class:collapsed={!expanded.has(m.id)}>
+			<section class="message" class:collapsed={!isExpanded(m.id)}>
 				<button class="msg-head" onclick={() => toggle(m.id)}>
 					<span class="avatar" aria-hidden="true">{who(m).charAt(0).toUpperCase()}</span>
 					<span class="meta">
@@ -81,8 +92,11 @@
 					</span>
 					<span class="date">{fmt(m.date)}</span>
 				</button>
-				{#if expanded.has(m.id)}
-					<MessageBody messageId={m.id} excerpt={m.text_excerpt ?? ''} />
+				{#if isExpanded(m.id)}
+					<MessageBody
+						messageId={m.id}
+						excerpt={m.text_excerpt ?? ''}
+						hasHtml={!!m.body_keys?.html} />
 				{:else}
 					<div class="snippet">{m.text_excerpt?.slice(0, 140) ?? ''}</div>
 				{/if}

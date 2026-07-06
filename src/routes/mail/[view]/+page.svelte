@@ -1,15 +1,19 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, onMount, untrack } from 'svelte';
 	import { viewToQuery, viewTitle } from '$lib/mail/views';
+	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
+	import { useActions } from '$lib/mail/actions-client.svelte';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
 	import type { Thread } from '$lib/schema';
+	import type { ThreadActionName } from '$lib/mail/actions';
 
 	const { data } = $props();
 	const { db, view } = $derived(data);
 
 	const kb = useKeyboard();
+	const actions = useActions();
 
 	// --- search (/) and filter (f) state ---
 	let searching = $state(false);
@@ -20,16 +24,25 @@
 	let searchInput = $state<HTMLInputElement>();
 	let filterInput = $state<HTMLInputElement>();
 
-	const query = $derived(
+	// Pass a REACTIVE query function — the search class re-queries automatically
+	// when its reactive deps (view / search state) change. (Recreating the search
+	// or setting `.query` in an effect fights the class's own reactivity.)
+	const results = db.search('thread', () =>
 		searching && searchTerm
 			? { ...viewToQuery(searchScope === 'all' ? 'search' : view), term: searchTerm, limit: 200 }
 			: viewToQuery(view),
 	);
-	const results = $derived(db.search('thread', query));
 
-	// Client-only yazi filter over the loaded docs.
+	// Apply the optimistic action overlay (hidden threads + flag patches), then
+	// the client-only yazi filter over the loaded docs.
 	const docs = $derived.by(() => {
-		const all = (results.docs ?? []) as Thread[];
+		let all = (results.docs ?? []) as Thread[];
+		all = all
+			.filter((t) => !actions.isRemoved(t.id))
+			.map((t) => {
+				const patch = actions.patchFor(t.id);
+				return patch ? ({ ...t, ...patch } as Thread) : t;
+			});
 		if (!filtering || !filterText.trim()) return all;
 		const q = filterText.toLowerCase();
 		return all.filter(
@@ -43,10 +56,17 @@
 	let cursor = $state(0);
 	let selected = $state<Set<string>>(new Set());
 	let openId = $state<string | null>(null);
+	let density = $state<Density>('comfortable');
+	onMount(() => (density = currentDensity()));
 
 	$effect(() => {
-		// Clamp cursor when the list changes.
-		if (cursor >= docs.length) cursor = Math.max(0, docs.length - 1);
+		// Clamp cursor when the list shrinks. Depend on length only; read/write
+		// cursor untracked so the effect never loops on its own write.
+		const len = docs.length;
+		untrack(() => {
+			const max = Math.max(0, len - 1);
+			if (cursor > max) cursor = max;
+		});
 	});
 
 	const title = $derived(viewTitle(view));
@@ -66,6 +86,38 @@
 		if (next.has(t.id)) next.delete(t.id);
 		else next.add(t.id);
 		selected = next;
+	}
+	function selectAndMove(delta: number) {
+		toggleSelect();
+		move(delta);
+	}
+
+	/** The threads an action targets: the selection, or the cursor thread. */
+	function targets(): Thread[] {
+		if (selected.size) return docs.filter((t) => selected.has(t.id));
+		const t = docs[cursor];
+		return t ? [t] : [];
+	}
+
+	// Toggle direction is decided by the first target's current state.
+	function starTarget(): ThreadActionName {
+		return targets()[0]?.starred ? 'unstar' : 'star';
+	}
+	function readTarget(): ThreadActionName {
+		return (targets()[0]?.unread_count ?? 0) > 0 ? 'read' : 'unread';
+	}
+
+	async function act(action: ThreadActionName, opts: { folder?: string } = {}) {
+		const ts = targets();
+		if (!ts.length) return;
+		const isOut = ['archive', 'trash', 'delete', 'spam', 'move'].includes(action);
+		await actions.apply(ts, action, opts);
+		selected = new Set();
+		// Auto-advance past a removed cursor thread.
+		if (isOut) {
+			if (openId && ts.some((t) => t.id === openId)) openId = null;
+			cursor = Math.min(cursor, Math.max(0, docs.length - 1));
+		}
 	}
 
 	async function startSearch() {
@@ -88,7 +140,10 @@
 	}
 
 	// --- keyboard bindings (list context) ---
-	$effect(() => {
+	// onMount, NOT $effect: pushContext reads+writes the context-stack $state,
+	// which would loop inside a tracked effect. The binding handlers close over
+	// the live reactive state, so registering once is correct.
+	onMount(() => {
 		kb.pushContext('list');
 		const off = kb.registerAll([
 			{ keys: 'j', description: 'Next', group: 'List', context: 'list', handler: () => move(1) },
@@ -107,6 +162,14 @@
 			{ keys: 'h', description: 'Close thread', group: 'List', context: 'list', handler: () => (openId = null) },
 			{ keys: 'ArrowLeft', description: 'Close thread', group: 'List', context: 'list', handler: () => (openId = null) },
 			{ keys: 'x', description: 'Select / deselect', group: 'List', context: 'list', handler: toggleSelect },
+			{ keys: 'Shift+j', description: 'Select and move down', group: 'List', context: 'list', handler: () => selectAndMove(1) },
+			{ keys: 'Shift+k', description: 'Select and move up', group: 'List', context: 'list', handler: () => selectAndMove(-1) },
+			{ keys: 'a', description: 'Archive', group: 'Actions', context: 'list', handler: () => act('archive') },
+			{ keys: 'd', description: 'Trash', group: 'Actions', context: 'list', handler: () => act('trash') },
+			{ keys: 'D', description: 'Delete forever', group: 'Actions', context: 'list', handler: () => act('delete') },
+			{ keys: 's', description: 'Toggle star', group: 'Actions', context: 'list', handler: () => act(starTarget()) },
+			{ keys: 'u', description: 'Toggle read/unread', group: 'Actions', context: 'list', handler: () => act(readTarget()) },
+			{ keys: '!', description: 'Mark spam', group: 'Actions', context: 'list', handler: () => act('spam') },
 			{ keys: '/', description: 'Search', group: 'List', context: 'list', handler: startSearch },
 			{ keys: 'f', description: 'Filter loaded list', group: 'List', context: 'list', handler: startFilter },
 			{ keys: 'Escape', description: 'Close / clear', group: 'List', context: 'list', global: true, handler: () => {
@@ -164,6 +227,7 @@
 			docs={docs}
 			{cursor}
 			{selected}
+			{density}
 			loading={results.loading}
 			onOpen={(i) => {
 				cursor = i;
