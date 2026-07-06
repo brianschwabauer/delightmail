@@ -1,0 +1,52 @@
+{
+	"name": "delightmail",
+	"version": "0.1.0",
+	"description": "A keyboard-first, ad-free, self-hostable email client on Cloudflare.",
+	"type": "module",
+	"license": "MIT",
+	"private": true,
+	"scripts": {
+		"dev": "vite dev --port 5174",
+		"dev:worker": "cd server && wrangler dev --config wrangler.toml --persist-to ./../.wrangler/state",
+		"build": "vite build",
+		"preview": "vite preview",
+		"deploy": "wrangler deploy",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"secrets": "node scripts/put-secrets.mjs"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20260401.1",
+		"@sveltejs/adapter-cloudflare": "^7.2.8",
+		"@sveltejs/kit": "^2.55.0",
+		"@sveltejs/vite-plugin-svelte": "^6.2.1",
+		"@types/cookie": "^0.6.0",
+		"svelte": "^5.55.1",
+		"svelte-check": "^4.1.0",
+		"typescript": "^5.9.3",
+		"vite": "^7.3.1",
+		"vitest": "^4.1.2",
+		"wrangler": "^4.79.0"
+	},
+	"dependencies": {
+		"@delightstack/ai": "^1.0.0",
+		"@delightstack/auth": "^1.0.0",
+		"@delightstack/components": "^1.0.0",
+		"@delightstack/database": "^1.0.0",
+		"@delightstack/editor": "^1.0.0",
+		"@delightstack/images": "^1.0.0",
+		"@delightstack/rate-limiter": "^1.0.0",
+		"@delightstack/styles": "^1.0.0",
+		"@delightstack/utilities": "^1.0.0",
+		"@delightstack/websocket": "^1.0.0",
+		"hast-util-sanitize": "^5.0.2",
+		"hast-util-to-html": "^9.0.4",
+		"mimetext": "^3.0.24",
+		"postal-mime": "^2.4.3",
+		"rehype-parse": "^9.0.1",
+		"unified": "^11.0.5",
+		"zod": "^4.3.6",
+		"worker-mailer": "^1.0.4"
+	}
+}

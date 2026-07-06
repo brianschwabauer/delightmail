@@ -1,0 +1,26 @@
+{
+	"name": "delightmail-server",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev --config wrangler.toml --persist-to ./../.wrangler/state"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20260401.1",
+		"typescript": "^5.9.3",
+		"wrangler": "^4.79.0"
+	},
+	"dependencies": {
+		"@delightstack/ai": "^1.0.0",
+		"@delightstack/auth": "^1.0.0",
+		"@delightstack/database": "^1.0.0",
+		"@delightstack/rate-limiter": "^1.0.0",
+		"@delightstack/utilities": "^1.0.0",
+		"@delightstack/websocket": "^1.0.0",
+		"mimetext": "^3.0.24",
+		"postal-mime": "^2.4.3",
+		"zod": "^4.3.6"
+	}
+}

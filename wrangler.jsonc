@@ -1,0 +1,37 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "delightmail",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2025-05-08",
+	"compatibility_flags": ["nodejs_compat"],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare",
+	},
+	"observability": { "enabled": true },
+	"placement": { "mode": "smart" },
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"ai": { "binding": "AI" },
+	// The Durable Object classes live in the `delightmail-server` worker; the
+	// SvelteKit app reaches them cross-script via `script_name`, so the server
+	// worker must be deployed first (see README §Deploy).
+	"durable_objects": {
+		"bindings": [
+			{ "name": "AUTH", "class_name": "AuthServer", "script_name": "delightmail-server" },
+			{ "name": "MAILBOX", "class_name": "MailboxServer", "script_name": "delightmail-server" },
+			{ "name": "SYNC", "class_name": "SyncEngine", "script_name": "delightmail-server" },
+			{ "name": "WS", "class_name": "AppWebsocketServer", "script_name": "delightmail-server" },
+			{
+				"name": "RATE_LIMITER",
+				"class_name": "RateLimiterServer",
+				"script_name": "delightmail-server",
+			},
+		],
+	},
+	"kv_namespaces": [{ "binding": "KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+	"r2_buckets": [{ "binding": "R2", "bucket_name": "delightmail" }],
+	"services": [{ "binding": "SELF", "service": "delightmail" }],
+	"vars": {
+		"PUBLIC_APP_URL": "https://mail.brianschwabauer.com",
+	},
+}

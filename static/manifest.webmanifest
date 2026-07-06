@@ -1,0 +1,21 @@
+{
+	"name": "Mail",
+	"short_name": "Mail",
+	"description": "A calm, fast, keyboard-first inbox.",
+	"start_url": "/mail/inbox",
+	"scope": "/",
+	"display": "standalone",
+	"background_color": "#16181d",
+	"theme_color": "#16181d",
+	"orientation": "any",
+	"icons": [
+		{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+	],
+	"shortcuts": [
+		{ "name": "Compose", "url": "/compose" },
+		{ "name": "Inbox", "url": "/mail/inbox" },
+		{ "name": "AI Filtered", "url": "/mail/filtered" }
+	]
+}

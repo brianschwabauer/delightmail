@@ -1,0 +1,59 @@
+/**
+ * Wire the WebSocket, Database, and AI clients for a request. Called once in
+ * the mail layout's `load` (see routes/mail/+layout.ts). Mirrors the delightstack
+ * example app's clients.ts, specialized for the mail schema.
+ */
+import { DatabaseClient, type DatabaseClientConfig } from '@delightstack/database/client';
+import { WebsocketClient } from '@delightstack/websocket/client';
+import { AiClient } from '@delightstack/ai/client';
+import type { AuthClient } from '@delightstack/auth/client';
+import { tables } from './schema';
+
+/** Custom websocket events beyond the built-in `entity:*` (§9). */
+export interface MailEvents {
+	'mail:new': {
+		thread_id: string;
+		message_id: string;
+		folder: string;
+		category?: string;
+		from?: { name?: string; email?: string };
+		subject?: string;
+	};
+	'sync:progress': { account_id: string; phase: string; percent: number; detail?: string };
+	'send:status': { message_id: string; status: string; error?: string };
+	'triage:done': { message_id: string; verdict: unknown };
+}
+
+export type MailDatabaseClient = DatabaseClient<typeof tables>;
+
+export async function createClients(options: {
+	auth: AuthClient;
+	fetch: typeof globalThis.fetch;
+	dev?: boolean;
+	entities?: DatabaseClientConfig<typeof tables>['entities'];
+}): Promise<{ ws: WebsocketClient; db: MailDatabaseClient; ai: AiClient }> {
+	const { auth, fetch, dev, entities } = options;
+
+	const ws = new WebsocketClient({
+		dev,
+		dev_query: {
+			user_id: auth.id ?? undefined,
+			user_name: auth.name ?? undefined,
+		},
+	});
+
+	const db = new DatabaseClient({
+		tables,
+		db_name: `delightmail:${auth.org_id}`,
+		fetch,
+		hooks: ws.databaseHooks(),
+		entities,
+		dev,
+	});
+
+	const ai = new AiClient({ ws });
+
+	await db.init();
+
+	return { ws, db, ai };
+}

@@ -1,0 +1,20 @@
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+	plugins: [sveltekit()],
+	build: {
+		rollupOptions: {
+			// Runtime-only workerd modules (resolved on Cloudflare, not bundled).
+			external: [/^cloudflare:/],
+		},
+	},
+	ssr: {
+		external: ['worker-mailer'],
+	},
+	test: {
+		// Domain logic in src/lib/mail/* is pure and runs in node.
+		include: ['src/**/*.{test,spec}.{js,ts}'],
+		environment: 'node',
+	},
+});

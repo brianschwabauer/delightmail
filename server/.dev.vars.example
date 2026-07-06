@@ -1,0 +1,40 @@
+# DelightMail server-worker secrets. Copy to `.dev.vars` and fill in.
+# Required
+JWT_KEY_SECRET="dev-secret-change-me-in-production-min-64-chars-long-0123456789abcdef"
+CREDENTIALS_ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
+PUBLIC_APP_URL="http://localhost:5174"
+OWNER_EMAIL="brian@showandtour.com"
+
+# Magic-link delivery (one of these must work before first sign-in). In dev the
+# link is logged to the console, so these are optional locally.
+MAIL_FROM="mail@example.com"
+# SMTP_RELAY_HOST="smtp.resend.com"
+# SMTP_RELAY_PORT="587"
+# SMTP_RELAY_USER="resend"
+# SMTP_RELAY_PASS="re_xxx"
+
+# Gmail OAuth (omit → Gmail connect hidden)
+# GOOGLE_CLIENT_ID=""
+# GOOGLE_CLIENT_SECRET=""
+
+# Gmail push (omit → polling every GMAIL_POLL_SECONDS)
+# GMAIL_PUBSUB_TOPIC="projects/xxx/topics/gmail"
+# GMAIL_PUSH_AUDIENCE="https://server.mail.example.com/webhooks/gmail"
+# GMAIL_PUSH_SA_EMAIL="pubsub@xxx.iam.gserviceaccount.com"
+# GMAIL_POLL_SECONDS="90"
+
+# AI Gateway triage (omit → triage disabled)
+# AI_GATEWAY_ACCOUNT_ID=""
+# AI_GATEWAY_NAME="delightmail"
+# AI_GATEWAY_TOKEN=""
+# AI_TRIAGE_ROUTE="dynamic/email-triage"
+
+# Web push (omit → push disabled)
+# VAPID_PUBLIC_KEY=""
+# VAPID_PRIVATE_KEY=""
+# VAPID_SUBJECT="mailto:brian@showandtour.com"
+
+# Tunables
+# SEND_DAILY_LIMIT="100"
+# IMAGE_PROXY="off"
+# GMAIL_FULL_SCOPE="off"

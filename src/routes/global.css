@@ -1,0 +1,26 @@
+/* Design tokens + base styles from the shared package. Brand seed overrides
+   for DelightMail — a calm, text-forward blue accent (§10). */
+@import '@delightstack/styles/global.css';
+
+:root {
+	--color-primary: oklch(55% 0.16 262);
+	--dm-account-a: oklch(62% 0.15 55);
+	--dm-account-b: oklch(60% 0.12 200);
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--color-bg-1);
+	color: var(--color-text);
+	font-family: var(--font-sans, system-ui, sans-serif);
+	overscroll-behavior: none;
+}
+
+* {
+	box-sizing: border-box;
+}

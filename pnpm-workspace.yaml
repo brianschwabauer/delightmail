@@ -1,0 +1,20 @@
+allowBuilds:
+  core-js-pure: false
+  esbuild: true
+  sharp: false
+  workerd: true
+minimumReleaseAgeExclude:
+  - '@delightstack/ai@1.0.0'
+  - '@delightstack/auth@1.0.0'
+  - '@delightstack/components@1.0.0'
+  - '@delightstack/database@1.0.0'
+  - '@delightstack/editor@1.0.0'
+  - '@delightstack/images@1.0.0'
+  - '@delightstack/rate-limiter@1.0.0'
+  - '@delightstack/styles@1.0.0'
+  - '@delightstack/utilities@1.0.0'
+  - '@delightstack/websocket@1.0.0'
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - '@sveltejs/kit'

@@ -1,0 +1,15 @@
+node_modules
+/.svelte-kit
+/build
+/dist
+.env
+.env.*
+!.env.example
+server/.dev.vars
+.dev.vars
+.wrangler
+/.turbo
+*.log
+.DS_Store
+/test-results
+/playwright-report
