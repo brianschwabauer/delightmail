@@ -16,6 +16,8 @@ import {
 	RetryableError,
 } from './adapters/gmail';
 import type { NormalizedMessage } from './ingest';
+import { buildMimeMessage } from './mime-build';
+import type { Address } from '../../src/lib/schema';
 
 export interface SyncEnv {
 	MAILBOX: DurableObjectNamespace;
@@ -72,6 +74,24 @@ interface MailboxStub {
 	broadcastMail(event: Record<string, unknown>): void;
 	update(entity_type: string, id: string, data: Record<string, unknown>): unknown;
 	applyRemoteFlagChange(payload: unknown): Promise<void>;
+	markSendResult(
+		message_id: string,
+		result: { ok: boolean; provider_ids?: Record<string, unknown>; error?: string },
+	): Promise<void>;
+}
+
+interface SendPayload {
+	message_id: string;
+	rfc822_message_id: string;
+	body_keys?: { html?: string; text?: string };
+	from?: Address;
+	to?: Address[];
+	cc?: Address[];
+	bcc?: Address[];
+	subject?: string;
+	in_reply_to?: string;
+	references?: string[];
+	gmail_thread_id?: string;
 }
 
 export class SyncEngine implements DurableObject {
@@ -280,8 +300,9 @@ export class SyncEngine implements DurableObject {
 				return this.#renewWatch();
 			case 'provider_action':
 				return this.#providerAction(payload as ProviderActionPayload);
-			case 'poll_imap':
 			case 'send':
+				return this.#sendMessage(payload as SendPayload);
+			case 'poll_imap':
 			case 'fetch_attachment':
 			case 'unsubscribe':
 			case 'replay_r2':
@@ -397,6 +418,47 @@ export class SyncEngine implements DurableObject {
 		this.#saveState({ gmail_watch_expiry: Number(res.expiration) });
 		// Re-arm 6 days out (watches expire after 7, §5.1).
 		await this.scheduleJob('renew_watch', {}, 6 * 24 * 60 * 60 * 1000);
+	}
+
+	async #sendMessage(payload: SendPayload): Promise<void> {
+		const state = this.#state();
+		const htmlObj = payload.body_keys?.html
+			? await this.#env.R2.get(payload.body_keys.html)
+			: null;
+		const textObj = payload.body_keys?.text
+			? await this.#env.R2.get(payload.body_keys.text)
+			: null;
+		const html = htmlObj ? await htmlObj.text() : '';
+		const text = textObj ? await textObj.text() : '';
+		const built = buildMimeMessage({
+			from: payload.from ?? { email: state.account_email },
+			to: payload.to ?? [],
+			cc: payload.cc,
+			bcc: payload.bcc,
+			subject: payload.subject ?? '',
+			html,
+			text,
+			in_reply_to: payload.in_reply_to,
+			references: payload.references,
+			message_id: payload.rfc822_message_id,
+		});
+
+		let result: { ok: boolean; provider_ids?: Record<string, unknown>; error?: string };
+		try {
+			if (state.kind === 'gmail') {
+				const gmail = await this.#gmail();
+				const rawB64Url = base64UrlEncode(built.raw);
+				const sent = await gmail.send(rawB64Url, payload.gmail_thread_id);
+				result = { ok: true, provider_ids: { gmail_id: sent.id, gmail_thread_id: sent.threadId } };
+			} else {
+				// cf_email (P4) and smtp (P7) transports land in their phases.
+				throw new Error(`Transport for account kind '${state.kind}' not implemented yet`);
+			}
+		} catch (err) {
+			result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+		}
+		await this.#mailbox().markSendResult(payload.message_id, result);
+		if (!result.ok) throw new Error(result.error); // let the job retry with backoff
 	}
 
 	async #providerAction(payload: ProviderActionPayload): Promise<void> {
@@ -515,4 +577,12 @@ function safeParse(json: string | null): unknown {
 	} catch {
 		return {};
 	}
+}
+
+/** base64url encode a raw MIME string for Gmail's messages.send. */
+function base64UrlEncode(raw: string): string {
+	const bytes = new TextEncoder().encode(raw);
+	let bin = '';
+	for (const b of bytes) bin += String.fromCharCode(b);
+	return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }

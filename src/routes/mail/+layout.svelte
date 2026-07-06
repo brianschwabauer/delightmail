@@ -9,6 +9,8 @@
 	import KeyboardHelp from '$lib/components/KeyboardHelp.svelte';
 	import ChordHint from '$lib/components/ChordHint.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import Compose from '$lib/components/Compose.svelte';
+	import type { ComposeInit } from '$lib/components/Compose.svelte';
 	import { provideKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { provideActions } from '$lib/mail/actions-client.svelte';
 
@@ -21,7 +23,12 @@
 	const actions = provideActions();
 	let helpOpen = $state(false);
 	let paletteOpen = $state(false);
-	setContext('mail:compose', { open: () => toast('Compose lands in P3.') });
+	let composeInit = $state<ComposeInit | null>(null);
+
+	function openCompose(init: ComposeInit = {}) {
+		composeInit = init;
+	}
+	setContext('mail:compose', { open: openCompose });
 
 	onMount(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -38,8 +45,8 @@
 			{ keys: '?', description: 'Keyboard help', group: 'Global', context: 'global', handler: () => (helpOpen = !helpOpen) },
 			{ keys: 'Ctrl+k', description: 'Command palette', group: 'Global', context: 'global', global: true, handler: () => (paletteOpen = true) },
 			{ keys: 'z', description: 'Undo last action', group: 'Global', context: 'global', handler: () => actions.undo() },
-			{ keys: 'n', description: 'Compose', group: 'Global', context: 'global', handler: () => toast('Compose lands in P3.') },
-			{ keys: 'c', description: 'Compose', group: 'Global', context: 'global', handler: () => toast('Compose lands in P3.') },
+			{ keys: 'n', description: 'Compose', group: 'Global', context: 'global', handler: () => openCompose() },
+			{ keys: 'c', description: 'Compose', group: 'Global', context: 'global', handler: () => openCompose() },
 			{ keys: 'g i', description: 'Go to Inbox', group: 'Go to', context: 'global', handler: () => goto('/mail/inbox') },
 			{ keys: 'g f', description: 'Go to AI Filtered', group: 'Go to', context: 'global', handler: () => goto('/mail/filtered') },
 			{ keys: 'g s', description: 'Go to Starred', group: 'Go to', context: 'global', handler: () => goto('/mail/starred') },
@@ -66,6 +73,9 @@
 <ChordHint {kb} />
 <KeyboardHelp {kb} open={helpOpen} onClose={() => (helpOpen = false)} />
 <CommandPalette {db} open={paletteOpen} onClose={() => (paletteOpen = false)} />
+{#if composeInit}
+	<Compose {db} init={composeInit} onClose={() => (composeInit = null)} />
+{/if}
 
 <style>
 	.app {

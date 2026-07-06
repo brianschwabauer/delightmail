@@ -8,6 +8,7 @@ import { DelightError } from '@delightstack/utilities';
 import { handleGoogleStart, handleGoogleCallback } from './accounts';
 import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
+import { handleSend, handleUndoSend } from './send';
 import { handleDevSeed } from './dev-seed';
 
 export function createMailHandle(): Handle {
@@ -56,6 +57,14 @@ async function route(event: RequestEvent): Promise<Response> {
 	// --- thread actions (P2) ---
 	if (pathname === '/api/threads/actions' && method === 'POST') {
 		return handleThreadActions(event);
+	}
+
+	// --- send (P3) ---
+	if (pathname === '/api/send' && method === 'POST') {
+		return handleSend(event);
+	}
+	if (parts[1] === 'send' && parts[3] === 'undo' && method === 'POST') {
+		return handleUndoSend(event, decodeURIComponent(parts[2]));
 	}
 
 	// --- dev-only seed (never reachable in production) ---

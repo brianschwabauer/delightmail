@@ -228,27 +228,163 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Send pipeline (§6) — filled in P3.
+	// Send pipeline (§6).
 	// -------------------------------------------------------------------------
 	async enqueueSend(
-		message: Partial<Message>,
+		payload: {
+			to: { name?: string; email?: string }[];
+			cc?: { name?: string; email?: string }[];
+			bcc?: { name?: string; email?: string }[];
+			subject: string;
+			html: string;
+			text: string;
+			in_reply_to?: string;
+			references?: string[];
+			thread_id?: string;
+			draft_doc?: string;
+		},
 		identity_id: string,
 	): Promise<{ message_id: string }> {
 		const settings = await this.ensureSettings();
 		const undo = (settings.undo_send_seconds ?? 10) * 1000;
+
+		const identity = this.get('identity', identity_id) as {
+			id: string;
+			email: string;
+			name?: string;
+			account_id: string;
+		};
+		const rfc822 = `<${crypto.randomUUID()}@${identity.email.split('@')[1] ?? 'delightmail.local'}>`;
+		const now = Date.now();
+
+		// Store the rendered body in R2 (content-addressed on the message id).
+		const prefix = `${this.#orgName}/msg/${await sha40(rfc822)}`;
+		try {
+			await Promise.all([
+				this.#menv.R2.put(`${prefix}/body.html`, payload.html, {
+					httpMetadata: { contentType: 'text/html; charset=utf-8' },
+				}),
+				this.#menv.R2.put(`${prefix}/body.txt`, payload.text, {
+					httpMetadata: { contentType: 'text/plain; charset=utf-8' },
+				}),
+			]);
+		} catch (err) {
+			console.error('[MailboxServer] send body R2 write failed:', err);
+		}
+
+		// Thread: join the existing one or create a new sent thread.
+		let thread_id = payload.thread_id;
+		if (!thread_id) {
+			const thread = this.create('thread', {
+				subject: payload.subject || '(no subject)',
+				subject_normalized: payload.subject.toLowerCase(),
+				snippet: payload.text.slice(0, 120),
+				participants: payload.to,
+				participant_text: payload.to.map((a) => a.email).join(', '),
+				account_ids: [identity.account_id],
+				message_count: 0,
+				folder: 'sent',
+				last_message_at: now,
+			} as never) as Thread;
+			thread_id = String(thread.id);
+		}
+
 		const msg = this.create('message', {
-			...message,
+			thread_id,
+			account_id: identity.account_id,
+			identity_email: identity.email,
+			rfc822_message_id: rfc822,
+			in_reply_to: payload.in_reply_to,
+			references: payload.references,
+			from: { name: identity.name, email: identity.email },
+			from_text: identity.name ? `${identity.name} ${identity.email}` : identity.email,
+			to: payload.to,
+			cc: payload.cc,
+			bcc: payload.bcc,
+			subject: payload.subject,
+			text_excerpt: payload.text.slice(0, 8192),
+			body_keys: { html: `${prefix}/body.html`, text: `${prefix}/body.txt` },
+			date: now,
+			is_read: true,
 			is_outbound: true,
 			folder: 'sent',
+			draft_doc: payload.draft_doc,
 			send_status: 'queued',
 		} as never) as Message;
+
 		this.create('outbox', {
 			message_id: msg.id,
 			identity_id,
-			not_before: Date.now() + undo,
+			not_before: now + undo,
 		} as never);
-		await this.scheduleJob('outbox', {}, undo);
+		await this.scheduleJob('outbox', {}, undo + 500);
+		this.broadcastMail({ event: 'send:status', message_id: msg.id, status: 'queued' });
 		return { message_id: String(msg.id) };
+	}
+
+	/** Hand due outbox rows (past their undo window) to the owning SyncEngine. */
+	async #flushOutbox(): Promise<void> {
+		const now = Date.now();
+		const rows = this.exec(
+			`SELECT id, message_id, identity_id FROM outbox WHERE not_before <= ? LIMIT 20`,
+			now,
+		) as Array<{ id: string; message_id: string; identity_id: string }>;
+		for (const row of rows) {
+			let msg: Message;
+			try {
+				msg = this.get('message', row.message_id) as Message;
+			} catch {
+				this.delete('outbox', row.id);
+				continue;
+			}
+			const identity = this.get('identity', row.identity_id) as { account_id: string };
+			this.update('message', row.message_id, { send_status: 'sending' } as never);
+			this.broadcastMail({ event: 'send:status', message_id: row.message_id, status: 'sending' });
+
+			const stub = this.#menv.SYNC.get(
+				this.#menv.SYNC.idFromName(identity.account_id),
+			) as unknown as { enqueueSendJob(payload: unknown): Promise<void> };
+			try {
+				await stub.enqueueSendJob({
+					message_id: row.message_id,
+					rfc822_message_id: msg.rfc822_message_id,
+					body_keys: msg.body_keys,
+					from: msg.from,
+					to: msg.to,
+					cc: msg.cc,
+					bcc: msg.bcc,
+					subject: msg.subject,
+					in_reply_to: msg.in_reply_to,
+					references: msg.references,
+					gmail_thread_id: (msg.provider_ids as { gmail_thread_id?: string } | undefined)
+						?.gmail_thread_id,
+				});
+				this.delete('outbox', row.id);
+			} catch (err) {
+				console.error('[MailboxServer] outbox handoff failed:', err);
+			}
+		}
+	}
+
+	/** Called by SyncEngine after a successful/failed transport send. */
+	async markSendResult(
+		message_id: string,
+		result: { ok: boolean; provider_ids?: Record<string, unknown>; error?: string },
+	): Promise<void> {
+		try {
+			this.update('message', message_id, {
+				send_status: result.ok ? 'sent' : 'failed',
+				...(result.provider_ids ? { provider_ids: result.provider_ids } : {}),
+			} as never);
+		} catch {
+			/* ignore */
+		}
+		this.broadcastMail({
+			event: 'send:status',
+			message_id,
+			status: result.ok ? 'sent' : 'failed',
+			error: result.error,
+		});
 	}
 
 	async undoSend(message_id: string): Promise<{ ok: boolean }> {
@@ -365,8 +501,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				// Filled in P5 (AI triage pipeline).
 				return;
 			case 'outbox':
-				// Filled in P3 (hand due outbox rows to SyncEngine send jobs).
-				return;
+				return this.#flushOutbox();
 			case 'push':
 				// Filled in P6.
 				return;
@@ -383,6 +518,13 @@ function safeParse(json: string | null): unknown {
 	} catch {
 		return {};
 	}
+}
+
+/** First 40 hex chars of a SHA-256 — the content-addressed R2 key component. */
+async function sha40(input: string): Promise<string> {
+	const data = new TextEncoder().encode(input);
+	const digest = await crypto.subtle.digest('SHA-256', data);
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
 }
 
 /** Map a thread action to the provider operation for two-way sync (§5.1). */

@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, getContext } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { toast } from '@delightstack/components';
 	import type { MailDatabaseClient } from '$lib/clients';
+	import type { ComposeInit } from './Compose.svelte';
+
+	const compose = getContext<{ open: (init?: ComposeInit) => void }>('mail:compose');
 
 	interface Command {
 		id: string;
@@ -30,7 +32,7 @@
 		{ id: 'archive', label: 'Go to Archive', hint: 'g a', run: () => goto('/mail/archive') },
 		{ id: 'spam', label: 'Go to Spam', run: () => goto('/mail/spam') },
 		{ id: 'trash', label: 'Go to Trash', run: () => goto('/mail/trash') },
-		{ id: 'compose', label: 'Compose new message', hint: 'n', run: () => toast('Compose lands in P3.') },
+		{ id: 'compose', label: 'Compose new message', hint: 'n', run: () => compose.open() },
 		{ id: 'settings-accounts', label: 'Settings: Accounts', run: () => goto('/settings/accounts') },
 		{ id: 'settings-ai', label: 'Settings: AI Triage', run: () => goto('/settings/ai') },
 		{ id: 'settings-appearance', label: 'Settings: Appearance', run: () => goto('/settings/appearance') },

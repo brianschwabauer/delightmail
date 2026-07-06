@@ -1,13 +1,17 @@
 <script lang="ts">
-	import { tick, onMount, untrack } from 'svelte';
+	import { tick, onMount, untrack, getContext } from 'svelte';
 	import { viewToQuery, viewTitle } from '$lib/mail/views';
 	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
+	import { replySubject, replyAllRecipients } from '$lib/mail/compose';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
-	import type { Thread } from '$lib/schema';
+	import type { ComposeInit } from '$lib/components/Compose.svelte';
+	import type { Thread, Message } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
+
+	const compose = getContext<{ open: (init?: ComposeInit) => void }>('mail:compose');
 
 	const { data } = $props();
 	const { db, view } = $derived(data);
@@ -99,6 +103,49 @@
 		return t ? [t] : [];
 	}
 
+	// --- reply / reply-all / forward ---
+	async function latestMessage(threadId: string): Promise<Message | null> {
+		try {
+			const res = await db.list('message', {
+				where: { thread_id: threadId },
+				order: [{ key: 'date', direction: 'DESC' }],
+				limit: 1,
+			});
+			return (res.docs?.[0] as Message) ?? null;
+		} catch {
+			return null;
+		}
+	}
+	async function reply(kind: 'reply' | 'reply_all' | 'forward') {
+		const t = docs[cursor];
+		if (!t) return;
+		const m = await latestMessage(t.id);
+		if (!m) return;
+		const selfEmails = m.identity_email ? [m.identity_email] : [];
+		let init: ComposeInit;
+		if (kind === 'forward') {
+			init = {
+				subject: replySubject(m.subject ?? t.subject ?? '', 'forward'),
+				identity_id: undefined,
+				thread_id: t.id,
+			};
+		} else {
+			const recipients =
+				kind === 'reply_all'
+					? replyAllRecipients(m, selfEmails)
+					: { to: m.reply_to?.length ? m.reply_to : m.from ? [m.from] : [], cc: [] };
+			init = {
+				to: recipients.to,
+				cc: recipients.cc,
+				subject: replySubject(m.subject ?? t.subject ?? '', 'reply'),
+				in_reply_to: m.rfc822_message_id,
+				references: [...(m.references ?? []), m.rfc822_message_id],
+				thread_id: t.id,
+			};
+		}
+		compose.open(init);
+	}
+
 	// Toggle direction is decided by the first target's current state.
 	function starTarget(): ThreadActionName {
 		return targets()[0]?.starred ? 'unstar' : 'star';
@@ -170,6 +217,9 @@
 			{ keys: 's', description: 'Toggle star', group: 'Actions', context: 'list', handler: () => act(starTarget()) },
 			{ keys: 'u', description: 'Toggle read/unread', group: 'Actions', context: 'list', handler: () => act(readTarget()) },
 			{ keys: '!', description: 'Mark spam', group: 'Actions', context: 'list', handler: () => act('spam') },
+			{ keys: 'r', description: 'Reply', group: 'Actions', context: 'list', handler: () => reply('reply') },
+			{ keys: 'R', description: 'Reply all', group: 'Actions', context: 'list', handler: () => reply('reply_all') },
+			{ keys: 'w', description: 'Forward', group: 'Actions', context: 'list', handler: () => reply('forward') },
 			{ keys: '/', description: 'Search', group: 'List', context: 'list', handler: startSearch },
 			{ keys: 'f', description: 'Filter loaded list', group: 'List', context: 'list', handler: startFilter },
 			{ keys: 'Escape', description: 'Close / clear', group: 'List', context: 'list', global: true, handler: () => {

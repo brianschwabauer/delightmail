@@ -30,7 +30,7 @@ export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 	const db = event.locals.db;
 	if (!db) return new Response('No mailbox', { status: 400 });
 
-	// One demo account (messages FK-reference it).
+	// One demo account (messages FK-reference it) + a default identity to send as.
 	const account = (await db.create('account', {
 		kind: 'gmail',
 		email: 'demo@gmail.com',
@@ -39,6 +39,12 @@ export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 		status: 'live',
 		config: { gmail_address: 'demo@gmail.com' },
 	})) as { id: string };
+	await db.create('identity', {
+		account_id: account.id,
+		email: 'demo@gmail.com',
+		name: 'Demo',
+		is_default: true,
+	});
 
 	const now = Date.now();
 	const batch = Array.from({ length: 40 }, (_, i) => {
