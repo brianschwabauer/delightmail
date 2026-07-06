@@ -34,29 +34,33 @@ export interface ThreadAction {
 	label_id?: string;
 }
 
-/** The subset of DatabaseServer + mail methods the app calls over RPC. */
+/**
+ * The subset of DatabaseServer + mail methods the app calls over RPC. `locals.db`
+ * is a Durable Object stub, so EVERY method resolves asynchronously — even the
+ * ones DatabaseServer implements synchronously.
+ */
 export interface MailboxRpc {
 	// --- generic DatabaseServer surface (subset used by the app) ---
 	get<K extends keyof Tables & string>(
 		entity_type: K,
 		id: string | number,
-	): Database.Entity<Tables[K]>;
+	): Promise<Database.Entity<Tables[K]>>;
 	list<K extends keyof Tables & string>(
 		entity_type: K,
 		query: Record<string, unknown>,
-	): { docs: Array<Database.Entity<Tables[K]>>; cursor?: string };
+	): Promise<{ docs: Array<Database.Entity<Tables[K]>>; cursor?: string }>;
 	create<K extends keyof Tables & string>(
 		entity_type: K,
 		data: Record<string, unknown>,
-	): Database.Entity<Tables[K]>;
+	): Promise<Database.Entity<Tables[K]>>;
 	update<K extends keyof Tables & string>(
 		entity_type: K,
 		id: string | number,
 		data: Record<string, unknown>,
-	): Database.Entity<Tables[K]>;
-	delete(entity_type: keyof Tables & string, id: string | number): void;
-	getMeta(): Record<string, unknown>;
-	setMeta(data: Record<string, unknown>): void;
+	): Promise<Database.Entity<Tables[K]>>;
+	delete(entity_type: keyof Tables & string, id: string | number): Promise<void>;
+	getMeta(): Promise<Record<string, unknown>>;
+	setMeta(data: Record<string, unknown>): Promise<void>;
 
 	// --- mail-specific RPC (implemented in MailboxServer) ---
 	/** Idempotent bulk ingest keyed on rfc822_message_id (§5). */

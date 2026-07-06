@@ -1,41 +1,65 @@
 /**
- * Custom mail endpoints (§9 mailHandle). Grows across phases:
- *  P1  GET  /api/messages/:id/body, /raw ; GET /api/attachments/:id
- *  P1  POST /api/accounts/google/start, GET /api/accounts/google/callback
- *  P2  POST /api/threads/actions
- *  P3  POST /api/send, /api/send/:id/undo
- *  P4  POST /api/accounts/domain
- *  P5  POST /api/unsubscribe/:id, /api/triage/test
- *  P6  POST /api/push/subscribe
- *
- * Kept as a single handle so routing stays in one place and every branch shares
- * the org/session guard.
+ * Custom mail endpoints (§9 mailHandle). Routing lives here so every branch
+ * shares the org/session guard. Handlers are added per-phase.
  */
-import type { Handle } from '@sveltejs/kit';
-import type { AuthLocals } from '@delightstack/auth/server';
+import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
+import { handleGoogleStart, handleGoogleCallback } from './accounts';
+import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
+import { handleThreadActions } from './thread-actions';
 
 export function createMailHandle(): Handle {
 	return async ({ event, resolve }) => {
 		const { pathname } = event.url;
-		if (!pathname.startsWith('/api/')) return resolve(event);
+		if (!pathname.startsWith('/api/') || !isMailRoute(pathname)) return resolve(event);
 
-		// Non-mail API routes fall through to their own handlers/endpoints.
-		if (!isMailRoute(pathname)) return resolve(event);
-
-		const locals = event.locals as AuthLocals & App.Locals;
-		if (!locals.session) return DelightError.unauthorized('Sign in required').toResponse();
-		if (!locals.org_id || !locals.db) {
+		if (!event.locals.session) return DelightError.unauthorized('Sign in required').toResponse();
+		if (!event.locals.org_id || !event.locals.db) {
 			return DelightError.badRequest('No mailbox for this session').toResponse();
 		}
 
-		// Endpoint handlers are added per-phase. Until a route is implemented it
-		// returns 501 so the surface is discoverable and never silently 404s.
-		return new DelightError({
-			message: `Not implemented yet: ${event.request.method} ${pathname}`,
-			status: 501,
-		}).toResponse();
+		try {
+			return await route(event);
+		} catch (err) {
+			return DelightError.from(err).toResponse();
+		}
 	};
+}
+
+async function route(event: RequestEvent): Promise<Response> {
+	const { pathname } = event.url;
+	const method = event.request.method;
+	const parts = pathname.split('/').filter(Boolean); // ['api','accounts','google','start']
+
+	// --- accounts ---
+	if (pathname === '/api/accounts/google/start' && method === 'POST') {
+		return handleGoogleStart(event);
+	}
+	if (pathname === '/api/accounts/google/callback' && method === 'GET') {
+		return handleGoogleCallback(event);
+	}
+
+	// --- messages ---
+	if (parts[1] === 'messages' && parts[2]) {
+		const id = decodeURIComponent(parts[2]);
+		if (parts[3] === 'body' && method === 'GET') return handleMessageBody(event, id);
+		if (parts[3] === 'raw' && method === 'GET') return handleMessageRaw(event, id);
+	}
+
+	// --- attachments ---
+	if (parts[1] === 'attachments' && parts[2] && method === 'GET') {
+		return handleAttachment(event, decodeURIComponent(parts[2]));
+	}
+
+	// --- thread actions (P2) ---
+	if (pathname === '/api/threads/actions' && method === 'POST') {
+		return handleThreadActions(event);
+	}
+
+	return new DelightError({
+		message: `Not implemented yet: ${method} ${pathname}`,
+		status: 501,
+	}).toResponse();
 }
 
 const MAIL_PREFIXES = [

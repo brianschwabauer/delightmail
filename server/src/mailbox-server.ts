@@ -114,37 +114,116 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			folder?: string;
 			label_id?: string;
 		},
-		actor?: string,
+		_actor?: string,
 	): Promise<{ affected: string[] }> {
+		// Gather provider ids BEFORE the local mutation (delete_forever removes rows).
+		const op = providerOpFor(action.action);
+		const byAccount = op === 'none' ? new Map() : this.#gmailIdsByAccount(action.thread_ids);
+
 		const affected = applyThreadActionLocal(this, action);
-		// Enqueue provider write-back on each owning SyncEngine (added in P2).
-		for (const account_id of affected.length ? this.#accountsForThreads(action.thread_ids) : []) {
-			this.#enqueueProviderAction(account_id, action, actor);
+
+		// Fan out provider write-back to each owning SyncEngine.
+		for (const [account_id, gmail_ids] of byAccount) {
+			if (!gmail_ids.length) continue;
+			this.#enqueueProviderAction(account_id, { op, gmail_ids });
 		}
 		return { affected };
 	}
 
-	#accountsForThreads(thread_ids: string[]): string[] {
-		const set = new Set<string>();
-		for (const id of thread_ids) {
-			try {
-				const t = this.get('thread', id) as Thread;
-				for (const a of t.account_ids ?? []) set.add(a);
-			} catch {
-				/* thread gone — skip */
-			}
+	/** message.provider_ids.gmail_id grouped by account, for the given threads. */
+	#gmailIdsByAccount(thread_ids: string[]): Map<string, string[]> {
+		const map = new Map<string, string[]>();
+		if (!thread_ids.length) return map;
+		const placeholders = thread_ids.map(() => '?').join(', ');
+		const rows = this.exec(
+			`SELECT account_id, json_extract(json, '$.provider_ids.gmail_id') AS gmail_id
+			 FROM message WHERE thread_id IN (${placeholders})`,
+			...thread_ids,
+		) as Array<{ account_id: string; gmail_id: string | null }>;
+		for (const r of rows) {
+			if (!r.gmail_id) continue;
+			const list = map.get(r.account_id) ?? [];
+			list.push(r.gmail_id);
+			map.set(r.account_id, list);
 		}
-		return [...set];
+		return map;
 	}
 
-	#enqueueProviderAction(account_id: string, action: unknown, _actor?: string): void {
+	#enqueueProviderAction(account_id: string, payload: unknown): void {
 		try {
 			const stub = this.#menv.SYNC.get(this.#menv.SYNC.idFromName(account_id)) as unknown as {
 				enqueueProviderAction(action: unknown): Promise<void>;
 			};
-			void stub.enqueueProviderAction(action);
+			void stub.enqueueProviderAction(payload);
 		} catch (err) {
 			console.error('[MailboxServer] enqueue provider action failed:', err);
+		}
+	}
+
+	/**
+	 * Apply a remote flag/label/delete change echoed from a provider (Gmail
+	 * history). Idempotent and does NOT re-enqueue provider jobs — this is the
+	 * inbound half of two-way sync, so it must not loop (§5.1).
+	 */
+	async applyRemoteFlagChange(payload: {
+		op: 'labels' | 'deleted';
+		gmail_id: string;
+		state?: { folder: string; is_read: boolean; is_starred: boolean };
+	}): Promise<void> {
+		const rows = this.exec(
+			`SELECT id, thread_id FROM message
+			 WHERE json_extract(json, '$.provider_ids.gmail_id') = ? LIMIT 1`,
+			payload.gmail_id,
+		) as Array<{ id: string; thread_id: string }>;
+		if (!rows.length) return;
+		const { id, thread_id } = rows[0];
+
+		if (payload.op === 'deleted') {
+			try {
+				this.delete('message', id);
+			} catch {
+				/* already gone */
+			}
+			this.#recountThread(thread_id);
+			return;
+		}
+		if (payload.op === 'labels' && payload.state) {
+			this.update('message', id, {
+				folder: payload.state.folder,
+				is_read: payload.state.is_read,
+				is_starred: payload.state.is_starred,
+			} as never);
+			// Reflect the message's folder onto the thread's primary location.
+			try {
+				this.update('thread', thread_id, { folder: payload.state.folder } as never);
+			} catch {
+				/* ignore */
+			}
+		}
+	}
+
+	#recountThread(thread_id: string): void {
+		const rows = this.exec(
+			`SELECT COUNT(*) AS n, SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread
+			 FROM message WHERE thread_id = ?`,
+			thread_id,
+		) as Array<{ n: number; unread: number }>;
+		const n = rows[0]?.n ?? 0;
+		if (n === 0) {
+			try {
+				this.delete('thread', thread_id);
+			} catch {
+				/* ignore */
+			}
+			return;
+		}
+		try {
+			this.update('thread', thread_id, {
+				message_count: n,
+				unread_count: rows[0]?.unread ?? 0,
+			} as never);
+		} catch {
+			/* ignore */
 		}
 	}
 
@@ -303,5 +382,33 @@ function safeParse(json: string | null): unknown {
 		return JSON.parse(json);
 	} catch {
 		return {};
+	}
+}
+
+/** Map a thread action to the provider operation for two-way sync (§5.1). */
+function providerOpFor(action: string): string {
+	switch (action) {
+		case 'archive':
+			return 'archive';
+		case 'trash':
+			return 'trash';
+		case 'delete':
+			return 'delete_forever';
+		case 'spam':
+			return 'spam';
+		case 'read':
+			return 'read';
+		case 'unread':
+			return 'unread';
+		case 'star':
+			return 'star';
+		case 'unstar':
+			return 'unstar';
+		case 'move':
+			return 'move';
+		case 'label':
+			return 'label';
+		default:
+			return 'none';
 	}
 }
