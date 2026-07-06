@@ -50,6 +50,12 @@ id = "REPLACE_WITH_KV_NAMESPACE_ID"
 binding = "R2"
 bucket_name = "delightmail"
 
+# Cloudflare Email Service — outbound sending for cf_domain identities (§6).
+# Requires domain onboarding (DKIM/SPF/DMARC managed by Cloudflare). Deployers
+# without Email Service point cf_domain identities at an SMTP relay instead.
+[[send_email]]
+name = "EMAIL"
+
 # Cloudflare Email Routing → email() handler. Enable catch-all "Send to Worker"
 # in the dashboard and point it at this worker (§5.2).
 [[rules]]

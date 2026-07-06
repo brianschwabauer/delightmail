@@ -81,6 +81,45 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
+	// Custom-domain (cf_domain) accounts + aliases (§5.2).
+	// -------------------------------------------------------------------------
+	/** Find or create the cf_domain account for a domain (the mailbox itself). */
+	async ensureCfDomainAccount(domain: string): Promise<{ account_id: string }> {
+		const existing = this.exec(
+			`SELECT id FROM account WHERE email = ? AND kind = 'cf_domain' LIMIT 1`,
+			domain,
+		) as Array<{ id: string }>;
+		if (existing.length) return { account_id: existing[0].id };
+		const account = this.create('account', {
+			kind: 'cf_domain',
+			email: domain,
+			display_name: domain,
+			color: '#0891b2',
+			status: 'live',
+			config: { domain },
+		} as never) as { id: string };
+		return { account_id: String(account.id) };
+	}
+
+	/** Auto-create an identity for a first-seen alias (catch-all ⇒ infinite). */
+	async ensureIdentity(account_id: string, email: string): Promise<void> {
+		const existing = this.exec(
+			`SELECT id FROM identity WHERE email = ? LIMIT 1`,
+			email.toLowerCase(),
+		) as Array<{ id: string }>;
+		if (existing.length) return;
+		const isFirst =
+			(this.exec(`SELECT COUNT(*) AS n FROM identity`) as Array<{ n: number }>)[0]?.n === 0;
+		this.create('identity', {
+			account_id,
+			email: email.toLowerCase(),
+			name: email.split('@')[0],
+			is_default: isFirst,
+			auto_created: true,
+		} as never);
+	}
+
+	// -------------------------------------------------------------------------
 	// Ingest (§5) — idempotent on rfc822_message_id, runs threading + counters.
 	// -------------------------------------------------------------------------
 	async ingestMessages(

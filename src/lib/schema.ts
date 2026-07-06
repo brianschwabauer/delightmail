@@ -58,7 +58,8 @@ export const accountTable = Database.table('account', (s) => ({
 		{ value: 'imap', label: 'IMAP' },
 		{ value: 'cf_domain', label: 'Custom Domain' },
 	]),
-	email: s.string().email().label('Email').searchable(),
+	// Not `.email()` — for cf_domain accounts this holds the bare domain (§4.2).
+	email: s.string().label('Email').searchable(),
 	display_name: s.string().label('Display name').optional(),
 	color: s.string().label('Color').optional(),
 	status: s

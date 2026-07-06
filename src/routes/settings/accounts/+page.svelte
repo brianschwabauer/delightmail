@@ -1,11 +1,33 @@
 <script lang="ts">
-	import { Button, toast } from '@delightstack/components';
+	import { Button, Input, toast } from '@delightstack/components';
 
 	const { data } = $props();
 	const { db } = $derived(data);
 
 	const accounts = db.search('account', { limit: 50 });
 	let connecting = $state(false);
+	let domain = $state('');
+	let addingDomain = $state(false);
+
+	async function connectDomain() {
+		if (!domain.trim()) return;
+		addingDomain = true;
+		try {
+			const res = await fetch('/api/accounts/domain', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ domain: domain.trim() }),
+			});
+			const body = (await res.json().catch(() => ({}))) as { next_steps?: string; message?: string };
+			if (!res.ok) return toast(body.message || 'Could not register the domain.');
+			toast(body.next_steps || 'Domain registered.');
+			domain = '';
+		} catch (e) {
+			toast((e as Error).message);
+		} finally {
+			addingDomain = false;
+		}
+	}
 
 	async function connectGmail() {
 		connecting = true;
@@ -61,9 +83,19 @@
 	<Button disabled={connecting} onclick={connectGmail}>
 		{connecting ? 'Redirecting…' : 'Connect a Gmail account'}
 	</Button>
+</div>
+
+<div class="add domain">
+	<h3>Custom domain</h3>
 	<p class="hint muted">
-		Custom-domain (P4) and IMAP (P7) accounts are added here too once those phases land.
+		Route a domain's mail here via Cloudflare Email Routing (catch-all → Send to Worker).
 	</p>
+	<div class="domain-row">
+		<Input bind:value={domain} placeholder="example.com" />
+		<Button disabled={addingDomain} onclick={connectDomain}>
+			{addingDomain ? 'Registering…' : 'Add domain'}
+		</Button>
+	</div>
 </div>
 
 <style>
@@ -111,6 +143,20 @@
 	}
 	.add {
 		margin-top: var(--size-4);
+	}
+	.add.domain h3 {
+		font-size: var(--font-size-1);
+		margin-bottom: var(--size-1);
+	}
+	.domain-row {
+		display: flex;
+		gap: var(--size-2);
+		align-items: center;
+		max-width: 420px;
+	}
+	.domain-row :global(.input),
+	.domain-row :global(label) {
+		flex: 1;
 	}
 	.hint {
 		margin-top: var(--size-2);

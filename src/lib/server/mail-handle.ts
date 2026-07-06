@@ -5,7 +5,7 @@
 import type { Handle, RequestEvent } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { DelightError } from '@delightstack/utilities';
-import { handleGoogleStart, handleGoogleCallback } from './accounts';
+import { handleGoogleStart, handleGoogleCallback, handleDomainRegister } from './accounts';
 import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend } from './send';
@@ -40,6 +40,9 @@ async function route(event: RequestEvent): Promise<Response> {
 	}
 	if (pathname === '/api/accounts/google/callback' && method === 'GET') {
 		return handleGoogleCallback(event);
+	}
+	if (pathname === '/api/accounts/domain' && method === 'POST') {
+		return handleDomainRegister(event);
 	}
 
 	// --- messages ---

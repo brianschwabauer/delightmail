@@ -1,12 +1,23 @@
 /**
  * Cloudflare Email Routing inbound handler (§5.2). Golden rule (R8): capture the
  * raw bytes to R2 FIRST so mail is never lost, then parse + route. On any
- * internal error we keep the R2 copy for the replay_r2 job and never bounce.
+ * internal error we keep the R2 copy for the replay job and never bounce.
  *
- * Full org resolution + alias auto-identity + ingest lands in P4; for now we
- * durably capture and record a pending-ingest marker.
+ * Routing: the recipient domain is looked up in KV (`domain:{domain}` → org_id),
+ * written when a cf_domain account is registered. First-seen aliases auto-create
+ * a `cf_domain` identity (catch-all ⇒ infinite aliases).
  */
 import type { Env } from './index';
+import { parseEmail } from '../../src/lib/mail/mime';
+import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
+import { messagePrefix, writeBodies } from './body-store';
+import type { NormalizedMessage } from './ingest';
+
+interface CfDomainMailbox {
+	ingestMessages(batch: unknown[]): Promise<{ ingested: number; skipped: number }>;
+	ensureCfDomainAccount(domain: string): Promise<{ account_id: string }>;
+	ensureIdentity(account_id: string, email: string): Promise<void>;
+}
 
 export async function handleInboundEmail(
 	message: ForwardableEmailMessage,
@@ -16,32 +27,91 @@ export async function handleInboundEmail(
 	const to = message.to;
 	const from = message.from;
 	const raw_key = `inbound/${Date.now()}-${crypto.randomUUID()}.eml`;
+	let rawBytes: Uint8Array;
 
+	// 1. Durable capture — stream raw bytes to R2 before anything can fail.
 	try {
-		// 1. Durable capture — stream raw bytes to R2 before anything can fail.
-		const buf = await streamToArrayBuffer(message.raw, message.rawSize);
-		await env.R2.put(raw_key, buf, {
+		rawBytes = await streamToArrayBuffer(message.raw, message.rawSize);
+		await env.R2.put(raw_key, rawBytes, {
 			httpMetadata: { contentType: 'message/rfc822' },
 			customMetadata: { to, from },
 		});
 	} catch (err) {
 		console.error('[email] R2 capture failed:', err);
-		// Do not reject — let Cloudflare retry delivery.
+		return; // let Cloudflare retry delivery
+	}
+
+	// 2. Resolve the owning org by recipient domain.
+	const domain = to.split('@')[1]?.toLowerCase() ?? '';
+	const org_id = await env.KV.get(`domain:${domain}`);
+	if (!org_id) {
+		// Unknown domain — reject so the sender gets a bounce.
+		try {
+			message.setReject('Address does not exist');
+		} catch {
+			/* setReject may be unavailable in some contexts */
+		}
 		return;
 	}
 
-	// 2. Route to the owning cf_domain account's org. Implemented in P4:
-	//    resolve org by matching `to` domain against registered cf_domain
-	//    accounts, auto-create identities for first-seen aliases, ingest, then
-	//    delete the pending marker. Unknown domains → message.setReject().
-	const domain = to.split('@')[1]?.toLowerCase();
-	console.log(`[email] captured ${raw_key} for ${to} (domain ${domain}) — pending ingest (P4)`);
+	// 3. Parse, sanitize, write bodies, ingest. Keep the raw copy for replay if
+	//    anything after capture throws (a replay_r2 job reprocesses it).
+	try {
+		const mailbox = env.MAILBOX.get(
+			env.MAILBOX.idFromName(org_id),
+		) as unknown as CfDomainMailbox;
 
-	// Record the capture for the replay job so P4 can backfill anything received
-	// before routing was wired.
-	await env.KV.put(`pending-email:${raw_key}`, JSON.stringify({ to, from, domain }), {
-		expirationTtl: 60 * 60 * 24 * 14,
-	});
+		const { account_id } = await mailbox.ensureCfDomainAccount(domain);
+		await mailbox.ensureIdentity(account_id, to.toLowerCase());
+
+		const parsed = await parseEmail(rawBytes);
+		const html = parsed.html
+			? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' })
+			: '';
+		const prefix = await messagePrefix(org_id, parsed.rfc822_message_id);
+		const body_keys = await writeBodies(env.R2, prefix, {
+			raw: rawBytes,
+			html: html || undefined,
+			text: parsed.text || undefined,
+		});
+
+		const normalized: NormalizedMessage = {
+			rfc822_message_id: parsed.rfc822_message_id,
+			account_id,
+			identity_email: to.toLowerCase(),
+			in_reply_to: parsed.in_reply_to,
+			references: parsed.references,
+			from: parsed.from,
+			to: parsed.to,
+			cc: parsed.cc,
+			bcc: parsed.bcc,
+			reply_to: parsed.reply_to,
+			subject: parsed.subject,
+			snippet: parsed.snippet,
+			text_excerpt: parsed.text_excerpt,
+			body_keys,
+			date: parsed.date,
+			is_read: false,
+			is_outbound: false,
+			folder: 'inbox',
+			headers_subset: parsed.headers_subset as Record<string, unknown>,
+			attachment_count: parsed.attachments.length,
+			size_bytes: parsed.size_bytes,
+		};
+
+		await mailbox.ingestMessages([normalized]);
+
+		// Optional transition forwarding (config: account.config.forward_to).
+		// Left to a per-account setting read in a follow-up; the raw copy remains.
+
+		// Ingested successfully — the pending marker (if any) can be dropped.
+		await env.KV.delete(`pending-email:${raw_key}`).catch(() => {});
+	} catch (err) {
+		console.error('[email] ingest failed, keeping R2 copy for replay:', err);
+		await env.KV.put(`pending-email:${raw_key}`, JSON.stringify({ to, from, domain, org_id }), {
+			expirationTtl: 60 * 60 * 24 * 14,
+		});
+	}
 }
 
 async function streamToArrayBuffer(

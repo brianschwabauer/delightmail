@@ -159,6 +159,46 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 	return redirectWithToast(event, `Connected ${email}. Backfilling your mail…`, '/settings/accounts');
 }
 
+/** POST /api/accounts/domain { domain } — register a Cloudflare-routed domain. */
+export async function handleDomainRegister(event: RequestEvent): Promise<Response> {
+	const penv = env(event);
+	const org_id = event.locals.org_id;
+	const db = event.locals.db;
+	if (!penv?.KV || !org_id || !db) return DelightError.badRequest('No mailbox').toResponse();
+
+	const body = (await event.request.json().catch(() => null)) as { domain?: string } | null;
+	const domain = body?.domain?.trim().toLowerCase().replace(/^@/, '');
+	if (!domain || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) {
+		return DelightError.badRequest('Enter a valid domain (e.g. example.com).').toResponse();
+	}
+
+	// Create the account (or reuse) and map the domain → org in KV so the
+	// server worker's email() handler can route inbound mail.
+	const { account_id } = await (
+		db as unknown as { ensureCfDomainAccount(d: string): Promise<{ account_id: string }> }
+	).ensureCfDomainAccount(domain);
+	await penv.KV.put(`domain:${domain}`, org_id);
+
+	// Register the account's SyncEngine so it can SEND (cf_email / smtp transport).
+	const sync = penv.SYNC.get(penv.SYNC.idFromName(account_id)) as unknown as {
+		connectAccount(input: unknown): Promise<{ ok: boolean }>;
+	};
+	await sync.connectAccount({
+		account_id,
+		org_id,
+		account_email: domain,
+		kind: 'cf_domain',
+	});
+
+	return Response.json({
+		account_id,
+		domain,
+		next_steps:
+			'In Cloudflare → Email Routing, enable catch-all → Send to Worker → delightmail-server. ' +
+			'For sending, onboard the domain to Email Service (or set SMTP_RELAY_* env).',
+	});
+}
+
 async function fetchGoogleEmail(access_token: string): Promise<string> {
 	const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
 		headers: { authorization: `Bearer ${access_token}` },

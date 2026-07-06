@@ -7,6 +7,7 @@
  * Alarm-driven job queue with exponential backoff (§5.4). AES-GCM-encrypted
  * credentials in local SQLite (§12). No user-visible data lives here.
  */
+import { DurableObject } from 'cloudflare:workers';
 import { encryptSecret, decryptSecret } from './crypto';
 import {
 	GmailClient,
@@ -30,6 +31,12 @@ export interface SyncEnv {
 	GMAIL_POLL_SECONDS?: string;
 	GMAIL_PUBSUB_TOPIC?: string;
 	PUBLIC_APP_URL?: string;
+	EMAIL?: { send(message: unknown): Promise<void> };
+	MAIL_FROM?: string;
+	SMTP_RELAY_HOST?: string;
+	SMTP_RELAY_PORT?: string;
+	SMTP_RELAY_USER?: string;
+	SMTP_RELAY_PASS?: string;
 }
 
 export type JobType =
@@ -94,14 +101,11 @@ interface SendPayload {
 	gmail_thread_id?: string;
 }
 
-export class SyncEngine implements DurableObject {
-	readonly #ctx: DurableObjectState;
-	readonly #env: SyncEnv;
+export class SyncEngine extends DurableObject<SyncEnv> {
 	readonly #sql: SqlStorage;
 
 	constructor(ctx: DurableObjectState, env: SyncEnv) {
-		this.#ctx = ctx;
-		this.#env = env;
+		super(ctx, env);
 		this.#sql = ctx.storage.sql;
 		this.#init();
 	}
@@ -138,8 +142,8 @@ export class SyncEngine implements DurableObject {
 	#mailbox(): MailboxStub {
 		const state = this.#state();
 		if (!state.org_id) throw new Error('SyncEngine has no org_id (not connected)');
-		return this.#env.MAILBOX.get(
-			this.#env.MAILBOX.idFromName(state.org_id),
+		return this.env.MAILBOX.get(
+			this.env.MAILBOX.idFromName(state.org_id),
 		) as unknown as MailboxStub;
 	}
 
@@ -154,7 +158,7 @@ export class SyncEngine implements DurableObject {
 		credentials?: Record<string, unknown>;
 	}): Promise<{ ok: boolean }> {
 		const enc = input.credentials
-			? await encryptSecret(JSON.stringify(input.credentials), this.#env.CREDENTIALS_ENCRYPTION_KEY)
+			? await encryptSecret(JSON.stringify(input.credentials), this.env.CREDENTIALS_ENCRYPTION_KEY)
 			: undefined;
 		this.#saveState({
 			org_id: input.org_id,
@@ -184,7 +188,7 @@ export class SyncEngine implements DurableObject {
 		await this.scheduleJob('backfill_page', { page_token: null }, 0);
 	}
 	async destroyAccount(): Promise<void> {
-		await this.#ctx.storage.deleteAll();
+		await this.ctx.storage.deleteAll();
 	}
 
 	async enqueueProviderAction(action: unknown): Promise<void> {
@@ -205,7 +209,7 @@ export class SyncEngine implements DurableObject {
 	async #credentials(): Promise<{ refresh_token: string } | null> {
 		const state = this.#state();
 		if (!state.credentials_encrypted) return null;
-		const plain = await decryptSecret(state.credentials_encrypted, this.#env.CREDENTIALS_ENCRYPTION_KEY);
+		const plain = await decryptSecret(state.credentials_encrypted, this.env.CREDENTIALS_ENCRYPTION_KEY);
 		return plain ? (JSON.parse(plain) as { refresh_token: string }) : null;
 	}
 
@@ -216,12 +220,12 @@ export class SyncEngine implements DurableObject {
 		}
 		const creds = await this.#credentials();
 		if (!creds?.refresh_token) throw new Error('No Gmail refresh token stored');
-		if (!this.#env.GOOGLE_CLIENT_ID || !this.#env.GOOGLE_CLIENT_SECRET) {
+		if (!this.env.GOOGLE_CLIENT_ID || !this.env.GOOGLE_CLIENT_SECRET) {
 			throw new Error('GOOGLE_CLIENT_ID/SECRET not configured');
 		}
 		const { access_token, expires_in } = await refreshAccessToken(
-			this.#env.GOOGLE_CLIENT_ID,
-			this.#env.GOOGLE_CLIENT_SECRET,
+			this.env.GOOGLE_CLIENT_ID,
+			this.env.GOOGLE_CLIENT_SECRET,
 			creds.refresh_token,
 		);
 		this.#saveState({ access_token, access_token_expiry: Date.now() + expires_in * 1000 });
@@ -250,8 +254,8 @@ export class SyncEngine implements DurableObject {
 			.exec(`SELECT MIN(run_at) AS next FROM job WHERE status = 'pending'`)
 			.toArray()[0] as unknown as { next: number | null };
 		if (row?.next == null) return;
-		const current = await this.#ctx.storage.getAlarm();
-		if (current == null || row.next < current) await this.#ctx.storage.setAlarm(row.next);
+		const current = await this.ctx.storage.getAlarm();
+		if (current == null || row.next < current) await this.ctx.storage.setAlarm(row.next);
 	}
 
 	async alarm(): Promise<void> {
@@ -406,15 +410,15 @@ export class SyncEngine implements DurableObject {
 	}
 
 	async #renewWatch(): Promise<void> {
-		if (!this.#env.GMAIL_PUBSUB_TOPIC) {
+		if (!this.env.GMAIL_PUBSUB_TOPIC) {
 			// No Pub/Sub configured → fall back to polling (§5.1).
-			const seconds = Number(this.#env.GMAIL_POLL_SECONDS ?? 90);
+			const seconds = Number(this.env.GMAIL_POLL_SECONDS ?? 90);
 			await this.scheduleJob('history_sync', {}, seconds * 1000);
 			await this.scheduleJob('renew_watch', {}, seconds * 1000);
 			return;
 		}
 		const gmail = await this.#gmail();
-		const res = await gmail.watch(this.#env.GMAIL_PUBSUB_TOPIC);
+		const res = await gmail.watch(this.env.GMAIL_PUBSUB_TOPIC);
 		this.#saveState({ gmail_watch_expiry: Number(res.expiration) });
 		// Re-arm 6 days out (watches expire after 7, §5.1).
 		await this.scheduleJob('renew_watch', {}, 6 * 24 * 60 * 60 * 1000);
@@ -423,10 +427,10 @@ export class SyncEngine implements DurableObject {
 	async #sendMessage(payload: SendPayload): Promise<void> {
 		const state = this.#state();
 		const htmlObj = payload.body_keys?.html
-			? await this.#env.R2.get(payload.body_keys.html)
+			? await this.env.R2.get(payload.body_keys.html)
 			: null;
 		const textObj = payload.body_keys?.text
-			? await this.#env.R2.get(payload.body_keys.text)
+			? await this.env.R2.get(payload.body_keys.text)
 			: null;
 		const html = htmlObj ? await htmlObj.text() : '';
 		const text = textObj ? await textObj.text() : '';
@@ -443,6 +447,7 @@ export class SyncEngine implements DurableObject {
 			message_id: payload.rfc822_message_id,
 		});
 
+		const fromEmail = payload.from?.email ?? state.account_email ?? '';
 		let result: { ok: boolean; provider_ids?: Record<string, unknown>; error?: string };
 		try {
 			if (state.kind === 'gmail') {
@@ -451,14 +456,71 @@ export class SyncEngine implements DurableObject {
 				const sent = await gmail.send(rawB64Url, payload.gmail_thread_id);
 				result = { ok: true, provider_ids: { gmail_id: sent.id, gmail_thread_id: sent.threadId } };
 			} else {
-				// cf_email (P4) and smtp (P7) transports land in their phases.
-				throw new Error(`Transport for account kind '${state.kind}' not implemented yet`);
+				// cf_domain: Cloudflare Email Service, else SMTP relay (§6). imap → smtp (P7).
+				await this.#sendViaEmailServiceOrSmtp(built.raw, fromEmail, payload);
+				result = { ok: true };
 			}
 		} catch (err) {
 			result = { ok: false, error: err instanceof Error ? err.message : String(err) };
 		}
 		await this.#mailbox().markSendResult(payload.message_id, result);
 		if (!result.ok) throw new Error(result.error); // let the job retry with backoff
+	}
+
+	/** Send a raw MIME message via Cloudflare Email Service, else an SMTP relay. */
+	async #sendViaEmailServiceOrSmtp(
+		raw: string,
+		fromEmail: string,
+		payload: SendPayload,
+	): Promise<void> {
+		const recipients = [
+			...(payload.to ?? []),
+			...(payload.cc ?? []),
+			...(payload.bcc ?? []),
+		]
+			.map((a) => a.email)
+			.filter((e): e is string => !!e);
+		if (!recipients.length) throw new Error('No recipients');
+
+		// 1. Cloudflare Email Service (env.EMAIL binding).
+		if (this.env.EMAIL) {
+			const mod: unknown = await import(/* @vite-ignore */ 'cloudflare:email').catch(() => null);
+			const EmailMessage = (mod as { EmailMessage?: new (from: string, to: string, raw: string) => unknown })
+				?.EmailMessage;
+			if (EmailMessage) {
+				for (const to of recipients) {
+					await this.env.EMAIL.send(new EmailMessage(fromEmail, to, raw));
+				}
+				return;
+			}
+		}
+
+		// 2. SMTP relay fallback.
+		if (this.env.SMTP_RELAY_HOST) {
+			const mod: unknown = await import(/* @vite-ignore */ 'worker-mailer').catch(() => null);
+			const WorkerMailer = (mod as { WorkerMailer?: { connect(o: unknown): Promise<{ send(m: unknown): Promise<void>; close(): Promise<void> }> } })
+				?.WorkerMailer;
+			if (!WorkerMailer) throw new Error('worker-mailer unavailable for SMTP relay');
+			const port = Number(this.env.SMTP_RELAY_PORT ?? 587);
+			const mailer = await WorkerMailer.connect({
+				host: this.env.SMTP_RELAY_HOST,
+				port,
+				secure: port === 465,
+				startTls: port !== 465,
+				authType: 'plain',
+				credentials:
+					this.env.SMTP_RELAY_USER && this.env.SMTP_RELAY_PASS
+						? { username: this.env.SMTP_RELAY_USER, password: this.env.SMTP_RELAY_PASS }
+						: undefined,
+			});
+			await mailer.send({ from: fromEmail, to: recipients, raw });
+			await mailer.close();
+			return;
+		}
+
+		throw new Error(
+			'No outbound transport for this domain. Onboard it to Cloudflare Email Service or set SMTP_RELAY_* env.',
+		);
 	}
 
 	async #providerAction(payload: ProviderActionPayload): Promise<void> {
@@ -504,7 +566,7 @@ export class SyncEngine implements DurableObject {
 					await gmailToNormalized(msg, {
 						account_id: state.account_id!,
 						org_id: state.org_id!,
-						r2: this.#env.R2,
+						r2: this.env.R2,
 					}),
 				);
 			} catch (err) {
