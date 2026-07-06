@@ -13,8 +13,8 @@ export default defineConfig({
 		external: ['worker-mailer'],
 	},
 	test: {
-		// Domain logic in src/lib/mail/* is pure and runs in node.
-		include: ['src/**/*.{test,spec}.{js,ts}'],
+		// Pure domain + server orchestration logic; runs in node.
+		include: ['src/**/*.{test,spec}.{js,ts}', 'server/src/**/*.{test,spec}.{js,ts}'],
 		environment: 'node',
 	},
 });
