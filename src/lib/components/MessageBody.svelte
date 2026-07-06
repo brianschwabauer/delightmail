@@ -1,0 +1,58 @@
+<script lang="ts">
+	/**
+	 * Renders a message body inside a sandboxed iframe (§12). The body HTML is
+	 * served sanitized from /api/messages/:id/body with a strict CSP, so scripts
+	 * can never run even if sanitization missed something. The iframe is
+	 * same-origin (no allow-scripts), so we can auto-size it to its content.
+	 */
+	interface Props {
+		messageId: string;
+		excerpt: string;
+	}
+	const { messageId, excerpt }: Props = $props();
+
+	let iframe = $state<HTMLIFrameElement>();
+	let frameHeight = $state(120);
+	let failed = $state(false);
+
+	function onLoad() {
+		try {
+			const doc = iframe?.contentDocument;
+			if (!doc) return;
+			const h = doc.body?.scrollHeight ?? 0;
+			if (h > 0) frameHeight = Math.min(h + 24, 4000);
+			else if (!doc.body?.innerHTML?.trim()) failed = true;
+		} catch {
+			// Cross-origin measurement blocked — keep a default height.
+		}
+	}
+</script>
+
+{#if failed}
+	<pre class="excerpt">{excerpt}</pre>
+{:else}
+	<iframe
+		bind:this={iframe}
+		title="Message body"
+		src="/api/messages/{encodeURIComponent(messageId)}/body"
+		sandbox="allow-popups allow-popups-to-escape-sandbox"
+		referrerpolicy="no-referrer"
+		style:height="{frameHeight}px"
+		onload={onLoad}></iframe>
+{/if}
+
+<style>
+	iframe {
+		width: 100%;
+		border: none;
+		background: white;
+		display: block;
+	}
+	.excerpt {
+		padding: var(--size-3);
+		white-space: pre-wrap;
+		font-family: inherit;
+		margin: 0;
+		font-size: var(--font-size-0);
+	}
+</style>
