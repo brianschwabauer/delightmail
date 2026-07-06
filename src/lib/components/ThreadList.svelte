@@ -9,6 +9,8 @@
 		loading?: boolean;
 		onOpen: (index: number) => void;
 		onCursor: (index: number) => void;
+		/** Mobile swipe: right = archive, left = trash. */
+		onSwipe?: (index: number, dir: 'archive' | 'trash') => void;
 	}
 	let {
 		docs,
@@ -18,7 +20,24 @@
 		loading = false,
 		onOpen,
 		onCursor,
+		onSwipe,
 	}: Props = $props();
+
+	// --- touch swipe (mobile) ---
+	let swipeStartX = 0;
+	let swipeIndex = -1;
+	const SWIPE_THRESHOLD = 64;
+	function onTouchStart(e: TouchEvent, index: number) {
+		swipeStartX = e.touches[0].clientX;
+		swipeIndex = index;
+	}
+	function onTouchEnd(e: TouchEvent) {
+		if (swipeIndex < 0 || !onSwipe) return;
+		const dx = e.changedTouches[0].clientX - swipeStartX;
+		if (dx > SWIPE_THRESHOLD) onSwipe(swipeIndex, 'archive');
+		else if (dx < -SWIPE_THRESHOLD) onSwipe(swipeIndex, 'trash');
+		swipeIndex = -1;
+	}
 
 	const ROW_H = $derived(density === 'compact' ? 44 : 60);
 	const OVERSCAN = 20;
@@ -82,6 +101,8 @@
 					style:height="{ROW_H}px"
 					role="option"
 					aria-selected={index === cursor}
+					ontouchstart={(e) => onTouchStart(e, index)}
+					ontouchend={onTouchEnd}
 					onclick={() => {
 						onCursor(index);
 						onOpen(index);

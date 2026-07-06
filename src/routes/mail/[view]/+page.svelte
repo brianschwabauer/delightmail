@@ -283,7 +283,11 @@
 				cursor = i;
 				openCursor();
 			}}
-			onCursor={(i) => (cursor = i)} />
+			onCursor={(i) => (cursor = i)}
+			onSwipe={(i, dir) => {
+				cursor = i;
+				act(dir === 'archive' ? 'archive' : 'trash');
+			}} />
 	</div>
 </section>
 

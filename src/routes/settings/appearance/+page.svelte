@@ -1,17 +1,32 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { Button, toast } from '@delightstack/components';
 	import { applyTheme, applyDensity, currentTheme, currentDensity, type Theme, type Density } from '$lib/theme';
+	import { enablePush, isPushSupported } from '$lib/push-client';
 
 	const { data } = $props();
 	const { db } = $derived(data);
 
 	let theme = $state<Theme>('system');
 	let density = $state<Density>('comfortable');
+	let pushSupported = $state(false);
+	let enablingPush = $state(false);
 
-	onMount(() => {
+	onMount(async () => {
 		theme = currentTheme();
 		density = currentDensity();
+		pushSupported = await isPushSupported();
 	});
+
+	async function turnOnPush() {
+		enablingPush = true;
+		try {
+			const r = await enablePush();
+			toast(r.ok ? 'Notifications enabled on this device.' : r.reason || 'Could not enable notifications.');
+		} finally {
+			enablingPush = false;
+		}
+	}
 
 	async function persist(patch: Record<string, unknown>) {
 		try {
@@ -57,6 +72,18 @@
 		{/each}
 	</div>
 	<p class="muted">Compact fits more conversations per screen.</p>
+</section>
+
+<section>
+	<h3>Notifications</h3>
+	{#if pushSupported}
+		<Button disabled={enablingPush} onclick={turnOnPush}>
+			{enablingPush ? 'Enabling…' : 'Enable push notifications'}
+		</Button>
+		<p class="muted">Get notified of important new mail even when the app is closed (needs VAPID keys configured; iOS requires the installed PWA).</p>
+	{:else}
+		<p class="muted">Push isn't supported on this device/browser.</p>
+	{/if}
 </section>
 
 <style>

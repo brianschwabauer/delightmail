@@ -10,6 +10,7 @@ import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-en
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend } from './send';
 import { handleTriageTest, handleUnsubscribe } from './triage-endpoints';
+import { handleVapidKey, handlePushSubscribe, handlePushUnsubscribe } from './push';
 import { handleDevSeed } from './dev-seed';
 
 export function createMailHandle(): Handle {
@@ -78,6 +79,11 @@ async function route(event: RequestEvent): Promise<Response> {
 	if (parts[1] === 'unsubscribe' && parts[2] && method === 'POST') {
 		return handleUnsubscribe(event, decodeURIComponent(parts[2]));
 	}
+
+	// --- web push (P6) ---
+	if (pathname === '/api/push/vapid' && method === 'GET') return handleVapidKey(event);
+	if (pathname === '/api/push/subscribe' && method === 'POST') return handlePushSubscribe(event);
+	if (pathname === '/api/push/subscribe' && method === 'DELETE') return handlePushUnsubscribe(event);
 
 	// --- dev-only seed (never reachable in production) ---
 	if (dev && pathname === '/api/dev/seed' && method === 'POST') {

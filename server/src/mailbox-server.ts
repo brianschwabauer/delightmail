@@ -26,6 +26,9 @@ export interface MailboxEnv {
 	AI_GATEWAY_TOKEN?: string;
 	AI_TRIAGE_ROUTE?: string;
 	CREDENTIALS_ENCRYPTION_KEY?: string;
+	VAPID_PUBLIC_KEY?: string;
+	VAPID_PRIVATE_KEY?: string;
+	VAPID_SUBJECT?: string;
 }
 
 const SETTINGS_ID = 'main';
@@ -138,8 +141,26 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			});
 		}
 		// Triage newly-arrived inbound messages after paint (§7).
-		if (result.new_messages.some((m) => m.is_outbound === false)) {
-			await this.scheduleJob('triage', {}, 0);
+		const inbound = result.new_messages.filter((m) => m.is_outbound === false);
+		if (inbound.length) await this.scheduleJob('triage', {}, 0);
+
+		// Web push for new inbox arrivals (§10.4), respecting push_mode.
+		if (this.#menv.VAPID_PUBLIC_KEY) {
+			const settings = await this.ensureSettings();
+			if ((settings.push_mode ?? 'important') !== 'off') {
+				const first = inbound.find((m) => m.folder === 'inbox');
+				if (first) {
+					await this.scheduleJob(
+						'push',
+						{
+							title: first.from?.name || first.from?.email || 'New mail',
+							body: first.subject ?? '',
+							thread_id: first.thread_id,
+						},
+						0,
+					);
+				}
+			}
 		}
 		return { ingested: result.ingested, skipped: result.skipped };
 	}
@@ -587,6 +608,50 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		await this.#rearmAlarm();
 	}
 
+	/** Send a web push to every registered device (§10.4). */
+	async #sendPush(payload: { title?: string; body?: string; thread_id?: string }): Promise<void> {
+		const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = this.#menv;
+		if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+		const { sendWebPush } = await import('./webpush');
+		const subs = this.exec(`SELECT id, json FROM push_subscription`) as Array<{
+			id: string;
+			json?: string;
+		}>;
+		const unread = this.exec(
+			`SELECT COUNT(*) AS n FROM thread WHERE folder = 'inbox' AND unread_count > 0`,
+		) as Array<{ n: number }>;
+		const body = JSON.stringify({
+			title: payload.title ?? 'New mail',
+			body: payload.body ?? '',
+			thread_id: payload.thread_id,
+			badge: unread[0]?.n ?? 0,
+		});
+		for (const row of subs) {
+			const sub = safeParse(row.json ?? '') as {
+				endpoint?: string;
+				keys?: { p256dh: string; auth: string };
+			};
+			if (!sub.endpoint || !sub.keys) continue;
+			try {
+				const res = await sendWebPush(
+					{ endpoint: sub.endpoint, keys: sub.keys },
+					body,
+					{ publicKey: VAPID_PUBLIC_KEY, privateKey: VAPID_PRIVATE_KEY, subject: VAPID_SUBJECT ?? 'mailto:admin@delightmail' },
+				);
+				if (res.status === 404 || res.status === 410) {
+					// Subscription gone — prune it.
+					try {
+						this.delete('push_subscription', row.id);
+					} catch {
+						/* ignore */
+					}
+				}
+			} catch (err) {
+				console.error('[MailboxServer] web push failed:', err);
+			}
+		}
+	}
+
 	async #runJob(type: string, _payload: unknown): Promise<void> {
 		switch (type) {
 			case 'triage': {
@@ -602,8 +667,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			case 'outbox':
 				return this.#flushOutbox();
 			case 'push':
-				// Filled in P6.
-				return;
+				return this.#sendPush(_payload as { title?: string; body?: string; thread_id?: string });
 			default:
 				console.warn(`[MailboxServer] unknown job type: ${type}`);
 		}
