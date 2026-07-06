@@ -307,6 +307,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			case 'send':
 				return this.#sendMessage(payload as SendPayload);
 			case 'poll_imap':
+				return this.#pollImap();
 			case 'fetch_attachment':
 			case 'unsubscribe':
 			case 'replay_r2':
@@ -521,6 +522,109 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		throw new Error(
 			'No outbound transport for this domain. Onboard it to Cloudflare Email Service or set SMTP_RELAY_* env.',
 		);
+	}
+
+	// -------------------------------------------------------------------------
+	// IMAP (§5.3) — R1 spike-gated. imapflow over node:tls under nodejs_compat.
+	// If Workers sockets prove insufficient, the adapter interface is unchanged
+	// and a Cloudflare Container bridge is dropped in behind it.
+	// -------------------------------------------------------------------------
+	/** RPC connection test for the add-account UI. */
+	async testImap(cfg: {
+		host: string;
+		port: number;
+		secure: boolean;
+		user: string;
+		pass: string;
+	}): Promise<{ ok: boolean; error?: string; folders?: string[] }> {
+		try {
+			const client = await this.#imapConnect(cfg);
+			if (!client) {
+				return {
+					ok: false,
+					error: 'IMAP transport unavailable in this runtime — see R1 spike (imapflow over Workers sockets, or the Container fallback).',
+				};
+			}
+			const list = (await client.list()) as Array<{ path: string }>;
+			await client.logout();
+			return { ok: true, folders: list.map((f) => f.path).slice(0, 50) };
+		} catch (err) {
+			return { ok: false, error: err instanceof Error ? err.message : String(err) };
+		}
+	}
+
+	async #pollImap(): Promise<void> {
+		const creds = (await this.#decryptCreds()) as {
+			imap?: { host: string; port: number; secure: boolean; user: string; pass: string };
+		} | null;
+		const seconds = Number(this.env.GMAIL_POLL_SECONDS ?? 120);
+		if (!creds?.imap) {
+			await this.scheduleJob('poll_imap', {}, seconds * 1000);
+			return;
+		}
+		try {
+			const client = await this.#imapConnect(creds.imap);
+			if (!client) {
+				await this.#setStatus('error', 'IMAP unavailable (R1 spike required)');
+				return; // do not tight-loop when the transport can't run
+			}
+			// A full poll (folder UIDVALIDITY/UIDNEXT diff → fetch new → ingest)
+			// is implemented against the imapflow API once R1 confirms sockets.
+			await client.logout();
+			await this.#setStatus('live');
+		} catch (err) {
+			await this.#setStatus('error', err instanceof Error ? err.message : String(err));
+		}
+		await this.scheduleJob('poll_imap', {}, seconds * 1000);
+	}
+
+	/** Connect via imapflow (dynamic import); returns null if unavailable. */
+	async #imapConnect(cfg: {
+		host: string;
+		port: number;
+		secure: boolean;
+		user: string;
+		pass: string;
+	}): Promise<{
+		list(): Promise<unknown>;
+		logout(): Promise<void>;
+	} | null> {
+		// Computed specifier so the bundler doesn't try to resolve imapflow at
+		// build time (it's an optional dep, installed only once the R1 spike
+		// confirms Workers-socket IMAP). Absent → graceful null.
+		const spec = ['imap', 'flow'].join('');
+		const mod: unknown = await import(/* @vite-ignore */ spec).catch(() => null);
+		const ImapFlow = (mod as { ImapFlow?: new (opts: unknown) => unknown })?.ImapFlow;
+		if (!ImapFlow) return null;
+		const client = new ImapFlow({
+			host: cfg.host,
+			port: cfg.port,
+			secure: cfg.secure,
+			auth: { user: cfg.user, pass: cfg.pass },
+			logger: false,
+		}) as { connect(): Promise<void>; list(): Promise<unknown>; logout(): Promise<void> };
+		await client.connect();
+		return client;
+	}
+
+	async #decryptCreds(): Promise<Record<string, unknown> | null> {
+		const state = this.#state();
+		if (!state.credentials_encrypted) return null;
+		const plain = await decryptSecret(state.credentials_encrypted, this.env.CREDENTIALS_ENCRYPTION_KEY);
+		return plain ? (JSON.parse(plain) as Record<string, unknown>) : null;
+	}
+
+	async #setStatus(status: string, detail?: string): Promise<void> {
+		const s = this.#state();
+		if (!s.account_id) return;
+		try {
+			this.#mailbox().update('account', s.account_id, {
+				status,
+				...(detail ? { status_detail: detail } : {}),
+			});
+		} catch {
+			/* ignore */
+		}
 	}
 
 	async #providerAction(payload: ProviderActionPayload): Promise<void> {

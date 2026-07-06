@@ -159,6 +159,106 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 	return redirectWithToast(event, `Connected ${email}. Backfilling your mail…`, '/settings/accounts');
 }
 
+interface ImapBody {
+	email: string;
+	imap_host: string;
+	imap_port?: number;
+	smtp_host?: string;
+	smtp_port?: number;
+	username?: string;
+	password: string;
+}
+
+/** POST /api/accounts/imap/test — verify IMAP credentials (R1: socket spike). */
+export async function handleImapTest(event: RequestEvent): Promise<Response> {
+	const body = (await event.request.json().catch(() => null)) as ImapBody | null;
+	if (!body?.imap_host || !body.password) {
+		return DelightError.badRequest('Host and password are required.').toResponse();
+	}
+	// The live connection test runs inside the account's SyncEngine (which has the
+	// socket + imapflow). Until the R1 spike confirms Workers-socket IMAP, this
+	// surfaces the attempt result honestly.
+	const penv = env(event);
+	if (!penv?.SYNC) return DelightError.badRequest('No sync engine').toResponse();
+	const probeId = `imap-probe-${(body.username || body.email).toLowerCase()}`;
+	const sync = penv.SYNC.get(penv.SYNC.idFromName(probeId)) as unknown as {
+		testImap(cfg: unknown): Promise<{ ok: boolean; error?: string; folders?: string[] }>;
+	};
+	try {
+		const result = await sync.testImap({
+			host: body.imap_host,
+			port: body.imap_port ?? 993,
+			secure: (body.imap_port ?? 993) === 993,
+			user: body.username || body.email,
+			pass: body.password,
+		});
+		return Response.json(result);
+	} catch (err) {
+		return Response.json({ ok: false, error: (err as Error).message });
+	}
+}
+
+/** POST /api/accounts/imap — add an IMAP/SMTP account. */
+export async function handleImapAdd(event: RequestEvent): Promise<Response> {
+	const penv = env(event);
+	const org_id = event.locals.org_id;
+	const db = event.locals.db;
+	if (!penv?.SYNC || !org_id || !db) return DelightError.badRequest('No mailbox').toResponse();
+
+	const body = (await event.request.json().catch(() => null)) as ImapBody | null;
+	if (!body?.email || !body.imap_host || !body.password) {
+		return DelightError.badRequest('Email, IMAP host and password are required.').toResponse();
+	}
+
+	const account = (await db.create('account', {
+		kind: 'imap',
+		email: body.email.toLowerCase(),
+		display_name: body.email,
+		color: pickColor(await accountCount(db)),
+		status: 'connecting',
+		config: {
+			imap_host: body.imap_host,
+			imap_port: body.imap_port ?? 993,
+			imap_secure: (body.imap_port ?? 993) === 993,
+			smtp_host: body.smtp_host ?? body.imap_host.replace(/^imap/, 'smtp'),
+			smtp_port: body.smtp_port ?? 587,
+			username: body.username || body.email,
+		},
+	})) as { id: string };
+	await db.create('identity', {
+		account_id: account.id,
+		email: body.email.toLowerCase(),
+		name: body.email.split('@')[0],
+		is_default: (await accountCount(db)) <= 1,
+	});
+
+	const sync = penv.SYNC.get(penv.SYNC.idFromName(account.id)) as unknown as {
+		connectAccount(input: unknown): Promise<{ ok: boolean }>;
+	};
+	await sync.connectAccount({
+		account_id: account.id,
+		org_id,
+		account_email: body.email.toLowerCase(),
+		kind: 'imap',
+		credentials: {
+			imap: {
+				host: body.imap_host,
+				port: body.imap_port ?? 993,
+				secure: (body.imap_port ?? 993) === 993,
+				user: body.username || body.email,
+				pass: body.password,
+			},
+			smtp: {
+				host: body.smtp_host ?? body.imap_host.replace(/^imap/, 'smtp'),
+				port: body.smtp_port ?? 587,
+				user: body.username || body.email,
+				pass: body.password,
+			},
+		},
+	});
+	return Response.json({ account_id: account.id, email: body.email });
+}
+
 /** POST /api/accounts/domain { domain } — register a Cloudflare-routed domain. */
 export async function handleDomainRegister(event: RequestEvent): Promise<Response> {
 	const penv = env(event);

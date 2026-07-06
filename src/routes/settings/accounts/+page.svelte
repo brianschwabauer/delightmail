@@ -9,6 +9,51 @@
 	let domain = $state('');
 	let addingDomain = $state(false);
 
+	// --- IMAP ---
+	let imap = $state({ email: '', imap_host: '', imap_port: 993, password: '' });
+	let imapBusy = $state(false);
+	let imapTestResult = $state('');
+
+	async function testImap() {
+		imapBusy = true;
+		imapTestResult = '';
+		try {
+			const res = await fetch('/api/accounts/imap/test', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(imap),
+			});
+			const body = (await res.json()) as { ok: boolean; error?: string; folders?: string[] };
+			imapTestResult = body.ok
+				? `Connected — ${body.folders?.length ?? 0} folders found.`
+				: body.error || 'Connection failed.';
+		} catch (e) {
+			imapTestResult = (e as Error).message;
+		} finally {
+			imapBusy = false;
+		}
+	}
+	async function addImap() {
+		if (!imap.email || !imap.imap_host || !imap.password) return toast('Fill in all IMAP fields.');
+		imapBusy = true;
+		try {
+			const res = await fetch('/api/accounts/imap', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(imap),
+			});
+			const body = (await res.json()) as { account_id?: string; message?: string };
+			if (body.account_id) {
+				toast(`Added ${imap.email}.`);
+				imap = { email: '', imap_host: '', imap_port: 993, password: '' };
+			} else toast(body.message || 'Could not add the account.');
+		} catch (e) {
+			toast((e as Error).message);
+		} finally {
+			imapBusy = false;
+		}
+	}
+
 	async function connectDomain() {
 		if (!domain.trim()) return;
 		addingDomain = true;
@@ -98,6 +143,25 @@
 	</div>
 </div>
 
+<div class="add domain">
+	<h3>IMAP / SMTP</h3>
+	<p class="hint muted">
+		Any provider (Fastmail, iCloud, self-hosted…). Uses an app password. IMAP polling is gated on
+		the R1 socket spike — the connection test tells you if it works on this deployment.
+	</p>
+	<div class="imap-grid">
+		<Input bind:value={imap.email} placeholder="you@example.com" label="Email" />
+		<Input bind:value={imap.imap_host} placeholder="imap.example.com" label="IMAP host" />
+		<Input type="number" bind:value={imap.imap_port} label="Port" />
+		<Input type="password" bind:value={imap.password} placeholder="app password" label="Password" />
+	</div>
+	<div class="imap-actions">
+		<Button transparent disabled={imapBusy} onclick={testImap}>Test connection</Button>
+		<Button disabled={imapBusy} onclick={addImap}>Add IMAP account</Button>
+	</div>
+	{#if imapTestResult}<p class="hint muted">{imapTestResult}</p>{/if}
+</div>
+
 <style>
 	h2 {
 		font-size: var(--font-size-3);
@@ -161,5 +225,16 @@
 	.hint {
 		margin-top: var(--size-2);
 		font-size: var(--font-size-0);
+	}
+	.imap-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--size-2);
+		max-width: 480px;
+		margin: var(--size-2) 0;
+	}
+	.imap-actions {
+		display: flex;
+		gap: var(--size-2);
 	}
 </style>
