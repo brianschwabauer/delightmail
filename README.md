@@ -42,7 +42,11 @@ first**.
 
 ```sh
 pnpm install
-cp server/.dev.vars.example server/.dev.vars   # fill in secrets (dev works with defaults)
+cp server/.dev.vars.example server/.dev.vars   # dev works with defaults
+
+# If your machine has multiple Cloudflare accounts, export the one to use
+# (the AI binding forces a remote proxy that must pick an account):
+export CLOUDFLARE_ACCOUNT_ID=<your-account-id>
 
 # terminal 1 — the DO-hosting server worker (also the dev RPC bridge)
 pnpm dev:worker
@@ -51,9 +55,14 @@ pnpm dev:worker
 pnpm dev
 ```
 
-In dev, magic-link sign-in emails are logged to the server-worker console (no
-mail provider needed). Open http://localhost:5174 and sign in with your
-`OWNER_EMAIL`.
+Open http://localhost:5174 and enter your `OWNER_EMAIL`. First contact creates a
+passwordless account and signs you straight in; afterward you can register a
+passkey or use a magic link. (Real magic-link emails need a mail provider; in
+dev the link is logged to the server-worker console.)
+
+> Dev note: leave `JWT_KEY_SECRET` unset in `server/.dev.vars` so the app and the
+> AuthServer DO share the same fallback secret. In production, `wrangler secret
+> put JWT_KEY_SECRET` the same value on **both** workers.
 
 ## Checks
 

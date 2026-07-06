@@ -38,7 +38,7 @@ export class AuthServer extends BaseAuthDatabaseServer {
 		super(ctx, env as never, {
 			secret:
 				env.JWT_KEY_SECRET ||
-				'dev-secret-change-me-in-production-min-64-chars-long-0123456789abcdef',
+				'00000000000000000000000000000000000000000000000000000000deadbeef',
 			issuer: 'delightmail',
 			permissions: ['owner', 'admin', 'member'],
 			oauth_scopes: [],

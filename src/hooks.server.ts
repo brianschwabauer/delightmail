@@ -11,7 +11,8 @@ import { tables } from '$lib/schema';
 import { sendTransactionalEmail } from '$lib/server/email';
 import { createMailHandle } from '$lib/server/mail-handle';
 
-const DEV_SECRET = 'dev-secret-change-me-in-production-min-64-chars-long-0123456789abcdef';
+// A valid 64-char hex secret for dev only; production MUST set JWT_KEY_SECRET.
+const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
 
 function appOrigin(): string {
 	return env.PUBLIC_APP_URL ?? 'http://localhost:5174';

@@ -30,16 +30,29 @@
 
 	async function requestLink(e: Event) {
 		e.preventDefault();
-		if (!email.trim()) return;
+		const addr = email.trim();
+		if (!addr) return;
 		error = '';
 		notice = '';
 		busy = true;
 		try {
-			await auth.signIn.emailMagicLink({ email: email.trim() });
+			await auth.signIn.emailMagicLink({ email: addr });
 			stage = 'code';
-			notice = `We emailed a sign-in link and code to ${email.trim()}.`;
-		} catch (e) {
-			error = (e as { message?: string })?.message || 'Could not send the sign-in email.';
+			notice = `We emailed a sign-in link and code to ${addr}.`;
+		} catch (magicErr) {
+			// First contact (§8): no account yet → create a passwordless account,
+			// which signs the owner in directly. Only allowed emails get this far
+			// (the signup gate rejects others). Subsequent sign-ins use magic
+			// link or passkey.
+			try {
+				await auth.signUp.email({ name: addr.split('@')[0], email: addr });
+				window.location.href = '/mail/inbox';
+			} catch (signupErr) {
+				error =
+					(signupErr as { message?: string })?.message ||
+					(magicErr as { message?: string })?.message ||
+					'Could not sign in. Check the email address and try again.';
+			}
 		} finally {
 			busy = false;
 		}
