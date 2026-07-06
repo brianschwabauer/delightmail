@@ -9,6 +9,7 @@ import { handleGoogleStart, handleGoogleCallback, handleDomainRegister } from '.
 import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend } from './send';
+import { handleTriageTest, handleUnsubscribe } from './triage-endpoints';
 import { handleDevSeed } from './dev-seed';
 
 export function createMailHandle(): Handle {
@@ -68,6 +69,14 @@ async function route(event: RequestEvent): Promise<Response> {
 	}
 	if (parts[1] === 'send' && parts[3] === 'undo' && method === 'POST') {
 		return handleUndoSend(event, decodeURIComponent(parts[2]));
+	}
+
+	// --- AI triage + unsubscribe (P5) ---
+	if (pathname === '/api/triage/test' && method === 'POST') {
+		return handleTriageTest(event);
+	}
+	if (parts[1] === 'unsubscribe' && parts[2] && method === 'POST') {
+		return handleUnsubscribe(event, decodeURIComponent(parts[2]));
 	}
 
 	// --- dev-only seed (never reachable in production) ---

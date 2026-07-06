@@ -11,6 +11,7 @@ import type { WebsocketServer } from '@delightstack/websocket/worker';
 import { tables, type Thread, type Message, type Settings } from '../../src/lib/schema';
 import { ingestBatch, type NormalizedMessage } from './ingest';
 import { applyThreadActionLocal } from './actions';
+import { runTriageJob } from './triage';
 
 export interface MailboxEnv {
 	MAILBOX: DurableObjectNamespace;
@@ -454,10 +455,62 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Triage preview (§7.4) — filled in P5.
+	// Triage preview (§7.4) — run the prompt against recent mail without acting.
 	// -------------------------------------------------------------------------
-	async triageTest(_prompt: string, _count: number): Promise<unknown[]> {
-		return [];
+	async triageTest(prompt: string, count: number): Promise<unknown[]> {
+		if (!this.#menv.AI || !this.#menv.AI_GATEWAY_NAME) {
+			return [{ error: 'AI Gateway is not configured on this instance.' }];
+		}
+		const { createAiGateway } = await import('@delightstack/ai/server');
+		const { buildTriageMessages, parseVerdict, applyGuardrails } = await import(
+			'../../src/lib/mail/triage'
+		);
+		const gateway = createAiGateway({
+			ai: this.#menv.AI as never,
+			gateway: this.#menv.AI_GATEWAY_NAME,
+		});
+		const model = this.#menv.AI_TRIAGE_ROUTE ?? 'dynamic/email-triage';
+
+		const rows = this.exec(
+			`SELECT id FROM message WHERE is_outbound = 0 AND folder = 'inbox' ORDER BY date DESC LIMIT ?`,
+			Math.min(20, Math.max(1, count)),
+		) as Array<{ id: string }>;
+
+		const out: unknown[] = [];
+		for (const { id } of rows) {
+			let msg: Message;
+			try {
+				msg = this.get('message', id) as Message;
+			} catch {
+				continue;
+			}
+			const from = msg.from as { email?: string; name?: string } | undefined;
+			const headers = (msg.headers_subset ?? {}) as Record<string, string>;
+			try {
+				const messages = buildTriageMessages(prompt, {
+					from: from?.email,
+					subject: msg.subject ?? undefined,
+					has_unsubscribe: !!headers.list_unsubscribe,
+					text: msg.text_excerpt ?? '',
+					known_correspondent_domains: [],
+				});
+				const result = await gateway.complete({ messages, model, temperature: 0, max_tokens: 200 });
+				const json = safeParse(
+					result.content.slice(result.content.indexOf('{'), result.content.lastIndexOf('}') + 1),
+				);
+				const { verdict } = parseVerdict(json);
+				const guarded = applyGuardrails(verdict, { is_known_correspondent: false });
+				out.push({
+					subject: msg.subject,
+					from: from?.email,
+					verdict: guarded.verdict,
+					overridden: guarded.overridden,
+				});
+			} catch (err) {
+				out.push({ subject: msg.subject, error: (err as Error).message });
+			}
+		}
+		return out;
 	}
 
 	// -------------------------------------------------------------------------
@@ -536,9 +589,16 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 
 	async #runJob(type: string, _payload: unknown): Promise<void> {
 		switch (type) {
-			case 'triage':
-				// Filled in P5 (AI triage pipeline).
+			case 'triage': {
+				const more = await runTriageJob(this as never, {
+					AI: this.#menv.AI,
+					AI_GATEWAY_NAME: this.#menv.AI_GATEWAY_NAME,
+					AI_TRIAGE_ROUTE: this.#menv.AI_TRIAGE_ROUTE,
+				});
+				// Drain the queue: if a full batch ran there may be more.
+				if (more) await this.scheduleJob('triage', {}, 2000);
 				return;
+			}
 			case 'outbox':
 				return this.#flushOutbox();
 			case 'push':
