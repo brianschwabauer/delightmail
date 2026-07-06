@@ -91,8 +91,8 @@ sw.addEventListener('push', (event) => {
 		(async () => {
 			await sw.registration.showNotification(payload.title ?? 'New mail', {
 				body: payload.body ?? '',
-				icon: '/icon-192.png',
-				badge: '/icon-192.png',
+				icon: '/icon.svg',
+				badge: '/icon.svg',
 				data: { thread_id: payload.thread_id },
 				tag: payload.thread_id ?? 'mail',
 			});

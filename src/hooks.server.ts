@@ -10,6 +10,7 @@ import { building, dev } from '$app/environment';
 import { tables } from '$lib/schema';
 import { sendTransactionalEmail } from '$lib/server/email';
 import { createMailHandle } from '$lib/server/mail-handle';
+import { reportEnvOnce } from '$lib/server/env-check';
 
 // A valid 64-char hex secret for dev only; production MUST set JWT_KEY_SECRET.
 const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
@@ -45,7 +46,10 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 	// Capture platform env for the auth sendEmail closure (env is
 	// deployment-constant, so caching the first non-empty value is safe).
 	const penv = (event.platform as App.Platform | undefined)?.env;
-	if (penv) _last_env = penv;
+	if (penv) {
+		_last_env = penv;
+		reportEnvOnce(penv as unknown as Record<string, string | undefined>, { dev });
+	}
 
 	const p = event.url.pathname;
 	const gated =
