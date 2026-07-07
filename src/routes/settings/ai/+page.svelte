@@ -36,7 +36,7 @@
 			const e = db.entity('settings', 'main');
 			await e.load();
 			const patch = { triage_enabled: enabled, triage_mode: mode, triage_prompt: prompt };
-			if (!e.loaded) await db.create('settings', { id: 'main', ...patch });
+			if (!e.loaded) await db.create('settings', { id: 'main', ...patch } as never);
 			else await e.save(patch);
 			toast('AI triage settings saved.');
 		} catch (err) {

@@ -32,7 +32,7 @@
 		try {
 			const e = db.entity('settings', 'main');
 			await e.load();
-			if (!e.loaded) await db.create('settings', { id: 'main', ...patch });
+			if (!e.loaded) await db.create('settings', { id: 'main', ...patch } as never);
 			else await e.save(patch);
 		} catch {
 			/* settings sync is best-effort; local preference already applied */

@@ -83,8 +83,8 @@
 	<article class="thread">
 		<h1 class="subject">{docs[0]?.subject || '(no subject)'}</h1>
 		{#each docs as m (m.id)}
-			<section class="message" class:collapsed={!isExpanded(m.id)}>
-				<button class="msg-head" onclick={() => toggle(m.id)}>
+			<section class="message" class:collapsed={!isExpanded(String(m.id))}>
+				<button class="msg-head" onclick={() => toggle(String(m.id))}>
 					<span class="avatar" aria-hidden="true">{who(m).charAt(0).toUpperCase()}</span>
 					<span class="meta">
 						<span class="from">{who(m)}</span>
@@ -92,9 +92,9 @@
 					</span>
 					<span class="date">{fmt(m.date)}</span>
 				</button>
-				{#if isExpanded(m.id)}
+				{#if isExpanded(String(m.id))}
 					<MessageBody
-						messageId={m.id}
+						messageId={String(m.id)}
 						excerpt={m.text_excerpt ?? ''}
 						hasHtml={!!m.body_keys?.html} />
 				{:else}

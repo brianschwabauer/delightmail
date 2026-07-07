@@ -1,7 +1,16 @@
 <script lang="ts">
 	import { tick, onMount } from 'svelte';
 	import { Editor as EditorClass, defaultBlocks } from '@delightstack/editor';
-	import { Editor } from '@delightstack/editor/components';
+	// The package's generated Editor.svelte.d.ts has an internal name collision
+	// (component `Editor` vs the core `Editor` type it imports), so the named
+	// re-export resolves type-only under verbatimModuleSyntax. A namespace import
+	// is unambiguously a value import; pull the component off it.
+	import * as EditorComponents from '@delightstack/editor/components';
+	// The same .d.ts collision types the value as the editor INSTANCE, not the
+	// component, so cast it back to a Svelte component that takes `editor`.
+	const EditorView = EditorComponents.Editor as unknown as import('svelte').Component<{
+		editor: EditorClass;
+	}>;
 	import { Button, toast } from '@delightstack/components';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
@@ -44,7 +53,7 @@
 	onMount(() => {
 		// Default to the first identity if none supplied.
 		if (!identityId && identities.docs.length) {
-			identityId = (identities.docs[0] as Identity).id;
+			identityId = String((identities.docs[0] as Identity).id);
 		}
 		return () => editor.destroy();
 	});
@@ -78,8 +87,8 @@
 	function cycleIdentity() {
 		const list = identities.docs as Identity[];
 		if (list.length < 2) return;
-		const idx = list.findIndex((i) => i.id === identityId);
-		identityId = list[(idx + 1) % list.length].id;
+		const idx = list.findIndex((i) => String(i.id) === identityId);
+		identityId = String(list[(idx + 1) % list.length].id);
 	}
 
 	async function send() {
@@ -174,7 +183,7 @@
 	</div>
 
 	<div class="body">
-		<Editor {editor} />
+		<EditorView {editor} />
 	</div>
 
 	<footer>

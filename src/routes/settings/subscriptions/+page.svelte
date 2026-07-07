@@ -24,7 +24,7 @@
 	let busy = $state<string | null>(null);
 
 	async function unsubscribe(task: UnsubscribeTask) {
-		busy = task.id;
+		busy = String(task.id);
 		try {
 			const res = await fetch(`/api/unsubscribe/${encodeURIComponent(task.id)}`, {
 				method: 'POST',

@@ -97,7 +97,7 @@
 					class="row"
 					class:unread={t.unread_count > 0}
 					class:cursor={index === cursor}
-					class:selected={selected.has(t.id)}
+					class:selected={selected.has(String(t.id))}
 					style:height="{ROW_H}px"
 					role="option"
 					aria-selected={index === cursor}

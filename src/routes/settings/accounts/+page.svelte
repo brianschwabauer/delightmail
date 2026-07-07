@@ -116,7 +116,7 @@
 					<strong>{a.display_name || a.email}</strong>
 					<small>{a.kind}</small>
 				</span>
-				<span class="status" class:err={a.status === 'error'}>{statusLabel(a)}</span>
+				<span class="status" class:err={a.status === 'error'}>{statusLabel(a as never)}</span>
 			</li>
 		{/each}
 	</ul>
