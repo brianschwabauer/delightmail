@@ -25,7 +25,11 @@ export interface TriageMailbox {
 	update(entity_type: string, id: string, data: Record<string, unknown>): unknown;
 	create(entity_type: string, data: Record<string, unknown>): Record<string, unknown>;
 	broadcastMail(event: Record<string, unknown>): void;
+	scheduleJob(type: string, payload: unknown, delay_ms: number): Promise<void>;
 }
+
+/** Push mode from settings — 'all' is pushed at ingest; triage owns the rest. */
+type PushMode = 'off' | 'mentions' | 'important' | 'all';
 
 export interface TriageEnv {
 	AI: unknown;
@@ -37,6 +41,8 @@ interface SettingsRow {
 	triage_enabled?: boolean;
 	triage_prompt?: string;
 	triage_mode?: TriageMode;
+	push_mode?: PushMode;
+	auto_unsubscribe?: boolean;
 }
 
 const BATCH = 8;
@@ -57,10 +63,14 @@ export async function runTriageJob(mb: TriageMailbox, env: TriageEnv): Promise<b
 	if (!rows.length) return false;
 
 	const rules = loadSenderRules(mb);
-	const knownDomains = loadKnownCorrespondentDomains(mb);
+	const known = loadKnownCorrespondents(mb);
 	const gateway = createAiGateway({ ai: env.AI as never, gateway: env.AI_GATEWAY_NAME });
 	const model = env.AI_TRIAGE_ROUTE ?? 'dynamic/email-triage';
 	const mode: TriageMode = settings.triage_mode ?? 'quarantine';
+	// 'all' pushes at ingest; triage owns 'important'/'mentions' (importance is
+	// only known here, after classification — pushing at ingest can't gate on it).
+	const pushMode: PushMode = settings.push_mode ?? 'important';
+	const autoUnsub = !!settings.auto_unsubscribe;
 
 	let processed = false;
 	for (const { id } of rows) {
@@ -71,7 +81,7 @@ export async function runTriageJob(mb: TriageMailbox, env: TriageEnv): Promise<b
 			continue;
 		}
 		processed = true;
-		await triageOne(mb, gateway, model, settings.triage_prompt ?? '', mode, rules, knownDomains, id, msg);
+		await triageOne(mb, gateway, model, settings.triage_prompt ?? '', mode, pushMode, autoUnsub, rules, known, id, msg);
 	}
 	return processed;
 }
@@ -82,27 +92,35 @@ async function triageOne(
 	model: string,
 	policy: string,
 	mode: TriageMode,
+	pushMode: PushMode,
+	autoUnsub: boolean,
 	rules: SenderRule[],
-	knownDomains: string[],
+	known: string[],
 	id: string,
 	msg: Record<string, unknown>,
 ): Promise<void> {
 	const from = msg.from as { email?: string; name?: string } | undefined;
 	const headers = (msg.headers_subset ?? {}) as Record<string, string>;
-	const fromEmail = from?.email ?? '';
-	const fromDomain = fromEmail.split('@')[1] ?? '';
-	const isKnown = knownDomains.includes(fromDomain);
+	const fromEmail = (from?.email ?? '').toLowerCase();
+	// Match the SENDER, not their whole domain — one known @gmail.com contact must
+	// not whitelist every gmail.com sender (§7.2). `known` is a set of addresses.
+	const isKnown = known.includes(fromEmail);
+	// A reply in a thread the user already participates in (has sent into) skips AI.
+	const participated =
+		!!msg.in_reply_to && threadHasOutbound(mb, msg.thread_id as string);
 
 	const signals = {
 		from_email: fromEmail,
 		list_id: headers.list_id,
 		is_outbound: false,
+		is_reply_in_participated_thread: participated,
 		is_known_correspondent: isKnown,
 	};
 
-	// 1. Deterministic pre-pass.
+	// 1. Deterministic pre-pass — human/known/participated mail is inbox+primary.
 	if (skipsAI(signals)) {
-		writeReview(mb, id, 'pre-pass', { action: 'keep', category: 'primary' }, false, 'known/participated');
+		writeReview(mb, id, 'pre-pass', { action: 'keep', category: 'primary', importance: 2 }, false, 'known/participated');
+		maybePush(mb, msg, id, pushMode, 2, null);
 		return;
 	}
 	const rule = matchSenderRule(rules, signals);
@@ -112,10 +130,9 @@ async function triageOne(
 		return;
 	}
 
-	// 2. AI classification.
+	// 2. AI classification (strict JSON, one retry on invalid → fail-open keep).
 	const started = Date.now();
 	let verdict: TriageVerdict;
-	let valid: boolean;
 	let tokens = 0;
 	try {
 		const messages = buildTriageMessages(policy, {
@@ -127,12 +144,30 @@ async function triageOne(
 			dmarc: headers.dmarc,
 			has_unsubscribe: !!headers.list_unsubscribe,
 			text: (msg.text_excerpt as string) ?? '',
-			known_correspondent_domains: knownDomains,
+			known_correspondent_domains: known,
 		});
-		const result = await gateway.complete({ messages, model, temperature: 0, max_tokens: 200 });
-		tokens = (result.usage as { total_tokens?: number } | undefined)?.total_tokens ?? 0;
-		const json = extractJson(result.content);
-		({ verdict, valid } = parseVerdict(json));
+		let result = await gateway.complete({
+			messages,
+			model,
+			temperature: 0,
+			max_tokens: 200,
+			response_format: { type: 'json_object' },
+		} as never);
+		tokens += (result.usage as { total_tokens?: number } | undefined)?.total_tokens ?? 0;
+		let parsed = parseVerdict(extractJson(result.content));
+		if (!parsed.valid) {
+			// One retry before falling back (§7.2).
+			result = await gateway.complete({
+				messages,
+				model,
+				temperature: 0,
+				max_tokens: 200,
+				response_format: { type: 'json_object' },
+			} as never);
+			tokens += (result.usage as { total_tokens?: number } | undefined)?.total_tokens ?? 0;
+			parsed = parseVerdict(extractJson(result.content));
+		}
+		verdict = parsed.verdict;
 	} catch (err) {
 		console.error('[triage] gateway call failed:', err);
 		return; // leave untriaged; a later job retries
@@ -141,6 +176,8 @@ async function triageOne(
 	const guarded = applyGuardrails(verdict, { is_known_correspondent: isKnown });
 	const folder = resolveFolder(guarded.verdict, mode);
 	applyFolder(mb, msg, id, folder, guarded.verdict.category);
+	// Push only for mail that stayed in the inbox and cleared the importance bar.
+	maybePush(mb, msg, id, pushMode, guarded.verdict.importance, folder);
 
 	writeReview(
 		mb,
@@ -161,13 +198,29 @@ async function triageOne(
 			from_email: fromEmail,
 		});
 		if (cand) {
+			// Auto-execute only http_oneclick, and only when the user opted in
+			// (§7.5) — everything else stays a one-click-away suggestion.
+			let status: 'suggested' | 'done' | 'failed' = 'suggested';
+			if (autoUnsub && cand.method === 'http_oneclick' && cand.target) {
+				try {
+					const res = await fetch(cand.target, {
+						method: 'POST',
+						headers: { 'content-type': 'application/x-www-form-urlencoded' },
+						body: 'List-Unsubscribe=One-Click',
+					});
+					status = res.ok ? 'done' : 'failed';
+				} catch {
+					status = 'failed';
+				}
+			}
 			try {
 				mb.create('unsubscribe_task', {
 					message_id: id,
 					sender_domain: cand.sender_domain,
 					method: cand.method,
 					target: cand.target,
-					status: 'suggested',
+					status,
+					completed_at: status === 'done' ? Date.now() : undefined,
 				});
 			} catch {
 				/* ignore */
@@ -240,16 +293,53 @@ function loadSenderRules(mb: TriageMailbox): SenderRule[] {
 	return out;
 }
 
-function loadKnownCorrespondentDomains(mb: TriageMailbox): string[] {
+function loadKnownCorrespondents(mb: TriageMailbox): string[] {
 	const rows = mb.exec(
 		`SELECT email FROM contact WHERE is_known_correspondent = 1 LIMIT 2000`,
 	) as Array<{ email?: string }>;
-	const domains = new Set<string>();
+	const addrs = new Set<string>();
 	for (const r of rows) {
-		const d = (r.email ?? '').split('@')[1]?.toLowerCase();
-		if (d) domains.add(d);
+		const e = (r.email ?? '').toLowerCase();
+		if (e) addrs.add(e);
 	}
-	return [...domains];
+	return [...addrs];
+}
+
+/** True if the user has already sent a message into this thread (participation). */
+function threadHasOutbound(mb: TriageMailbox, thread_id: string): boolean {
+	if (!thread_id) return false;
+	const rows = mb.exec(
+		`SELECT 1 FROM message WHERE thread_id = ? AND is_outbound = 1 LIMIT 1`,
+		thread_id,
+	);
+	return rows.length > 0;
+}
+
+/**
+ * Enqueue a web-push for a freshly-triaged inbox message when it clears the
+ * user's push threshold (§10.4). 'all' is handled at ingest; 'off' never pushes.
+ */
+function maybePush(
+	mb: TriageMailbox,
+	msg: Record<string, unknown>,
+	id: string,
+	mode: PushMode,
+	importance: number,
+	folder: string | null,
+): void {
+	if (folder !== null) return; // moved out of the inbox → not a new-inbox arrival
+	const threshold = mode === 'important' ? 2 : mode === 'mentions' ? 3 : Infinity;
+	if (importance < threshold) return;
+	const from = msg.from as { email?: string; name?: string } | undefined;
+	void mb.scheduleJob(
+		'push',
+		{
+			title: from?.name || from?.email || 'New mail',
+			body: (msg.subject as string) ?? '',
+			thread_id: msg.thread_id,
+		},
+		0,
+	);
 }
 
 function safeGet(mb: TriageMailbox, entity: string, id: string): Record<string, unknown> | null {

@@ -31,6 +31,12 @@ describe('parseVerdict', () => {
 		expect(verdict).toEqual(FALLBACK_VERDICT);
 		expect(verdict.action).toBe('keep');
 	});
+	it('accepts an over-long summary but truncates it to ≤120 chars (§7.3)', () => {
+		const long = 'x'.repeat(500);
+		const { verdict, valid } = parseVerdict({ ...good, summary: long });
+		expect(valid).toBe(true);
+		expect(verdict.summary.length).toBe(120);
+	});
 });
 
 describe('applyGuardrails', () => {

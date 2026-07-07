@@ -29,9 +29,18 @@ export interface MailboxEnv {
 	VAPID_PUBLIC_KEY?: string;
 	VAPID_PRIVATE_KEY?: string;
 	VAPID_SUBJECT?: string;
+	SEND_DAILY_LIMIT?: string;
 }
 
 const SETTINGS_ID = 'main';
+
+// Exponential backoff ladder (§5.4): 30s, 1m, 2m, 4m, 8m, 16m, then give up.
+// The cap must be reachable — the old ×5/attempts<5 form topped out at 4m.
+const MAX_JOB_ATTEMPTS = 7;
+function retryBackoffMs(attempts: number): number {
+	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
+}
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // The delightstack `Database.Table` type resolves to an over-narrow
 // `table_definition` when used as a generic *constraint*, so `typeof tables`
@@ -144,10 +153,12 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		const inbound = result.new_messages.filter((m) => m.is_outbound === false);
 		if (inbound.length) await this.scheduleJob('triage', {}, 0);
 
-		// Web push for new inbox arrivals (§10.4), respecting push_mode.
+		// Web push (§10.4). Only 'all' mode pushes at ingest; 'important'/'mentions'
+		// push from the triage job, where the message's importance is actually known
+		// (pushing here would fire before classification, defeating the threshold).
 		if (this.#menv.VAPID_PUBLIC_KEY) {
 			const settings = await this.ensureSettings();
-			if ((settings.push_mode ?? 'important') !== 'off') {
+			if ((settings.push_mode ?? 'important') === 'all') {
 				const first = inbound.find((m) => m.folder === 'inbox');
 				if (first) {
 					await this.scheduleJob(
@@ -162,6 +173,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				}
 			}
 		}
+		// Ensure the weekly digest is scheduled (§7.2 safety net).
+		await this.#ensureDigestScheduled();
 		return { ingested: result.ingested, skipped: result.skipped };
 	}
 
@@ -308,6 +321,10 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	): Promise<{ message_id: string }> {
 		const settings = await this.ensureSettings();
 		const undo = (settings.undo_send_seconds ?? 10) * 1000;
+		// Rate-limit outbound (§6, §12). Over budget → push the send later rather
+		// than dropping it (the outbox row still persists), protecting sender
+		// reputation from a compromised session without losing the user's mail.
+		const extraDelay = await this.#reserveSendSlot();
 
 		const identity = this.get('identity', identity_id) as {
 			id: string;
@@ -376,9 +393,9 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		this.create('outbox', {
 			message_id: msg.id,
 			identity_id,
-			not_before: now + undo,
+			not_before: now + undo + extraDelay,
 		} as never);
-		await this.scheduleJob('outbox', {}, undo + 500);
+		await this.scheduleJob('outbox', {}, undo + extraDelay + 500);
 		this.broadcastMail({ event: 'send:status', message_id: msg.id, status: 'queued' });
 		return { message_id: String(msg.id) };
 	}
@@ -450,17 +467,72 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 
 	async undoSend(message_id: string): Promise<{ ok: boolean }> {
 		const rows = this.exec(
-			`SELECT id FROM outbox WHERE message_id = ? LIMIT 1`,
+			`SELECT id, not_before FROM outbox WHERE message_id = ? LIMIT 1`,
 			message_id,
-		) as Array<{ id: string }>;
+		) as Array<{ id: string; not_before: number }>;
 		if (!rows.length) return { ok: false };
+		// Only honour undo while the message is still inside its undo window AND
+		// still queued. Once #flushOutbox has flipped it to 'sending' and handed it
+		// to the SyncEngine, the mail may already be on the wire — reverting the row
+		// then would show "unsent" while it actually goes out (send-after-undo race).
+		const msg = this.get('message', message_id) as Message;
+		if (rows[0].not_before <= Date.now() || msg.send_status !== 'queued') {
+			return { ok: false };
+		}
 		this.delete('outbox', rows[0].id);
 		try {
-			this.update('message', message_id, { folder: 'drafts', send_status: undefined } as never);
+			this.update('message', message_id, {
+				folder: 'drafts',
+				is_draft: true,
+				send_status: undefined,
+			} as never);
 		} catch {
 			/* ignore */
 		}
+		this.broadcastMail({ event: 'send:status', message_id, status: 'canceled' });
 		return { ok: true };
+	}
+
+	/**
+	 * Reserve an outbound-send slot against two token buckets (§6): a burst cap
+	 * (10/min) and a daily cap (default 100/day, SEND_DAILY_LIMIT-tunable). Returns
+	 * the extra delay (ms) to push the send out by when over budget, or 0.
+	 */
+	async #reserveSendSlot(): Promise<number> {
+		const org = this.#orgName;
+		const daily = Math.max(1, Number(this.#menv.SEND_DAILY_LIMIT ?? 100));
+		let delay = 0;
+		try {
+			delay = Math.max(
+				delay,
+				await this.#consumeBucket(`send-burst:${org}`, { max_tokens: 10, refill_every_seconds: 6 }),
+				await this.#consumeBucket(`send-daily:${org}`, {
+					max_tokens: daily,
+					refill_every_seconds: Math.max(1, Math.round(86_400 / daily)),
+				}),
+			);
+		} catch (err) {
+			// Never block a send because the limiter DO is unreachable — fail open.
+			console.error('[MailboxServer] rate-limit check failed:', err);
+		}
+		return delay;
+	}
+
+	async #consumeBucket(
+		key: string,
+		opts: { max_tokens: number; refill_every_seconds: number },
+	): Promise<number> {
+		const stub = this.#menv.RATE_LIMITER.get(
+			this.#menv.RATE_LIMITER.idFromName(key),
+		) as unknown as {
+			setOptions(o: unknown): Promise<void>;
+			consume(k: string, cost: number): Promise<boolean>;
+			getStatus(k: string): Promise<{ reset_in_ms: number }>;
+		};
+		await stub.setOptions(opts);
+		if (await stub.consume('send', 1)) return 0;
+		const status = await stub.getStatus('send');
+		return status.reset_in_ms ?? 0;
 	}
 
 	// -------------------------------------------------------------------------
@@ -515,7 +587,13 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 					text: msg.text_excerpt ?? '',
 					known_correspondent_domains: [],
 				});
-				const result = await gateway.complete({ messages, model, temperature: 0, max_tokens: 200 });
+				const result = await gateway.complete({
+					messages,
+					model,
+					temperature: 0,
+					max_tokens: 200,
+					response_format: { type: 'json_object' },
+				} as never);
 				const json = safeParse(
 					result.content.slice(result.content.indexOf('{'), result.content.lastIndexOf('}') + 1),
 				);
@@ -592,14 +670,13 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			} catch (err) {
 				console.error(`[MailboxServer] job ${job.type} failed:`, err);
 				const attempts = job.attempts + 1;
-				if (attempts >= 5) {
+				if (attempts >= MAX_JOB_ATTEMPTS) {
 					this.exec(`UPDATE job_queue SET status = 'failed' WHERE id = ?`, job.id);
 				} else {
-					const backoff = Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 					this.exec(
 						`UPDATE job_queue SET attempts = ?, run_at = ? WHERE id = ?`,
 						attempts,
-						Date.now() + backoff,
+						Date.now() + retryBackoffMs(attempts),
 						job.id,
 					);
 				}
@@ -612,6 +689,9 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	async #sendPush(payload: { title?: string; body?: string; thread_id?: string }): Promise<void> {
 		const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = this.#menv;
 		if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+		// Quiet hours (§10.4): suppress non-digest pushes inside the window.
+		const settings = await this.ensureSettings();
+		if (withinQuietHours(settings.quiet_hours ?? undefined)) return;
 		const { sendWebPush } = await import('./webpush');
 		const subs = this.exec(`SELECT id, json FROM push_subscription`) as Array<{
 			id: string;
@@ -668,8 +748,66 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				return this.#flushOutbox();
 			case 'push':
 				return this.#sendPush(_payload as { title?: string; body?: string; thread_id?: string });
+			case 'digest':
+				return this.#sendDigest();
 			default:
 				console.warn(`[MailboxServer] unknown job type: ${type}`);
+		}
+	}
+
+	/** Schedule the recurring weekly digest once (idempotent). */
+	async #ensureDigestScheduled(): Promise<void> {
+		this.#ensureJobTable();
+		const rows = this.exec(
+			`SELECT 1 FROM job_queue WHERE type = 'digest' AND status = 'pending' LIMIT 1`,
+		);
+		if (rows.length) return;
+		await this.scheduleJob('digest', {}, WEEK_MS);
+	}
+
+	/**
+	 * Weekly digest (§7.2, §7.5): summarize what AI triage filtered in the last
+	 * week — count, top senders, pending unsubscribe suggestions — as a push, then
+	 * reschedule itself. The safety net that makes aggressive filtering trustworthy.
+	 */
+	async #sendDigest(): Promise<void> {
+		try {
+			const since = Date.now() - WEEK_MS;
+			const filtered = this.exec(
+				`SELECT COUNT(*) AS n FROM message
+				 WHERE folder IN ('quarantine','spam','trash','archive') AND date >= ?`,
+				since,
+			) as Array<{ n: number }>;
+			const topSenders = this.exec(
+				`SELECT json_extract(json, '$.from.email') AS email, COUNT(*) AS n FROM message
+				 WHERE folder IN ('quarantine','spam','trash') AND date >= ?
+				 GROUP BY email ORDER BY n DESC LIMIT 3`,
+				since,
+			) as Array<{ email: string | null; n: number }>;
+			const unsub = this.exec(
+				`SELECT COUNT(*) AS n FROM unsubscribe_task WHERE status = 'suggested'`,
+			) as Array<{ n: number }>;
+			const count = filtered[0]?.n ?? 0;
+			const senders = topSenders
+				.map((s) => s.email)
+				.filter(Boolean)
+				.join(', ');
+			const suggestions = unsub[0]?.n ?? 0;
+			// Only notify if there's something to say.
+			if (count > 0 || suggestions > 0) {
+				await this.#sendPush({
+					title: `Weekly digest — ${count} filtered`,
+					body: [
+						senders ? `Top senders: ${senders}` : '',
+						suggestions ? `${suggestions} unsubscribe suggestion(s)` : '',
+					]
+						.filter(Boolean)
+						.join(' · '),
+				});
+			}
+		} finally {
+			// Re-arm next week regardless of outcome.
+			await this.scheduleJob('digest', {}, WEEK_MS);
 		}
 	}
 }
@@ -681,6 +819,22 @@ function safeParse(json: string | null): unknown {
 	} catch {
 		return {};
 	}
+}
+
+/**
+ * True if the current UTC time falls within a "HH:MM-HH:MM" quiet-hours window
+ * (§10.4). Handles windows that wrap past midnight (e.g. 22:00-07:00). Uses UTC
+ * since the DO has no user timezone; deployers document this in settings.
+ */
+function withinQuietHours(window: string | undefined): boolean {
+	if (!window) return false;
+	const m = window.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+	if (!m) return false;
+	const start = Number(m[1]) * 60 + Number(m[2]);
+	const end = Number(m[3]) * 60 + Number(m[4]);
+	const now = new Date();
+	const cur = now.getUTCHours() * 60 + now.getUTCMinutes();
+	return start <= end ? cur >= start && cur < end : cur >= start || cur < end;
 }
 
 /** First 40 hex chars of a SHA-256 — the content-addressed R2 key component. */

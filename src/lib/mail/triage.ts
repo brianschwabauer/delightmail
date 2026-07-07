@@ -22,7 +22,12 @@ export const verdictSchema = z.object({
 	importance: z.number().int().min(0).max(3),
 	action: z.enum(['keep', 'archive', 'spam', 'trash']),
 	unsubscribe_recommended: z.boolean(),
-	summary: z.string().max(200),
+	// The contract is ≤120 chars (§7.3); accept a longer model summary but store
+	// it truncated rather than failing the whole verdict into the keep fallback.
+	summary: z
+		.string()
+		.max(2000)
+		.transform((s) => s.slice(0, 120)),
 	confidence: z.number().min(0).max(1),
 });
 export type TriageVerdict = z.infer<typeof verdictSchema>;
@@ -182,7 +187,7 @@ export function buildTriageMessages(
 	].join('\n');
 
 	const user = [
-		`Known correspondent domains: ${input.known_correspondent_domains.join(', ') || '(none)'}`,
+		`Known correspondents (never trash these): ${input.known_correspondent_domains.join(', ') || '(none)'}`,
 		`SPF=${input.spf ?? '?'} DKIM=${input.dkim ?? '?'} DMARC=${input.dmarc ?? '?'}`,
 		`Has List-Unsubscribe: ${input.has_unsubscribe}`,
 		'--- BEGIN UNTRUSTED EMAIL ---',
