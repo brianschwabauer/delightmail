@@ -12,6 +12,7 @@
 		editor: EditorClass;
 	}>;
 	import { Button, Modal, toast } from '@delightstack/components';
+	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
 	import { mergeSignatureDoc, docToText } from '$lib/mail/compose';
@@ -96,6 +97,17 @@
 	const fromIdentity = $derived(
 		(identities.docs as Identity[]).find((i) => String(i.id) === identityId) ??
 			(identities.docs[0] as Identity | undefined),
+	);
+
+	// The Send button is enabled only when the message can actually go out: at
+	// least one recipient (a committed chip OR a still-typed valid address), a
+	// sending identity, and no attachment mid-upload. (`parseAddress` is a hoisted
+	// function declaration, so referencing it here before its definition is fine.)
+	const canSend = $derived(
+		!sending &&
+			!!fromIdentity &&
+			(to.length > 0 || parseAddress(toInput) !== null) &&
+			!attachments.some((a) => a.uploading),
 	);
 
 	// --- draft autosave (§6): every 3s of idle, persist to a draft row. The saver
@@ -357,7 +369,7 @@
 							<label for={row.f}>{row.label}</label>
 							<div class="chips">
 								{#each row.chips as a, i (i)}
-									<span class="chip">{a.name || a.email}<button onclick={() => removeChip(row.f as 'to' | 'cc' | 'bcc', i)}>✕</button></span>
+									<span class="chip">{a.name || a.email}<button aria-label="Remove" onclick={() => removeChip(row.f as 'to' | 'cc' | 'bcc', i)}><Icon name="x" size={13} /></button></span>
 								{/each}
 								<div class="ac-wrap">
 									<input
@@ -368,8 +380,14 @@
 										onfocus={() => (acField = row.f as 'to' | 'cc' | 'bcc')}
 										onblur={() => setTimeout(() => { if (acField === row.f) acField = null; }, 150)}
 										onkeydown={(e) => {
-											if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+											// Enter / comma commit the typed address and keep the caret in the
+											// field. Tab ALSO commits any typed address but must NOT be
+											// preventDefault-ed — the browser's default Tab has to move focus
+											// to the next field so the whole form is keyboard-navigable.
+											if (e.key === 'Enter' || e.key === ',') {
 												e.preventDefault();
+												commitChip(row.f as 'to' | 'cc' | 'bcc');
+											} else if (e.key === 'Tab' && fieldValue(row.f as 'to' | 'cc' | 'bcc').trim()) {
 												commitChip(row.f as 'to' | 'cc' | 'bcc');
 											}
 										}} />
@@ -387,9 +405,11 @@
 								</div>
 							</div>
 							{#if row.f === 'to'}
+								<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
+								     the Tab sequence so Tab flows To → Subject → body directly. -->
 								<span class="toggles">
-									{#if !showCc}<Button size="0" transparent onclick={() => (showCc = true)}>Cc</Button>{/if}
-									{#if !showBcc}<Button size="0" transparent onclick={() => (showBcc = true)}>Bcc</Button>{/if}
+									{#if !showCc}<Button size="0" transparent tabindex={-1} onclick={() => (showCc = true)}>Cc</Button>{/if}
+									{#if !showBcc}<Button size="0" transparent tabindex={-1} onclick={() => (showBcc = true)}>Bcc</Button>{/if}
 								</span>
 							{/if}
 						</div>
@@ -416,9 +436,9 @@
 				<div class="attachments">
 					{#each attachments as a (a.id)}
 						<span class="att-chip" class:uploading={a.uploading}>
-							📎 {a.filename} <span class="att-size">{fmtSize(a.size)}</span>
+							<Icon name="paperclip" size={13} /> {a.filename} <span class="att-size">{fmtSize(a.size)}</span>
 							{#if a.uploading}<span class="att-status">uploading…</span>{/if}
-							<button onclick={() => removeAttachment(a.id)} aria-label="Remove attachment">✕</button>
+							<button onclick={() => removeAttachment(a.id)} aria-label="Remove attachment"><Icon name="x" size={13} /></button>
 						</span>
 					{/each}
 				</div>
@@ -427,14 +447,25 @@
 
 		{#snippet footer()}
 			<div class="footer-row">
-				<Button accent disabled={sending} loading={sending} onclick={send}>{sending ? 'Sending…' : 'Send'}</Button>
-				<Button transparent onclick={() => fileInput?.click()} tooltip="Ctrl+Shift+A">Attach</Button>
-				<input bind:this={fileInput} type="file" multiple hidden onchange={onFilePicked} />
 				<span class="hint">
 					<span class="hk"><kbd>Ctrl</kbd><kbd>↵</kbd> Send</span>
 					<span class="hk"><kbd>Ctrl</kbd><kbd>J</kbd> Identity</span>
 					<span class="hk"><kbd>Esc</kbd> Close</span>
 				</span>
+				<div class="footer-actions">
+					<input bind:this={fileInput} type="file" multiple hidden onchange={onFilePicked} />
+					<Button
+						icon
+						transparent
+						onclick={() => fileInput?.click()}
+						tooltip="Attach (Ctrl+Shift+A)"
+						aria-label="Attach files">
+						<Icon name="paperclip" size={18} />
+					</Button>
+					<Button accent disabled={!canSend} loading={sending} onclick={send}>
+						{sending ? 'Sending…' : 'Send'}
+					</Button>
+				</div>
 			</div>
 		{/snippet}
 	</Modal>
@@ -467,7 +498,7 @@
 		background: var(--dm-accent-soft); color: var(--color-text);
 		border-radius: var(--radius-cap, 99px); padding: 2px 4px 2px 10px; font-size: var(--font-size-00);
 	}
-	.chip button { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; line-height: 1; }
+	.chip button { display: inline-flex; align-items: center; background: none; border: none; padding: 0; color: var(--color-text-disabled); cursor: pointer; line-height: 1; }
 	.chip button:hover { color: var(--color-error); }
 	.ac-wrap { position: relative; flex: 1; min-width: 140px; }
 	.chips input, .subject {
@@ -500,11 +531,19 @@
 	}
 	.att-chip.uploading { opacity: 0.6; }
 	.att-size, .att-status { color: var(--color-text-disabled); }
-	.att-chip button { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; }
+	.att-chip button { display: inline-flex; align-items: center; background: none; border: none; padding: 0; color: var(--color-text-disabled); cursor: pointer; }
+	.att-chip button:hover { color: var(--color-error); }
+
+	/* Footer: keyboard hints on the left, Attach + Send actions pinned right. */
 	.footer-row {
 		display: flex; align-items: center; gap: var(--space-3); width: 100%;
 	}
-	.hint { margin-left: auto; display: flex; gap: var(--space-3); font-size: var(--font-size-00); color: var(--color-text-disabled); }
+	.footer-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+	.hint { display: flex; gap: var(--space-3); font-size: var(--font-size-00); color: var(--color-text-disabled); }
+
+	/* The email body starts blank — hide the editor's "Heading / Bullet list …"
+	   quick-start chips that otherwise appear under the empty-doc placeholder. */
+	.body :global(.quick-chips) { display: none; }
 	.hk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 	.hint kbd {
 		font-family: var(--font-mono); font-size: 0.9em;
