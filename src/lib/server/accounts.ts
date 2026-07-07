@@ -156,6 +156,10 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 		credentials: { refresh_token: tokens.refresh_token },
 	});
 
+	// Map the Gmail address → account_id so the Pub/Sub webhook can route push
+	// hints to the right SyncEngine (the notification only carries the address).
+	await penv.KV.put(`gmail-route:${email.toLowerCase()}`, account_id);
+
 	return redirectWithToast(event, `Connected ${email}. Backfilling your mail…`, '/settings/accounts');
 }
 
@@ -297,6 +301,110 @@ export async function handleDomainRegister(event: RequestEvent): Promise<Respons
 			'In Cloudflare → Email Routing, enable catch-all → Send to Worker → delightmail-server. ' +
 			'For sending, onboard the domain to Email Service (or set SMTP_RELAY_* env).',
 	});
+}
+
+interface AccountRow {
+	id: string;
+	email?: string;
+	kind?: string;
+}
+interface SyncLifecycleStub {
+	pause(): Promise<void>;
+	resume(): Promise<void>;
+	resync(): Promise<void>;
+	destroyAccount(): Promise<void>;
+}
+
+/** POST /api/accounts/:id/(pause|resume|resync) — account lifecycle. */
+export async function handleAccountLifecycle(
+	event: RequestEvent,
+	account_id: string,
+	action: 'pause' | 'resume' | 'resync',
+): Promise<Response> {
+	const penv = env(event);
+	const org_id = event.locals.org_id;
+	const db = event.locals.db as unknown as {
+		get(t: string, id: string): AccountRow;
+		update(t: string, id: string, data: Record<string, unknown>): unknown;
+	};
+	if (!penv?.SYNC || !org_id || !db) return DelightError.badRequest('No mailbox').toResponse();
+
+	// Ownership: the account must live in THIS org's DO. get throws → 404. This is
+	// what stops one org pausing/resyncing another org's SyncEngine by id (IDOR).
+	let account: AccountRow;
+	try {
+		account = db.get('account', account_id);
+	} catch {
+		return DelightError.notFound('Account not found').toResponse();
+	}
+
+	const sync = penv.SYNC.get(penv.SYNC.idFromName(account_id)) as unknown as SyncLifecycleStub;
+	if (action === 'pause') {
+		await sync.pause();
+		try {
+			db.update('account', account_id, { status: 'paused' });
+		} catch {
+			/* ignore */
+		}
+	} else if (action === 'resume') {
+		await sync.resume();
+		try {
+			db.update('account', account_id, { status: 'live' });
+		} catch {
+			/* ignore */
+		}
+	} else {
+		await sync.resync();
+		try {
+			db.update('account', account_id, { status: 'backfilling', status_detail: 'Re-syncing…' });
+		} catch {
+			/* ignore */
+		}
+	}
+	return Response.json({ ok: true, account_id, status: action });
+}
+
+/** DELETE /api/accounts/:id — remove an account: purge its SyncEngine + rows. */
+export async function handleAccountDelete(event: RequestEvent, account_id: string): Promise<Response> {
+	const penv = env(event);
+	const org_id = event.locals.org_id;
+	const db = event.locals.db as unknown as {
+		get(t: string, id: string): AccountRow;
+		delete(t: string, id: string): unknown;
+	};
+	if (!penv?.SYNC || !org_id || !db) return DelightError.badRequest('No mailbox').toResponse();
+
+	let account: AccountRow;
+	try {
+		account = db.get('account', account_id);
+	} catch {
+		return DelightError.notFound('Account not found').toResponse();
+	}
+
+	// Tear down the protocol head (encrypted creds, sync cursor, job queue).
+	try {
+		const sync = penv.SYNC.get(penv.SYNC.idFromName(account_id)) as unknown as SyncLifecycleStub;
+		await sync.destroyAccount();
+	} catch (err) {
+		console.error('[accounts] destroyAccount failed:', err);
+	}
+	// Drop the Gmail push route mapping so stray webhooks stop resolving.
+	if (account.kind === 'gmail' && account.email && penv.KV) {
+		try {
+			await penv.KV.delete(`gmail-route:${account.email.toLowerCase()}`);
+		} catch {
+			/* ignore */
+		}
+	}
+	// Deleting the account row cascades to its messages + identities (FK CASCADE).
+	// (R2 bodies are org-prefixed, not per-account, so any orphaned objects are
+	// reclaimed when the whole org is deleted; a per-account R2 sweep is a follow-up.)
+	try {
+		db.delete('account', account_id);
+	} catch (err) {
+		console.error('[accounts] account delete failed:', err);
+	}
+	return Response.json({ ok: true, deleted: account_id });
 }
 
 async function fetchGoogleEmail(access_token: string): Promise<string> {

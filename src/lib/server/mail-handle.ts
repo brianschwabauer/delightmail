@@ -11,11 +11,13 @@ import {
 	handleDomainRegister,
 	handleImapAdd,
 	handleImapTest,
+	handleAccountLifecycle,
+	handleAccountDelete,
 } from './accounts';
 import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend } from './send';
-import { handleTriageTest, handleUnsubscribe } from './triage-endpoints';
+import { handleTriageTest, handleUnsubscribe, handleUnsubscribeBulk } from './triage-endpoints';
 import { handleVapidKey, handlePushSubscribe, handlePushUnsubscribe } from './push';
 import { handleDevSeed } from './dev-seed';
 
@@ -58,6 +60,18 @@ async function route(event: RequestEvent): Promise<Response> {
 	if (pathname === '/api/accounts/imap' && method === 'POST') {
 		return handleImapAdd(event);
 	}
+	// Lifecycle: /api/accounts/:id/(pause|resume|resync) and DELETE /api/accounts/:id.
+	// Reserved sub-paths (google/imap/domain) are matched above, so parts[2] here is
+	// an account id.
+	if (parts[1] === 'accounts' && parts[2] && parts[3] && method === 'POST') {
+		const action = parts[3];
+		if (action === 'pause' || action === 'resume' || action === 'resync') {
+			return handleAccountLifecycle(event, decodeURIComponent(parts[2]), action);
+		}
+	}
+	if (parts[1] === 'accounts' && parts[2] && !parts[3] && method === 'DELETE') {
+		return handleAccountDelete(event, decodeURIComponent(parts[2]));
+	}
 
 	// --- messages ---
 	if (parts[1] === 'messages' && parts[2]) {
@@ -87,6 +101,9 @@ async function route(event: RequestEvent): Promise<Response> {
 	// --- AI triage + unsubscribe (P5) ---
 	if (pathname === '/api/triage/test' && method === 'POST') {
 		return handleTriageTest(event);
+	}
+	if (parts[1] === 'unsubscribe' && parts[2] === 'bulk' && method === 'POST') {
+		return handleUnsubscribeBulk(event);
 	}
 	if (parts[1] === 'unsubscribe' && parts[2] && method === 'POST') {
 		return handleUnsubscribe(event, decodeURIComponent(parts[2]));
