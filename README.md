@@ -96,8 +96,8 @@ Short version:
 wrangler r2 bucket create delightmail
 wrangler kv namespace create CACHE          # id → both wrangler configs
 pnpm run secrets secrets.env                # push JWT/credentials/OWNER_EMAIL/…
-cd server && wrangler deploy                # server FIRST
-cd .. && pnpm build && wrangler deploy       # then the app
+wrangler deploy --config server/wrangler.toml   # server FIRST (explicit config)
+pnpm build && wrangler deploy                    # then the app (root config)
 ```
 
 ## Environment variables

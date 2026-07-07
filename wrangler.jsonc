@@ -28,7 +28,7 @@
 			},
 		],
 	},
-	"kv_namespaces": [{ "binding": "KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+	"kv_namespaces": [{ "binding": "KV", "id": "fd755ea379d346ae8f73c62b4ef8886b" }],
 	"r2_buckets": [{ "binding": "R2", "bucket_name": "delightmail" }],
 	// Cloudflare Email Service — the app worker sends magic-link / transactional
 	// mail via env.EMAIL (§8). Without this the documented Email Service sign-in

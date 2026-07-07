@@ -62,8 +62,11 @@ The app worker binds the Durable Objects cross-script, so the server must exist
 first:
 
 ```sh
-cd server && wrangler deploy      # delightmail-server
-cd .. && pnpm build && wrangler deploy   # delightmail (the app)
+# The server MUST be deployed with an explicit --config: wrangler's autoconfig
+# otherwise walks up and picks the root app config (wrangler.jsonc), deploying
+# the wrong worker under the wrong name.
+wrangler deploy --config server/wrangler.toml   # delightmail-server, FIRST
+pnpm build && wrangler deploy                    # then delightmail (the app)
 ```
 
 Point `mail.yourdomain.com` at the app worker (Workers → your worker → Custom

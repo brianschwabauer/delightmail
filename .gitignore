@@ -7,6 +7,8 @@ node_modules
 !.env.example
 server/.dev.vars
 .dev.vars
+secrets.env
+TODO.md
 .wrangler
 /.turbo
 *.log
