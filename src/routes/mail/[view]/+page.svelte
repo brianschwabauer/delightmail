@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick, onMount, untrack, getContext } from 'svelte';
-	import { Button, toast } from '@delightstack/components';
+	import { Button, Input, toast } from '@delightstack/components';
+	import Icon from '$lib/components/Icon.svelte';
 	import { viewToQuery, viewTitle } from '$lib/mail/views';
 	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
@@ -30,8 +31,11 @@
 	let searchTerm = $state('');
 	let filtering = $state(false);
 	let filterText = $state('');
-	let searchInput = $state<HTMLInputElement>();
-	let filterInput = $state<HTMLInputElement>();
+	// The delightstack <Input> doesn't expose its DOM node or forward keydown, so
+	// we bind the wrapping bar and reach the inner <input> for focus, and listen
+	// for Escape/Tab on the bar (keydown bubbles up from the input).
+	let searchbarEl = $state<HTMLElement>();
+	let filterbarEl = $state<HTMLElement>();
 
 	// Pass a REACTIVE query function — the search class re-queries automatically
 	// when its reactive deps (view / search state) change. (Recreating the search
@@ -337,6 +341,13 @@
 		// Shift+↓ keeps deselecting).
 		beginGesture(nowSelected ? 'select' : 'deselect');
 	}
+	/** yazi's Space: toggle the cursor row, then drop the cursor onto the next one
+	 *  (previewing it). So you can keep tapping Space to sweep down a list —
+	 *  selecting each mail you've just previewed while the next one opens. */
+	function toggleSelectAndAdvance() {
+		toggleSelect();
+		move(1);
+	}
 	function clearSelection() {
 		selected = new Set();
 		anchor = null;
@@ -451,20 +462,30 @@
 	async function startSearch() {
 		searching = true;
 		await tick();
-		searchInput?.focus();
+		searchbarEl?.querySelector('input')?.focus();
 	}
 	function endSearch() {
 		searching = false;
 		searchTerm = '';
 	}
+	function onSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') endSearch();
+		else if (e.key === 'Tab') {
+			e.preventDefault();
+			searchScope = searchScope === 'folder' ? 'all' : 'folder';
+		}
+	}
 	async function startFilter() {
 		filtering = true;
 		await tick();
-		filterInput?.focus();
+		filterbarEl?.querySelector('input')?.focus();
 	}
 	function endFilter() {
 		filtering = false;
 		filterText = '';
+	}
+	function onFilterKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') endFilter();
 	}
 
 	// --- keyboard bindings (list context) ---
@@ -504,7 +525,7 @@
 			{ keys: 'ArrowLeft', description: 'Back to folders / list', group: 'Panes', context: 'list', when: listOrReading, handler: paneLeft },
 			// Multi-select: Shift extends a range across every motion.
 			{ keys: 'x', description: 'Select / deselect', group: 'Select', context: 'list', when: inList, handler: toggleSelect },
-			{ keys: 'Space', description: 'Select / deselect', group: 'Select', context: 'list', when: inList, handler: toggleSelect },
+			{ keys: 'Space', description: 'Select & go to next', group: 'Select', context: 'list', when: inList, handler: toggleSelectAndAdvance },
 			{ keys: 'Shift+ArrowDown', description: 'Select down', group: 'Select', context: 'list', when: inList, handler: () => nav('line', 1, true) },
 			{ keys: 'Shift+ArrowUp', description: 'Select up', group: 'Select', context: 'list', when: inList, handler: () => nav('line', -1, true) },
 			{ keys: 'Ctrl+Shift+ArrowDown', description: 'Select down ×5', group: 'Select', context: 'list', when: inList, handler: () => nav('jump', 1, true) },
@@ -555,20 +576,15 @@
 	onmousedowncapture={() => focus.set('list')}>
 	<header class="list-head">
 		{#if searching}
-			<div class="searchbar">
-				<span class="search-icon" aria-hidden="true">⌕</span>
-				<!-- svelte-ignore a11y_autofocus -->
-				<input
-					bind:this={searchInput}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="searchbar" bind:this={searchbarEl} onkeydown={onSearchKeydown}>
+				<span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
+				<Input
 					bind:value={searchTerm}
-					placeholder="Search {searchScope === 'all' ? 'all mail' : title}…"
-					onkeydown={(e) => {
-						if (e.key === 'Escape') endSearch();
-						if (e.key === 'Tab') {
-							e.preventDefault();
-							searchScope = searchScope === 'folder' ? 'all' : 'folder';
-						}
-					}} />
+					dense
+					clearable
+					class="findbar-input"
+					placeholder="Search {searchScope === 'all' ? 'all mail' : title}…" />
 				<button class="scope" onclick={() => (searchScope = searchScope === 'folder' ? 'all' : 'folder')}>
 					<kbd>Tab</kbd>
 					{searchScope === 'all' ? 'All mail' : 'This folder'}
@@ -584,14 +600,15 @@
 	</header>
 
 	{#if filtering}
-		<div class="filterbar">
-			<span class="filter-icon" aria-hidden="true">≣</span>
-			<!-- svelte-ignore a11y_autofocus -->
-			<input
-				bind:this={filterInput}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="filterbar" bind:this={filterbarEl} onkeydown={onFilterKeydown}>
+			<span class="filter-icon" aria-hidden="true"><Icon name="filter" size={16} /></span>
+			<Input
 				bind:value={filterText}
-				placeholder="Filter loaded conversations…"
-				onkeydown={(e) => e.key === 'Escape' && endFilter()} />
+				dense
+				clearable
+				class="findbar-input"
+				placeholder="Filter loaded conversations…" />
 		</div>
 	{/if}
 
@@ -726,25 +743,15 @@
 	}
 	.search-icon,
 	.filter-icon {
+		display: inline-flex;
+		align-items: center;
 		color: var(--color-text-disabled);
-		font-size: 1.1em;
+		flex-shrink: 0;
 	}
-	.searchbar input,
-	.filterbar input {
+	.searchbar :global(.findbar-input),
+	.filterbar :global(.findbar-input) {
 		flex: 1;
-		padding: 6px 10px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg-1);
-		color: inherit;
-		font: inherit;
-		font-size: var(--font-size-0);
-	}
-	.searchbar input:focus,
-	.filterbar input:focus {
-		outline: none;
-		border-color: var(--color-primary);
-		box-shadow: 0 0 0 3px var(--dm-accent-soft);
+		min-width: 0;
 	}
 	.filterbar {
 		padding: var(--space-1) var(--space-3) var(--space-2);
