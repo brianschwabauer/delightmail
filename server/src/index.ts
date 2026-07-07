@@ -33,12 +33,25 @@ export interface Env {
 	DEV?: string;
 }
 
+// Dev-only JWT secret; must match the app worker's DEV_SECRET so sessions verify
+// across the two workers. Production MUST set JWT_KEY_SECRET (fail closed below).
+const DEV_JWT_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
+
+/** Resolve the session-signing secret, failing closed in production (§13). */
+function resolveJwtSecret(env: Env): string {
+	if (env.JWT_KEY_SECRET) return env.JWT_KEY_SECRET;
+	if (env.DEV === 'true') return DEV_JWT_SECRET;
+	throw new Error(
+		'JWT_KEY_SECRET is not set on the delightmail-server worker. Set it to the same ' +
+			'64-hex value as the app worker: `wrangler secret put JWT_KEY_SECRET`.',
+	);
+}
+
 /** Auth DO — app-specific config injected here (workerd only passes ctx, env). */
 export class AuthServer extends BaseAuthDatabaseServer {
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env as never, {
-			secret:
-				env.JWT_KEY_SECRET || '00000000000000000000000000000000000000000000000000000000deadbeef',
+			secret: resolveJwtSecret(env),
 			issuer: 'delightmail',
 			permissions: ['owner', 'admin', 'member'],
 			oauth_scopes: [],
