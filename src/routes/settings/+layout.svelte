@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { List, ListItem } from '@delightstack/components';
 
 	const { children } = $props();
 
@@ -19,11 +20,11 @@
 	<aside>
 		<a href="/mail/inbox" class="back">← Back to mail</a>
 		<h1>Settings</h1>
-		<nav>
+		<List type="button" dense class="settings-nav">
 			{#each TABS as t (t.id)}
-				<a href="/settings/{t.id}" class:active={current === t.id}>{t.label}</a>
+				<ListItem href="/settings/{t.id}" active={current === t.id}>{t.label}</ListItem>
 			{/each}
-		</nav>
+		</List>
 	</aside>
 	<main>{@render children()}</main>
 </div>
@@ -54,23 +55,18 @@
 		letter-spacing: -0.01em;
 		margin: var(--space-3) 0 var(--space-4);
 	}
-	nav {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
+	:global(.settings-nav) {
+		font-size: var(--font-size-0);
 	}
-	nav a {
+	:global(.settings-nav .list-item) {
+		min-height: 0;
+	}
+	:global(.settings-nav .list-item > a) {
 		padding: 7px var(--space-3);
 		border-radius: var(--radius-md);
 		color: var(--color-text-muted, var(--color-text));
-		text-decoration: none;
-		font-size: var(--font-size-0);
 	}
-	nav a:hover {
-		background: var(--color-bg-3);
-		color: var(--color-text);
-	}
-	nav a.active {
+	:global(.settings-nav .list-item.active > a) {
 		background: var(--dm-accent-soft);
 		color: var(--color-text);
 		font-weight: var(--font-weight-semibold, 600);

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { List, ListItem } from '@delightstack/components';
 	import type { AuthClient } from '@delightstack/auth/client';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import { useScope } from '$lib/mail/scope.svelte';
@@ -110,55 +111,45 @@
 	onmousedowncapture={() => focus.set('folders')}>
 	<div class="brand"><span class="brand-mark"></span>Mail</div>
 
-	<ul class="folders">
+	<List type="button" dense class="rail-list">
 		{#each FOLDERS as f, i (f.id)}
-			<li>
-				<a
-					href="/mail/{f.id}"
-					class="item"
-					class:active={view === f.id}
-					class:khl={focus.is('folders') && i === hi}
-					aria-current={view === f.id ? 'page' : undefined}
-					onclick={() => focus.set('list')}>
-					<span class="glyph" aria-hidden="true">{f.glyph}</span>
-					<span class="label">{f.label}</span>
-					{#if f.id === 'inbox' && unreadCount > 0}
-						<span class="count">{unreadCount}</span>
-					{/if}
-				</a>
-			</li>
+			<ListItem
+				href="/mail/{f.id}"
+				active={view === f.id}
+				class={focus.is('folders') && i === hi ? 'khl' : ''}
+				onclick={() => focus.set('list')}>
+				<span class="glyph" aria-hidden="true">{f.glyph}</span>
+				<span class="label">{f.label}</span>
+				{#if f.id === 'inbox' && unreadCount > 0}
+					<span class="count">{unreadCount}</span>
+				{/if}
+			</ListItem>
 		{/each}
-	</ul>
+	</List>
 
 	<div class="section">Accounts</div>
-	<ul class="folders">
-		<li>
-			<button class="item" class:active={scope.current === 'all'} onclick={() => scope.set('all')}>
-				<span class="dot all" aria-hidden="true"></span>
-				<span class="label">All accounts</span>
-			</button>
-		</li>
+	<List type="button" dense class="rail-list">
+		<ListItem active={scope.current === 'all'} onclick={() => scope.set('all')}>
+			<span class="dot all" aria-hidden="true"></span>
+			<span class="label">All accounts</span>
+		</ListItem>
 		{#each scope.accounts as a (a.id)}
-			<li>
-				<button
-					class="item"
-					class:active={scope.current === a.id}
-					onclick={() => scope.set(a.id)}
-					title="Scope to {a.label}">
-					<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>
-					<span class="label">{a.label}</span>
-				</button>
-			</li>
+			<ListItem active={scope.current === a.id} onclick={() => scope.set(a.id)}>
+				<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>
+				<span class="label">{a.label}</span>
+			</ListItem>
 		{/each}
-	</ul>
+	</List>
 
 	<div class="spacer"></div>
-	<a href="/settings/accounts" class="item quiet">
-		<span class="glyph" aria-hidden="true">⚙</span><span class="label">Settings</span>
-	</a>
-	<button class="item quiet" onclick={signOut}>
-		<span class="glyph" aria-hidden="true">⏻</span><span class="label">Sign out</span>
-	</button>
+	<List type="button" dense class="rail-list">
+		<ListItem href="/settings/accounts" class="quiet">
+			<span class="glyph" aria-hidden="true">⚙</span><span class="label">Settings</span>
+		</ListItem>
+		<ListItem class="quiet" onclick={signOut}>
+			<span class="glyph" aria-hidden="true">⏻</span><span class="label">Sign out</span>
+		</ListItem>
+	</List>
 </nav>
 
 <style>
@@ -198,37 +189,36 @@
 		background: var(--color-primary);
 		box-shadow: 0 0 0 3px var(--dm-accent-soft);
 	}
-	.folders {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-	.item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		padding: 6px var(--space-2);
-		border-radius: var(--radius-md);
-		color: var(--color-text);
-		text-decoration: none;
+	/* The rail's folder/account/footer lists are delightstack <List>s. Tighten
+	   their spacing to the rail and lay each row's content out as an icon + label
+	   (+ optional count) row. Children live in this component's scope, so these
+	   class rules reach into the ListItem slots; the ListItem chrome (hover,
+	   active, ripple) is styled globally below. */
+	:global(.rail-list) {
 		font-size: var(--font-size-0);
-		width: 100%;
-		background: none;
-		border: none;
-		cursor: pointer;
-		text-align: left;
 	}
-	.item:hover {
-		background: var(--color-bg-3);
+	:global(.rail-list .list-item) {
+		min-height: 0;
 	}
-	.item.active {
+	:global(.rail-list .list-item > a),
+	:global(.rail-list .list-item > button) {
+		gap: var(--space-2);
+		padding: 7px var(--space-2);
+		border-radius: var(--radius-md);
+	}
+	:global(.rail-list .list-item.active > a),
+	:global(.rail-list .list-item.active > button) {
 		background: var(--dm-accent-soft);
 		color: var(--color-text-active, var(--color-text));
 		font-weight: var(--font-weight-semibold, 600);
 	}
 	/* Keyboard highlight ring when the folders pane owns focus. */
-	.item.khl {
+	:global(.rail-list .list-item.khl > a),
+	:global(.rail-list .list-item.khl > button) {
 		box-shadow: inset 0 0 0 1px var(--dm-focus-ring);
+	}
+	:global(.rail-list .list-item.quiet) {
+		color: var(--color-text-disabled);
 	}
 	.glyph {
 		width: 1.25em;
@@ -272,8 +262,5 @@
 	.spacer {
 		flex: 1;
 		min-height: var(--space-4);
-	}
-	.quiet {
-		color: var(--color-text-disabled);
 	}
 </style>
