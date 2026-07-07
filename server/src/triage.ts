@@ -18,6 +18,7 @@ import {
 	type TriageVerdict,
 } from '../../src/lib/mail/triage';
 import { extractUnsubscribe } from '../../src/lib/mail/unsubscribe';
+import { safeUnsubscribePost } from '../../src/lib/mail/safe-fetch';
 
 export interface TriageMailbox {
 	exec(sql: string, ...bindings: unknown[]): Array<Record<string, unknown>>;
@@ -81,7 +82,19 @@ export async function runTriageJob(mb: TriageMailbox, env: TriageEnv): Promise<b
 			continue;
 		}
 		processed = true;
-		await triageOne(mb, gateway, model, settings.triage_prompt ?? '', mode, pushMode, autoUnsub, rules, known, id, msg);
+		await triageOne(
+			mb,
+			gateway,
+			model,
+			settings.triage_prompt ?? '',
+			mode,
+			pushMode,
+			autoUnsub,
+			rules,
+			known,
+			id,
+			msg,
+		);
 	}
 	return processed;
 }
@@ -106,8 +119,7 @@ async function triageOne(
 	// not whitelist every gmail.com sender (§7.2). `known` is a set of addresses.
 	const isKnown = known.includes(fromEmail);
 	// A reply in a thread the user already participates in (has sent into) skips AI.
-	const participated =
-		!!msg.in_reply_to && threadHasOutbound(mb, msg.thread_id as string);
+	const participated = !!msg.in_reply_to && threadHasOutbound(mb, msg.thread_id as string);
 
 	const signals = {
 		from_email: fromEmail,
@@ -119,14 +131,34 @@ async function triageOne(
 
 	// 1. Deterministic pre-pass — human/known/participated mail is inbox+primary.
 	if (skipsAI(signals)) {
-		writeReview(mb, id, 'pre-pass', { action: 'keep', category: 'primary', importance: 2 }, false, 'known/participated');
+		writeReview(
+			mb,
+			id,
+			'pre-pass',
+			{ action: 'keep', category: 'primary', importance: 2 },
+			false,
+			'known/participated',
+		);
 		maybePush(mb, msg, id, pushMode, 2, null);
 		return;
 	}
 	const rule = matchSenderRule(rules, signals);
 	if (rule) {
-		applyFolder(mb, msg, id, rule.action === 'inbox' ? null : ruleFolder(rule.action), 'promotions');
-		writeReview(mb, id, 'sender_rule', { action: rule.action, category: 'promotions' }, false, 'rule');
+		applyFolder(
+			mb,
+			msg,
+			id,
+			rule.action === 'inbox' ? null : ruleFolder(rule.action),
+			'promotions',
+		);
+		writeReview(
+			mb,
+			id,
+			'sender_rule',
+			{ action: rule.action, category: 'promotions' },
+			false,
+			'rule',
+		);
 		return;
 	}
 
@@ -202,16 +234,10 @@ async function triageOne(
 			// (§7.5) — everything else stays a one-click-away suggestion.
 			let status: 'suggested' | 'done' | 'failed' = 'suggested';
 			if (autoUnsub && cand.method === 'http_oneclick' && cand.target) {
-				try {
-					const res = await fetch(cand.target, {
-						method: 'POST',
-						headers: { 'content-type': 'application/x-www-form-urlencoded' },
-						body: 'List-Unsubscribe=One-Click',
-					});
-					status = res.ok ? 'done' : 'failed';
-				} catch {
-					status = 'failed';
-				}
+				// SSRF-guarded: target comes from the sender's List-Unsubscribe header
+				// (§7.5, H3). safeUnsubscribePost never throws.
+				const res = await safeUnsubscribePost(cand.target);
+				status = res.ok ? 'done' : 'failed';
 			}
 			try {
 				mb.create('unsubscribe_task', {

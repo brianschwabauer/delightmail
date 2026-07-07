@@ -3,6 +3,7 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
+import { safeUnsubscribePost } from '$lib/mail/safe-fetch';
 
 /** POST /api/triage/test { prompt, count } — run the prompt without acting. */
 export async function handleTriageTest(event: RequestEvent): Promise<Response> {
@@ -87,11 +88,7 @@ export async function executeUnsubscribe(
 
 	try {
 		if (task.method === 'http_oneclick' && task.target) {
-			const res = await fetch(task.target, {
-				method: 'POST',
-				headers: { 'content-type': 'application/x-www-form-urlencoded' },
-				body: 'List-Unsubscribe=One-Click',
-			});
+			const res = await safeUnsubscribePost(task.target);
 			ok = res.ok;
 			if (!ok) {
 				// One-click POST rejected → fall back to the link the user can open.
