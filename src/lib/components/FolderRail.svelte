@@ -12,6 +12,19 @@
 
 	const scope = useScope();
 
+	/** Sign out, first telling the service worker to drop this device's cached
+	 *  private mail so it can't be served to the next user who signs in (§H5). */
+	async function signOut() {
+		try {
+			const reg = await navigator.serviceWorker?.ready;
+			reg?.active?.postMessage({ type: 'clear-caches' });
+		} catch {
+			/* SW not controlling this page — nothing cached to clear */
+		}
+		await auth.signOut();
+		window.location.href = '/signin';
+	}
+
 	const FOLDERS = [
 		{ id: 'inbox', label: 'Inbox' },
 		{ id: 'filtered', label: 'AI Filtered' },
@@ -87,11 +100,7 @@
 
 	<div class="spacer"></div>
 	<a href="/settings/accounts" class="item settings">Settings</a>
-	<button
-		class="item settings"
-		onclick={() => auth.signOut().then(() => (window.location.href = '/signin'))}>
-		Sign out
-	</button>
+	<button class="item settings" onclick={signOut}> Sign out </button>
 </nav>
 
 <style>

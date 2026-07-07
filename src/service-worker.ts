@@ -11,12 +11,18 @@ import { build, files, version } from '$service-worker';
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const SHELL_CACHE = `dm-shell-${version}`;
-const BODY_CACHE = `dm-bodies-v1`;
+// Version-scoped so each deploy starts fresh and the activate handler purges the
+// previous version's cached private bodies (bounds staleness, avoids serving an
+// old deploy's content). Also fully cleared on sign-out via the message handler.
+const BODY_CACHE = `dm-bodies-${version}`;
 const SHELL_ASSETS = [...build, ...files];
 
 sw.addEventListener('install', (event) => {
 	event.waitUntil(
-		caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS)).then(() => sw.skipWaiting()),
+		caches
+			.open(SHELL_CACHE)
+			.then((cache) => cache.addAll(SHELL_ASSETS))
+			.then(() => sw.skipWaiting()),
 	);
 });
 
@@ -87,6 +93,20 @@ async function cacheFirst(req: Request, cacheName: string): Promise<Response> {
 	const res = await fetch(req);
 	if (res.ok) cache.put(req, res.clone());
 	return res;
+}
+
+// The app posts { type: 'clear-caches' } on sign-out so this device never serves
+// one user's private bodies/attachments or cached shell navigation to the next
+// user who signs in on it (§10.4, H5).
+sw.addEventListener('message', (event) => {
+	const data = event.data as { type?: string } | undefined;
+	if (data?.type === 'clear-caches') event.waitUntil(clearPrivateCaches());
+});
+
+async function clearPrivateCaches(): Promise<void> {
+	await caches.delete(BODY_CACHE);
+	const shell = await caches.open(SHELL_CACHE);
+	await shell.delete('/');
 }
 
 // --- Web push (§10.4) ---
