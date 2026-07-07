@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { Avatar } from '@delightstack/components';
+	import { ripple } from '@delightstack/utilities';
+	import Icon from './Icon.svelte';
 	import type { Thread } from '$lib/schema';
 
 	interface Props {
@@ -122,7 +124,8 @@
 					onclick={() => {
 						onCursor(index);
 						onOpen(index);
-					}}>
+					}}
+					{@attach ripple({ opacity: 0.07 })}>
 					<div class="lead">
 						<span class="av"><Avatar name={sender(t)} size={density === 'compact' ? '0' : '1'} /></span>
 						<button
@@ -135,15 +138,15 @@
 								onCursor(index);
 								onToggleSelect?.(index);
 							}}>
-							<span class="tick" aria-hidden="true">✓</span>
+							<span class="tick" aria-hidden="true"><Icon name="check" size={13} stroke={3} /></span>
 						</button>
 					</div>
 					<div class="body">
 						<div class="line1">
 							{#if t.unread_count > 0}<span class="udot" aria-hidden="true"></span>{/if}
 							<span class="from">{sender(t)}</span>
-							{#if t.has_attachments}<span class="clip" aria-hidden="true">📎</span>{/if}
-							{#if t.starred}<span class="star" aria-hidden="true">★</span>{/if}
+							{#if t.has_attachments}<span class="clip" aria-hidden="true"><Icon name="paperclip" size={12} /></span>{/if}
+							{#if t.starred}<span class="star" aria-hidden="true"><Icon name="star" size={12} fill /></span>{/if}
 							<span class="time">{fmtTime(t.last_message_at)}</span>
 						</div>
 						<div class="line2">
@@ -163,7 +166,7 @@
 			{#if loading}
 				<span class="empty-title">Loading…</span>
 			{:else}
-				<span class="empty-mark" aria-hidden="true">✦</span>
+				<span class="empty-mark" aria-hidden="true"><Icon name="sparkles" size={34} stroke={1.5} /></span>
 				<span class="empty-title">All clear</span>
 				<span class="empty-sub">Nothing here right now.</span>
 			{/if}
@@ -185,6 +188,7 @@
 		inset: 0 0 auto 0;
 	}
 	.row {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
@@ -285,11 +289,14 @@
 		color: var(--color-text);
 	}
 	.clip {
-		font-size: 0.72em;
-		opacity: 0.7;
+		display: inline-flex;
+		align-items: center;
+		color: var(--color-text-disabled);
 		flex-shrink: 0;
 	}
 	.star {
+		display: inline-flex;
+		align-items: center;
 		color: var(--color-warning);
 		flex-shrink: 0;
 	}
@@ -351,8 +358,9 @@
 		padding: var(--space-6);
 	}
 	.empty-mark {
-		font-size: 1.6rem;
-		opacity: 0.5;
+		display: inline-flex;
+		color: var(--color-primary);
+		opacity: 0.6;
 	}
 	.empty-title {
 		font-size: var(--font-size-1);
