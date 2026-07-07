@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, onMount, untrack, getContext } from 'svelte';
-	import { toast } from '@delightstack/components';
+	import { Button, toast } from '@delightstack/components';
 	import { viewToQuery, viewTitle } from '$lib/mail/views';
 	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
@@ -68,9 +68,20 @@
 	let selected = $state<Set<string>>(new Set());
 	/** Anchor row for Shift-range selection; null until a range starts. */
 	let anchor = $state<number | null>(null);
+	/** Selection as it stood when the current Shift-range gesture began — the
+	 *  range [anchor..cursor] is applied on top of this, so shrinking the range
+	 *  (moving back toward the anchor) restores rows instead of leaving them stuck. */
+	let rangeBase = $state<Set<string>>(new Set());
+	/** Whether the active range gesture is adding or removing rows (yazi-style):
+	 *  a gesture that starts on an unselected anchor selects; on a selected anchor
+	 *  it deselects. So holding Shift and moving can select OR deselect. */
+	let rangeMode = $state<'select' | 'deselect'>('select');
 	/** Rows that fit the list viewport (set by ThreadList) — drives PageUp/Down. */
 	let listRows = $state(12);
 	let openId = $state<string | null>(null);
+	/** The messages of the open thread, mirrored up from the reading pane so reply/
+	 *  forward act on data already loaded (no extra round-trip that could hang). */
+	let openMessages = $state<Message[]>([]);
 	let density = $state<Density>('comfortable');
 	let confirmingDelete = $state(false);
 	let moving = $state(false);
@@ -113,15 +124,26 @@
 	function clamp(i: number): number {
 		return Math.min(docs.length - 1, Math.max(0, i));
 	}
+	/** Show the cursor thread in the reading pane as a live preview, without
+	 *  stealing focus (yazi-style: moving the cursor previews the "child"). The
+	 *  reader only marks-read once it's actually focused, so previewing is free.
+	 *  Drafts resume in the compose overlay, so they aren't previewed here. */
+	function previewCursor() {
+		if (!docs.length || view === 'drafts') return;
+		const t = docs[cursor];
+		if (t) openId = String(t.id);
+	}
 	function move(delta: number) {
 		if (!docs.length) return;
 		cursor = clamp(cursor + delta);
 		anchor = null; // a plain move re-anchors the next Shift-range
+		previewCursor();
 	}
 	function cursorTo(i: number) {
 		if (!docs.length) return;
 		cursor = clamp(i);
 		anchor = null;
+		previewCursor();
 	}
 	function scrollReading(dy: number) {
 		readingEl?.scrollBy({ top: dy, behavior: 'smooth' });
@@ -131,19 +153,42 @@
 		return Math.max(1, listRows - 1);
 	}
 
-	/** Extend the multi-selection to a target row — anchor-based range, unioned
-	 *  with any prior x/Shift picks. Every Shift+motion routes through here. */
-	function extendTo(target: number) {
-		if (!docs.length) return;
-		if (anchor === null) anchor = cursor;
-		cursor = clamp(target);
+	/** Begin (or continue) a Shift-range gesture anchored at the current cursor.
+	 *  Snapshots the selection so the range can grow AND shrink, and locks in
+	 *  whether this gesture selects or deselects. */
+	function beginGesture(mode: 'select' | 'deselect') {
+		anchor = cursor;
+		rangeBase = new Set(selected);
+		rangeMode = mode;
+	}
+	/** Paint the range [anchor..cursor] onto the pre-gesture base — add rows when
+	 *  the gesture selects, remove them when it deselects. Rows outside the range
+	 *  fall back to the base, so backing up over them undoes the pick. */
+	function applyRange() {
+		if (anchor === null) return;
 		const [lo, hi] = anchor <= cursor ? [anchor, cursor] : [cursor, anchor];
-		const next = new Set(selected);
+		const next = new Set(rangeBase);
 		for (let i = lo; i <= hi; i++) {
 			const t = docs[i];
-			if (t) next.add(String(t.id));
+			if (!t) continue;
+			if (rangeMode === 'select') next.add(String(t.id));
+			else next.delete(String(t.id));
 		}
 		selected = next;
+	}
+	/** Extend the multi-selection to a target row — anchor-based range that both
+	 *  selects and deselects. Every Shift/Ctrl+Shift motion routes through here. */
+	function extendTo(target: number) {
+		if (!docs.length) return;
+		// A fresh gesture (no live anchor): its direction is decided by the anchor
+		// row's current state — start on a selected row and Shift+move deselects.
+		if (anchor === null) {
+			const cur = docs[cursor];
+			beginGesture(cur && selected.has(String(cur.id)) ? 'deselect' : 'select');
+		}
+		cursor = clamp(target);
+		applyRange();
+		previewCursor();
 	}
 
 	/** The dispatcher behind every arrow / page / home-end motion. In the reading
@@ -183,7 +228,13 @@
 	}
 	function paneRight() {
 		if (!focus.is('list')) return;
-		openCursor();
+		// Drafts open in the compose overlay; everything else is already showing
+		// as a live preview, so → just moves focus into the reader to scroll it.
+		if (view === 'drafts') {
+			openCursor();
+			return;
+		}
+		if (!openId) openCursor();
 		if (openId) focus.set('reading');
 	}
 
@@ -277,10 +328,14 @@
 		if (!t) return;
 		const id = String(t.id);
 		const next = new Set(selected);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
+		const nowSelected = !next.has(id);
+		if (nowSelected) next.add(id);
+		else next.delete(id);
 		selected = next;
-		anchor = cursor; // start a range from the row we just picked
+		// Seed a range gesture from this row so a following Shift+move continues in
+		// the same direction (x-select then Shift+↓ keeps selecting; x-deselect then
+		// Shift+↓ keeps deselecting).
+		beginGesture(nowSelected ? 'select' : 'deselect');
 	}
 	function clearSelection() {
 		selected = new Set();
@@ -311,9 +366,19 @@
 		}
 	}
 	async function reply(kind: 'reply' | 'reply_all' | 'forward') {
-		const t = docs[cursor];
+		// Target the thread actually on screen in the reader (openId) — the reading
+		// pane's Reply/Forward buttons act on what's open, and a deep-link or a
+		// re-sorted list can leave the cursor pointing elsewhere.
+		const t = docs.find((d) => String(d.id) === openId) ?? docs[cursor];
 		if (!t) return;
-		const m = await latestMessage(String(t.id));
+		// Prefer the messages the reader already loaded (reply is then instant and
+		// can't hang on a round-trip); only fetch when replying to a thread that
+		// isn't the one on screen. Reader messages are date-ASC, so the last is latest.
+		const loaded =
+			openId && String(t.id) === openId && openMessages.length
+				? openMessages[openMessages.length - 1]
+				: null;
+		const m = loaded ?? (await latestMessage(String(t.id)));
 		if (!m) return;
 		const selfEmails = m.identity_email ? [m.identity_email] : [];
 		// The DSL types message addresses as nullable ({name: string|null}); the pure
@@ -439,6 +504,7 @@
 			{ keys: 'ArrowLeft', description: 'Back to folders / list', group: 'Panes', context: 'list', when: listOrReading, handler: paneLeft },
 			// Multi-select: Shift extends a range across every motion.
 			{ keys: 'x', description: 'Select / deselect', group: 'Select', context: 'list', when: inList, handler: toggleSelect },
+			{ keys: 'Space', description: 'Select / deselect', group: 'Select', context: 'list', when: inList, handler: toggleSelect },
 			{ keys: 'Shift+ArrowDown', description: 'Select down', group: 'Select', context: 'list', when: inList, handler: () => nav('line', 1, true) },
 			{ keys: 'Shift+ArrowUp', description: 'Select up', group: 'Select', context: 'list', when: inList, handler: () => nav('line', -1, true) },
 			{ keys: 'Ctrl+Shift+ArrowDown', description: 'Select down ×5', group: 'Select', context: 'list', when: inList, handler: () => nav('jump', 1, true) },
@@ -532,17 +598,17 @@
 	{#if confirmingDelete}
 		<div class="bar danger" role="alertdialog" aria-label="Confirm delete">
 			<span class="bar-msg">Delete {targets().length} forever? This can't be undone.</span>
-			<button class="btn-danger" onclick={() => { confirmingDelete = false; act('delete'); }}><kbd>↵</kbd> Delete</button>
-			<button class="btn-ghost" onclick={() => (confirmingDelete = false)}><kbd>Esc</kbd></button>
+			<Button size="0" error onclick={() => { confirmingDelete = false; act('delete'); }}><kbd>↵</kbd> Delete</Button>
+			<Button size="0" transparent onclick={() => (confirmingDelete = false)}><kbd>Esc</kbd></Button>
 		</div>
 	{/if}
 	{#if moving}
 		<div class="bar" role="menu" aria-label="Move to folder">
 			<span class="bar-msg">Move {targets().length} to</span>
 			{#each MOVE_FOLDERS as f}
-				<button class="btn-ghost" role="menuitem" onclick={() => moveTo(f)}>{f}</button>
+				<Button size="0" outline class="cap" onclick={() => moveTo(f)}>{f}</Button>
 			{/each}
-			<button class="btn-ghost dim" onclick={() => (moving = false)}><kbd>Esc</kbd></button>
+			<Button size="0" transparent onclick={() => (moving = false)}><kbd>Esc</kbd></Button>
 		</div>
 	{/if}
 
@@ -560,7 +626,9 @@
 			}}
 			onCursor={(i) => {
 				cursor = i;
+				anchor = null;
 				focus.set('list');
+				previewCursor();
 			}}
 			onToggleSelect={(i) => {
 				cursor = i;
@@ -579,7 +647,13 @@
 	class:active={focus.is('reading')}
 	bind:this={readingEl}
 	onmousedowncapture={() => openId && focus.set('reading')}>
-	<ReadingPane {db} threadId={openId} onReply={reply} onAct={act} />
+	<ReadingPane
+		{db}
+		threadId={openId}
+		markReadActive={focus.is('reading')}
+		onDocs={(m) => (openMessages = m)}
+		onReply={reply}
+		onAct={act} />
 </div>
 
 <style>
@@ -705,40 +779,14 @@
 		background: var(--color-error-bg, color-mix(in oklab, var(--color-error) 12%, var(--color-bg-2)));
 		color: var(--color-error-text, inherit);
 	}
-	.btn-ghost,
-	.btn-danger {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		background: var(--color-bg-1);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		padding: 3px 10px;
-		color: inherit;
-		cursor: pointer;
-		font: inherit;
-		font-size: var(--font-size-00);
+	.bar :global(.cap) {
 		text-transform: capitalize;
 	}
-	.btn-ghost:hover {
-		background: var(--color-bg-3);
-	}
-	.btn-ghost.dim {
-		border-color: transparent;
-		background: none;
-		color: var(--color-text-disabled);
-	}
-	.btn-danger {
-		background: var(--color-error);
-		color: var(--color-error-text, white);
-		border-color: transparent;
-		font-weight: var(--font-weight-medium, 500);
-	}
-	.btn-danger kbd,
-	.btn-ghost kbd {
+	.bar kbd {
 		font-family: var(--font-mono);
 		font-size: 0.85em;
 		opacity: 0.9;
+		margin-right: 3px;
 	}
 	.list-body {
 		flex: 1;

@@ -9,10 +9,17 @@
 	interface Props {
 		db: MailDatabaseClient;
 		threadId: string | null;
+		/** Whether the reader currently owns focus (i.e. the thread was actually
+		 *  opened, not just previewed by moving the list cursor). Marking-read is
+		 *  gated on this so scrolling the list with j/k never silently reads mail. */
+		markReadActive?: boolean;
+		/** Surfaces the loaded messages of the open thread so the page can reply/
+		 *  forward from data already in hand — no extra round-trip that could hang. */
+		onDocs?: (messages: Message[]) => void;
 		onReply?: (kind: 'reply' | 'reply_all' | 'forward') => void;
 		onAct?: (action: ThreadActionName) => void;
 	}
-	const { db, threadId, onReply, onAct }: Props = $props();
+	const { db, threadId, markReadActive = true, onDocs, onReply, onAct }: Props = $props();
 
 	// Reactive query function — the search re-queries when the open thread changes.
 	const messages = db.search('message', () => ({
@@ -22,6 +29,11 @@
 	}));
 
 	const docs = $derived(threadId ? ((messages.docs ?? []) as Message[]) : []);
+	// Hand the loaded thread up to the page so reply/forward can act on messages
+	// already in memory instead of issuing a fresh (possibly hanging) query.
+	$effect(() => {
+		onDocs?.(docs);
+	});
 	const latestId = $derived(docs.length ? docs[docs.length - 1].id : null);
 	const subject = $derived(docs[0]?.subject || '(no subject)');
 	const starred = $derived(docs.some((m) => m.is_starred));
@@ -54,7 +66,9 @@
 	let markedThread = $state<string | null>(null);
 	$effect(() => {
 		const tid = threadId;
-		if (!tid || docs.length === 0) return;
+		// Only mark-read once the reader is actually focused — a mere preview
+		// (cursor move with focus still in the list) must leave mail untouched.
+		if (!tid || docs.length === 0 || !markReadActive) return;
 		if (untrack(() => markedThread) === tid) return;
 		const unread = docs.filter((m) => !m.is_read);
 		untrack(() => {
