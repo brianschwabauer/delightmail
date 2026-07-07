@@ -29,7 +29,8 @@ export interface Env {
 	PUBLIC_APP_URL?: string;
 	GMAIL_PUSH_AUDIENCE?: string;
 	GMAIL_PUSH_SA_EMAIL?: string;
-	DEV?: boolean;
+	/** "true" only in local dev (set in .dev.vars). MUST be unset in production. */
+	DEV?: string;
 }
 
 /** Auth DO — app-specific config injected here (workerd only passes ctx, env). */
@@ -37,8 +38,7 @@ export class AuthServer extends BaseAuthDatabaseServer {
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env as never, {
 			secret:
-				env.JWT_KEY_SECRET ||
-				'00000000000000000000000000000000000000000000000000000000deadbeef',
+				env.JWT_KEY_SECRET || '00000000000000000000000000000000000000000000000000000000deadbeef',
 			issuer: 'delightmail',
 			permissions: ['owner', 'admin', 'member'],
 			oauth_scopes: [],
@@ -78,7 +78,15 @@ export default {
 			return handleGmailWebhook(request, env);
 		}
 
-		// Dev-only: bridge SvelteKit dev RPC + WebSocket upgrades to real DOs.
+		// Everything below is the dev-only bridge that lets `vite dev` reach real
+		// Durable Objects over HTTP (SvelteKit's dev proxy → /__rpc/ and the
+		// /api/websocket upgrade). In production the app worker binds these DOs
+		// cross-script and NEVER calls the server worker over HTTP, so leaving the
+		// unauthenticated RPC/WS surface reachable would be a full tenant/auth bypass
+		// whenever this worker has a public route (the Gmail webhook needs one).
+		// Gate it hard on DEV, which is set only in .dev.vars.
+		if (env.DEV !== 'true') return new Response('Not found', { status: 404 });
+
 		if (url.pathname === '/api/websocket' && request.headers.get('Upgrade') === 'websocket') {
 			const room = url.searchParams.get('room');
 			if (!room) return new Response('Missing room', { status: 400 });

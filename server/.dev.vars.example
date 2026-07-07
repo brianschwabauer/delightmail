@@ -1,4 +1,10 @@
 # DelightMail server-worker secrets. Copy to `.dev.vars` and fill in.
+
+# Enables the dev-only DO RPC + WebSocket bridge in the server worker so
+# `vite dev` can reach the Durable Objects over HTTP. MUST be left unset in
+# production — it exposes unauthenticated Durable Object access.
+DEV="true"
+
 # Required
 JWT_KEY_SECRET="dev-secret-change-me-in-production-min-64-chars-long-0123456789abcdef"
 CREDENTIALS_ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
