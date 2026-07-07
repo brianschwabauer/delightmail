@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildMimeMessage } from './mime-build';
+import { buildMimeMessage, stripBccHeader } from './mime-build';
 
 describe('buildMimeMessage', () => {
 	it('produces raw MIME with the expected headers', () => {
@@ -35,5 +35,33 @@ describe('buildMimeMessage', () => {
 			message_id: '<fixed@b.com>',
 		});
 		expect(raw).toContain('<fixed@b.com>');
+	});
+
+	it('strips the Bcc header for envelope-delivery transports (H1)', () => {
+		const { raw } = buildMimeMessage({
+			from: { email: 'a@b.com' },
+			to: [{ email: 'c@d.com' }],
+			bcc: [{ email: 'secret@x.com' }],
+			subject: 'Hi',
+			text: 'yo',
+		});
+		expect(raw).toMatch(/^Bcc:/im); // mimetext emits Bcc into the raw
+		const stripped = stripBccHeader(raw);
+		expect(stripped).not.toMatch(/^Bcc:/im);
+		expect(stripped).not.toContain('secret@x.com');
+		expect(stripped).toContain('c@d.com'); // other headers intact
+		expect(stripped).toContain('yo'); // body intact
+	});
+
+	it('neutralizes CRLF header injection in user fields (H4)', () => {
+		const { raw } = buildMimeMessage({
+			from: { email: 'a@b.com' },
+			to: [{ email: 'c@d.com' }],
+			subject: 'Hi\r\nBcc: evil@x.com',
+			in_reply_to: '<p@x.com>\r\nX-Injected: yes',
+			text: 'yo',
+		});
+		expect(raw).not.toMatch(/^Bcc: evil@x\.com/im);
+		expect(raw).not.toMatch(/^X-Injected:/im);
 	});
 });

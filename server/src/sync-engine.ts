@@ -19,7 +19,7 @@ import {
 	type GmailMessage,
 } from './adapters/gmail';
 import type { NormalizedMessage } from './ingest';
-import { buildMimeMessage } from './mime-build';
+import { buildMimeMessage, stripBccHeader } from './mime-build';
 import type { Address } from '../../src/lib/schema';
 
 export interface SyncEnv {
@@ -553,8 +553,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				mod as { EmailMessage?: new (from: string, to: string, raw: string) => unknown }
 			)?.EmailMessage;
 			if (EmailMessage) {
+				// Deliver per-recipient via the envelope; strip Bcc from the header so
+				// blind-copy recipients aren't disclosed to everyone (§6, H1).
+				const safeRaw = stripBccHeader(raw);
 				for (const to of recipients) {
-					await this.env.EMAIL.send(new EmailMessage(fromEmail, to, raw));
+					await this.env.EMAIL.send(new EmailMessage(fromEmail, to, safeRaw));
 				}
 				return;
 			}
@@ -603,7 +606,9 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			authType: 'plain',
 			credentials: cfg.user && cfg.pass ? { username: cfg.user, password: cfg.pass } : undefined,
 		});
-		await mailer.send({ from: fromEmail, to: recipients, raw });
+		// Bcc is delivered via the `to` envelope list above; strip it from the
+		// header so recipients never see the blind-copy list (§6, H1).
+		await mailer.send({ from: fromEmail, to: recipients, raw: stripBccHeader(raw) });
 		await mailer.close();
 	}
 
