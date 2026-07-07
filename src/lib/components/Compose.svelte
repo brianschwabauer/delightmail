@@ -15,6 +15,7 @@
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
 	import { mergeSignatureDoc, docToText } from '$lib/mail/compose';
+	import { DraftAutosaver } from '$lib/mail/draft-autosave';
 
 	export interface ComposeInit {
 		to?: Address[];
@@ -85,9 +86,14 @@
 		content: (init.bodyDoc as never) ?? undefined,
 	});
 
-	// --- draft autosave (§6): every 3s of idle, persist to a draft row ---
-	let draftId = $state<string | undefined>(init.draft_id);
-	let lastSavedSig = '';
+	const fromIdentity = $derived(
+		(identities.docs as Identity[]).find((i) => String(i.id) === identityId) ??
+			(identities.docs[0] as Identity | undefined),
+	);
+
+	// --- draft autosave (§6): every 3s of idle, persist to a draft row. The saver
+	// serializes saves, so fast typing during an in-flight create can't spawn a
+	// second create (duplicate/orphan drafts). ---
 	let sent = $state(false);
 
 	function currentSig(): string {
@@ -96,45 +102,48 @@
 	function hasContent(): boolean {
 		return !!(subject.trim() || to.length || docToText(editor.doc).trim());
 	}
-	async function autosave(): Promise<void> {
-		if (sent || sending || !fromIdentity || !hasContent()) return;
-		const sig = currentSig();
-		if (sig === lastSavedSig) return;
-		lastSavedSig = sig;
-		try {
-			const res = await fetch('/api/drafts', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					draft_id: draftId,
-					identity_id: fromIdentity.id,
-					to,
-					cc: showCc ? cc : [],
-					subject,
-					doc: editor.doc,
-				}),
-			});
-			if (res.ok) draftId = ((await res.json()) as { draft_id: string }).draft_id;
-		} catch {
-			lastSavedSig = ''; // retry next tick
-		}
-	}
+
+	const saver = new DraftAutosaver(
+		{
+			signature: currentSig,
+			hasContent,
+			save: async (id) => {
+				if (!fromIdentity) throw new Error('no identity to save under');
+				const res = await fetch('/api/drafts', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						draft_id: id,
+						identity_id: fromIdentity.id,
+						to,
+						cc: showCc ? cc : [],
+						subject,
+						doc: editor.doc,
+					}),
+				});
+				if (!res.ok) throw new Error('draft save failed');
+				return ((await res.json()) as { draft_id: string }).draft_id;
+			},
+			remove: async (id) => {
+				await fetch(`/api/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+			},
+		},
+		init.draft_id,
+	);
 
 	onMount(() => {
 		if (!identityId && identities.docs.length) {
 			identityId = String((identities.docs[0] as Identity).id);
 		}
-		const timer = setInterval(() => void autosave(), 3000);
+		const timer = setInterval(() => {
+			if (sent || sending || !fromIdentity) return;
+			void saver.tick();
+		}, 3000);
 		return () => {
 			clearInterval(timer);
 			editor.destroy();
 		};
 	});
-
-	const fromIdentity = $derived(
-		(identities.docs as Identity[]).find((i) => String(i.id) === identityId) ??
-			(identities.docs[0] as Identity | undefined),
-	);
 
 	// Signature preview (§10.3): shown below the body, swapped when the identity
 	// changes, and merged into the doc at send time without touching what's written.
@@ -284,11 +293,10 @@
 				const err = (await res.json().catch(() => ({}))) as { message?: string };
 				throw new Error(err.message || `Send failed (${res.status})`);
 			}
-			// The sent message supersedes the draft — drop it (and stop autosaving).
+			// The sent message supersedes the draft — stop autosaving and drop it,
+			// waiting for any in-flight save first so it can't re-create an orphan (§6).
 			sent = true;
-			if (draftId) {
-				void fetch(`/api/drafts/${encodeURIComponent(draftId)}`, { method: 'DELETE' });
-			}
+			void saver.discardAfterSend();
 			toast('Sending… (undo from the outbox within your undo window)');
 			onClose();
 		} catch (e) {
