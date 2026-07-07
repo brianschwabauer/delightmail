@@ -163,6 +163,18 @@ export function useKeyboard(): Keyboard {
 	return getContext<Keyboard>(KEY);
 }
 
+/** Navigation keys that keep Shift as an explicit modifier (for range select). */
+const NAV_KEYS = new Set([
+	'ArrowUp',
+	'ArrowDown',
+	'ArrowLeft',
+	'ArrowRight',
+	'PageUp',
+	'PageDown',
+	'Home',
+	'End',
+]);
+
 /** Normalize a KeyboardEvent to a binding token (e.g. 'Ctrl+k', 'Shift+j', 'g'). */
 export function tokenize(event: KeyboardEvent): string | null {
 	const key = event.key;
@@ -172,13 +184,15 @@ export function tokenize(event: KeyboardEvent): string | null {
 	if (event.ctrlKey || event.metaKey) mods.push('Ctrl');
 	if (event.altKey) mods.push('Alt');
 
-	// Single printable keys keep their case; Shift is implied by an uppercase key
-	// or an explicit Shift+ for non-letters (arrows etc.).
+	// Single printable keys keep their case (Shift is implied by the uppercase
+	// glyph). For navigation keys we keep Shift as an explicit modifier so range
+	// selection (Shift+Arrow / Shift+PageDown / Shift+Home…) is bindable; other
+	// non-printable keys (Enter/Escape/Tab) stay shift-agnostic.
 	let base = key;
 	if (key === ' ') base = 'Space';
 	if (key.length === 1) {
 		if (mods.length) base = key.toLowerCase();
-	} else if (event.shiftKey && !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
+	} else if (event.shiftKey && NAV_KEYS.has(key)) {
 		mods.push('Shift');
 	}
 	return mods.length ? `${mods.join('+')}+${base}` : base;

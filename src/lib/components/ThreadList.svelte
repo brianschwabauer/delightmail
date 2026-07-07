@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Avatar } from '@delightstack/components';
 	import type { Thread } from '$lib/schema';
 
 	interface Props {
@@ -9,6 +10,9 @@
 		loading?: boolean;
 		onOpen: (index: number) => void;
 		onCursor: (index: number) => void;
+		onToggleSelect?: (index: number) => void;
+		/** Reports how many rows fit the viewport — drives PageUp/PageDown paging. */
+		onRows?: (rows: number) => void;
 		/** Mobile swipe: right = archive, left = trash. */
 		onSwipe?: (index: number, dir: 'archive' | 'trash') => void;
 	}
@@ -20,6 +24,8 @@
 		loading = false,
 		onOpen,
 		onCursor,
+		onToggleSelect,
+		onRows,
 		onSwipe,
 	}: Props = $props();
 
@@ -39,7 +45,7 @@
 		swipeIndex = -1;
 	}
 
-	const ROW_H = $derived(density === 'compact' ? 44 : 60);
+	const ROW_H = $derived(density === 'compact' ? 48 : 68);
 	const OVERSCAN = 20;
 
 	let viewport = $state<HTMLDivElement>();
@@ -55,6 +61,11 @@
 	function onScroll() {
 		if (viewport) scrollTop = viewport.scrollTop;
 	}
+
+	// Report the number of fully-visible rows so the page can page by a screenful.
+	$effect(() => {
+		onRows?.(Math.max(1, Math.floor(height / ROW_H)));
+	});
 
 	// Keep the keyboard cursor row visible.
 	$effect(() => {
@@ -79,6 +90,9 @@
 		if (now.getTime() - ts < 7 * 864e5) return d.toLocaleDateString(undefined, { weekday: 'short' });
 		return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
+	function sender(t: Thread): string {
+		return t.participant_text || t.subject || '(no sender)';
+	}
 </script>
 
 <div
@@ -93,11 +107,13 @@
 		<div class="rows" style:transform="translateY({start * ROW_H}px)">
 			{#each slice as t, i (t.id)}
 				{@const index = start + i}
+				{@const isSel = selected.has(String(t.id))}
 				<div
 					class="row"
 					class:unread={t.unread_count > 0}
 					class:cursor={index === cursor}
-					class:selected={selected.has(String(t.id))}
+					class:selected={isSel}
+					class:compact={density === 'compact'}
 					style:height="{ROW_H}px"
 					role="option"
 					aria-selected={index === cursor}
@@ -107,14 +123,36 @@
 						onCursor(index);
 						onOpen(index);
 					}}>
-					<div class="line1">
-						<span class="from">{t.participant_text || t.subject || '(no sender)'}</span>
-						<span class="time">{fmtTime(t.last_message_at)}</span>
+					<div class="lead">
+						<span class="av"><Avatar name={sender(t)} size={density === 'compact' ? '0' : '1'} /></span>
+						<button
+							class="check"
+							class:on={isSel}
+							aria-label={isSel ? 'Deselect' : 'Select'}
+							aria-pressed={isSel}
+							onclick={(e) => {
+								e.stopPropagation();
+								onCursor(index);
+								onToggleSelect?.(index);
+							}}>
+							<span class="tick" aria-hidden="true">✓</span>
+						</button>
 					</div>
-					<div class="line2">
-						{#if t.starred}<span class="star">★</span>{/if}
-						<span class="subject">{t.subject || '(no subject)'}</span>
-						{#if t.message_count > 1}<span class="count">{t.message_count}</span>{/if}
+					<div class="body">
+						<div class="line1">
+							{#if t.unread_count > 0}<span class="udot" aria-hidden="true"></span>{/if}
+							<span class="from">{sender(t)}</span>
+							{#if t.has_attachments}<span class="clip" aria-hidden="true">📎</span>{/if}
+							{#if t.starred}<span class="star" aria-hidden="true">★</span>{/if}
+							<span class="time">{fmtTime(t.last_message_at)}</span>
+						</div>
+						<div class="line2">
+							<span class="subject">{t.subject || '(no subject)'}</span>
+							{#if !density || density === 'comfortable'}
+								{#if t.snippet}<span class="snippet">— {t.snippet}</span>{/if}
+							{/if}
+							{#if t.message_count > 1}<span class="count">{t.message_count}</span>{/if}
+						</div>
 					</div>
 				</div>
 			{/each}
@@ -122,7 +160,13 @@
 	</div>
 	{#if total === 0}
 		<div class="empty">
-			{#if loading}Loading…{:else}Nothing here.{/if}
+			{#if loading}
+				<span class="empty-title">Loading…</span>
+			{:else}
+				<span class="empty-mark" aria-hidden="true">✦</span>
+				<span class="empty-title">All clear</span>
+				<span class="empty-sub">Nothing here right now.</span>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -141,70 +185,180 @@
 		inset: 0 0 auto 0;
 	}
 	.row {
-		padding: 6px 12px;
-		border-bottom: 1px solid var(--color-outline);
-		cursor: pointer;
 		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		gap: 2px;
+		align-items: center;
+		gap: var(--space-3);
+		padding: 0 var(--space-3);
+		border-bottom: 1px solid var(--dm-hairline);
+		cursor: pointer;
 		overflow: hidden;
 	}
-	.row.cursor {
-		box-shadow: inset 2px 0 0 var(--color-primary);
+	.row:hover {
 		background: var(--color-bg-2);
 	}
+	.row.cursor {
+		background: var(--dm-cursor-bg);
+		box-shadow: inset 2px 0 0 var(--dm-cursor-bar);
+	}
 	.row.selected {
-		background: color-mix(in oklch, var(--color-primary) 14%, transparent);
+		background: var(--dm-selection-bg);
+	}
+	.row.cursor.selected {
+		background: color-mix(in oklab, var(--dm-selection-bg), var(--dm-cursor-bg));
+	}
+
+	/* Leading control: avatar by default, a selection tick on hover / when picked. */
+	.lead {
+		position: relative;
+		flex-shrink: 0;
+		display: grid;
+		place-items: center;
+	}
+	.av {
+		display: block;
+		transition: opacity var(--duration-fast, 120ms) ease;
+	}
+	.check {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		border: none;
+		background: none;
+		padding: 0;
+		cursor: pointer;
+		opacity: 0;
+	}
+	.tick {
+		display: grid;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		border: 1.5px solid var(--color-border);
+		color: transparent;
+		font-size: 0.7rem;
+		background: var(--color-bg-1);
+	}
+	.row:hover .check,
+	.row.selected .check {
+		opacity: 1;
+	}
+	.row:hover .av,
+	.row.selected .av {
+		opacity: 0;
+	}
+	.row.selected .tick {
+		background: var(--color-primary);
+		border-color: var(--color-primary);
+		color: white;
+	}
+
+	.body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
 	}
 	.line1 {
 		display: flex;
-		justify-content: space-between;
-		gap: 8px;
+		align-items: center;
+		gap: 6px;
 		font-size: var(--font-size-0);
 	}
-	.row.unread .from {
-		font-weight: 700;
+	.udot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--color-primary);
+		flex-shrink: 0;
 	}
 	.from {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		color: var(--color-text-muted, var(--color-text-disabled));
+	}
+	.row.unread .from {
+		font-weight: var(--font-weight-semibold, 600);
+		color: var(--color-text);
+	}
+	.clip {
+		font-size: 0.72em;
+		opacity: 0.7;
+		flex-shrink: 0;
+	}
+	.star {
+		color: var(--color-warning);
+		flex-shrink: 0;
 	}
 	.time {
+		margin-left: auto;
 		flex-shrink: 0;
 		color: var(--color-text-disabled);
 		font-variant-numeric: tabular-nums;
-		font-size: var(--font-size-00, 0.72rem);
+		font-size: var(--font-size-00);
 	}
 	.line2 {
 		display: flex;
-		align-items: center;
+		align-items: baseline;
 		gap: 6px;
-		font-size: var(--font-size-00, 0.78rem);
+		font-size: var(--font-size-00);
 		color: var(--color-text-disabled);
+		min-width: 0;
+	}
+	.subject {
+		flex-shrink: 0;
+		max-width: 60%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--color-text-muted, var(--color-text-disabled));
 	}
 	.row.unread .subject {
 		color: var(--color-text);
+		font-weight: var(--font-weight-medium, 500);
 	}
-	.subject {
+	.snippet {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.star {
-		color: var(--color-warning, #e5a13d);
-	}
 	.count {
 		margin-left: auto;
-		background: var(--color-bg-3, var(--color-bg-2));
-		border-radius: 99px;
-		padding: 0 6px;
+		flex-shrink: 0;
+		background: var(--color-bg-3);
+		border-radius: var(--radius-cap, 99px);
+		padding: 0 7px;
 		font-variant-numeric: tabular-nums;
+		color: var(--color-text-muted, var(--color-text-disabled));
 	}
+	.compact .line2 .snippet {
+		display: none;
+	}
+
 	.empty {
-		padding: var(--size-6);
-		text-align: center;
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
 		color: var(--color-text-disabled);
+		text-align: center;
+		padding: var(--space-6);
+	}
+	.empty-mark {
+		font-size: 1.6rem;
+		opacity: 0.5;
+	}
+	.empty-title {
+		font-size: var(--font-size-1);
+		color: var(--color-text);
+	}
+	.empty-sub {
+		font-size: var(--font-size-0);
 	}
 </style>

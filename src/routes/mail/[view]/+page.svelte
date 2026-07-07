@@ -6,6 +6,7 @@
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
 	import { useScope } from '$lib/mail/scope.svelte';
+	import { useFocus } from '$lib/mail/focus.svelte';
 	import { replySubject, replyAllRecipients, buildQuoteDoc } from '$lib/mail/compose';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
@@ -21,6 +22,7 @@
 	const kb = useKeyboard();
 	const actions = useActions();
 	const scope = useScope();
+	const focus = useFocus();
 
 	// --- search (/) and filter (f) state ---
 	let searching = $state(false);
@@ -64,6 +66,10 @@
 	// --- selection / cursor / open ---
 	let cursor = $state(0);
 	let selected = $state<Set<string>>(new Set());
+	/** Anchor row for Shift-range selection; null until a range starts. */
+	let anchor = $state<number | null>(null);
+	/** Rows that fit the list viewport (set by ThreadList) — drives PageUp/Down. */
+	let listRows = $state(12);
 	let openId = $state<string | null>(null);
 	let density = $state<Density>('comfortable');
 	let confirmingDelete = $state(false);
@@ -103,13 +109,84 @@
 	const title = $derived(viewTitle(view));
 
 	let readingEl = $state<HTMLElement>();
+
+	function clamp(i: number): number {
+		return Math.min(docs.length - 1, Math.max(0, i));
+	}
 	function move(delta: number) {
 		if (!docs.length) return;
-		cursor = Math.min(docs.length - 1, Math.max(0, cursor + delta));
+		cursor = clamp(cursor + delta);
+		anchor = null; // a plain move re-anchors the next Shift-range
+	}
+	function cursorTo(i: number) {
+		if (!docs.length) return;
+		cursor = clamp(i);
+		anchor = null;
 	}
 	function scrollReading(dy: number) {
 		readingEl?.scrollBy({ top: dy, behavior: 'smooth' });
 	}
+	/** One page of the list, in rows (leaving a row of overlap for context). */
+	function pageStep(): number {
+		return Math.max(1, listRows - 1);
+	}
+
+	/** Extend the multi-selection to a target row — anchor-based range, unioned
+	 *  with any prior x/Shift picks. Every Shift+motion routes through here. */
+	function extendTo(target: number) {
+		if (!docs.length) return;
+		if (anchor === null) anchor = cursor;
+		cursor = clamp(target);
+		const [lo, hi] = anchor <= cursor ? [anchor, cursor] : [cursor, anchor];
+		const next = new Set(selected);
+		for (let i = lo; i <= hi; i++) {
+			const t = docs[i];
+			if (t) next.add(String(t.id));
+		}
+		selected = next;
+	}
+
+	/** The dispatcher behind every arrow / page / home-end motion. In the reading
+	 *  pane a motion scrolls the message; in the list it moves the cursor, and
+	 *  when `extend` is set it grows the selection as it goes. */
+	function nav(kind: 'line' | 'jump' | 'page', dir: -1 | 1, extend: boolean) {
+		if (focus.is('reading')) {
+			const px =
+				kind === 'page' ? (readingEl?.clientHeight ?? 600) * 0.9 : kind === 'jump' ? 320 : 90;
+			scrollReading(dir * px);
+			return;
+		}
+		if (!focus.is('list')) return;
+		const delta = dir * (kind === 'line' ? 1 : kind === 'jump' ? 5 : pageStep());
+		if (extend) extendTo(cursor + delta);
+		else move(delta);
+	}
+	function navEdge(where: 'top' | 'bottom', extend: boolean) {
+		if (focus.is('reading')) {
+			readingEl?.scrollTo({
+				top: where === 'top' ? 0 : (readingEl?.scrollHeight ?? 0),
+				behavior: 'smooth',
+			});
+			return;
+		}
+		if (!focus.is('list')) return;
+		const target = where === 'top' ? 0 : docs.length - 1;
+		if (extend) extendTo(target);
+		else cursorTo(target);
+	}
+
+	// yazi h/l — move between panes. Left never closes the reader (it stays as a
+	// live preview, like yazi); Right into the list opens the cursor thread.
+	function paneLeft() {
+		if (focus.is('reading')) focus.set('list');
+		else if (focus.is('list')) focus.set('folders');
+	}
+	function paneRight() {
+		if (!focus.is('list')) return;
+		openCursor();
+		if (openId) focus.set('reading');
+	}
+
 	/** Advance the cursor AND the open thread — next/prev without leaving the reader. */
 	function stepThread(delta: number) {
 		move(delta);
@@ -203,10 +280,14 @@
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
 		selected = next;
+		anchor = cursor; // start a range from the row we just picked
+	}
+	function clearSelection() {
+		selected = new Set();
+		anchor = null;
 	}
 	function selectAndMove(delta: number) {
-		toggleSelect();
-		move(delta);
+		extendTo(cursor + delta);
 	}
 
 	/** The threads an action targets: the selection, or the cursor thread. */
@@ -285,7 +366,7 @@
 		if (!ts.length) return;
 		const isOut = ['archive', 'trash', 'delete', 'spam', 'move'].includes(action);
 		await actions.apply(ts, action, opts);
-		selected = new Set();
+		clearSelection();
 		// Auto-advance past a removed cursor thread.
 		if (isOut) {
 			if (openId && ts.some((t) => String(t.id) === openId)) openId = null;
@@ -325,32 +406,50 @@
 	// onMount, NOT $effect: pushContext reads+writes the context-stack $state,
 	// which would loop inside a tracked effect. The binding handlers close over
 	// the live reactive state, so registering once is correct.
+	//
+	// Motions are pane-aware: gating on `listOrReading` lets the folder rail's own
+	// j/k/←/→ win when the folders pane holds focus (the engine drops any binding
+	// whose `when` is false before choosing a winner).
+	const inList = () => focus.is('list');
+	const listOrReading = () => focus.is('list') || focus.is('reading');
 	onMount(() => {
 		kb.pushContext('list');
 		const off = kb.registerAll([
-			{ keys: 'j', description: 'Next / scroll message', group: 'List', context: 'list', handler: () => (openId ? scrollReading(90) : move(1)) },
-			{ keys: 'ArrowDown', description: 'Next', group: 'List', context: 'list', handler: () => move(1) },
-			{ keys: 'k', description: 'Previous / scroll up', group: 'List', context: 'list', handler: () => (openId ? scrollReading(-90) : move(-1)) },
-			{ keys: 'ArrowUp', description: 'Previous', group: 'List', context: 'list', handler: () => move(-1) },
+			// Move the cursor / scroll the reader.
+			{ keys: 'j', description: 'Down', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('line', 1, false) },
+			{ keys: 'k', description: 'Up', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('line', -1, false) },
+			{ keys: 'ArrowDown', description: 'Down', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('line', 1, false) },
+			{ keys: 'ArrowUp', description: 'Up', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('line', -1, false) },
+			{ keys: 'Ctrl+ArrowDown', description: 'Down ×5', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('jump', 1, false) },
+			{ keys: 'Ctrl+ArrowUp', description: 'Up ×5', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('jump', -1, false) },
+			{ keys: 'PageDown', description: 'Page down', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('page', 1, false) },
+			{ keys: 'PageUp', description: 'Page up', group: 'Navigate', context: 'list', when: listOrReading, handler: () => nav('page', -1, false) },
+			{ keys: 'Home', description: 'Top', group: 'Navigate', context: 'list', when: listOrReading, handler: () => navEdge('top', false) },
+			{ keys: 'End', description: 'Bottom', group: 'Navigate', context: 'list', when: listOrReading, handler: () => navEdge('bottom', false) },
+			{ keys: 'g g', description: 'Top', group: 'Navigate', context: 'list', when: inList, handler: () => navEdge('top', false) },
+			{ keys: 'G', description: 'Bottom', group: 'Navigate', context: 'list', when: inList, handler: () => navEdge('bottom', false) },
+			// Step to the next/prev thread without leaving the reader.
 			{ keys: ']', description: 'Next thread (keep reading)', group: 'Reading', context: 'list', handler: () => stepThread(1) },
 			{ keys: '[', description: 'Previous thread (keep reading)', group: 'Reading', context: 'list', handler: () => stepThread(-1) },
-			{ keys: 'Ctrl+d', description: 'Half page down', group: 'List', context: 'list', handler: () => move(10) },
-			{ keys: 'Ctrl+u', description: 'Half page up', group: 'List', context: 'list', handler: () => move(-10) },
-			{ keys: 'g g', description: 'Top of list', group: 'List', context: 'list', handler: () => (cursor = 0) },
-			{ keys: 'G', description: 'Bottom of list', group: 'List', context: 'list', handler: () => (cursor = docs.length - 1) },
-			{ keys: 'Home', description: 'Top of list', group: 'List', context: 'list', handler: () => (cursor = 0) },
-			{ keys: 'End', description: 'Bottom of list', group: 'List', context: 'list', handler: () => (cursor = docs.length - 1) },
-			{ keys: 'Enter', description: 'Open thread', group: 'List', context: 'list', handler: openCursor },
-			{ keys: 'l', description: 'Open thread', group: 'List', context: 'list', handler: openCursor },
-			{ keys: 'ArrowRight', description: 'Open thread', group: 'List', context: 'list', handler: openCursor },
-			{ keys: 'h', description: 'Close thread', group: 'List', context: 'list', handler: () => (openId = null) },
-			{ keys: 'ArrowLeft', description: 'Close thread', group: 'List', context: 'list', handler: () => (openId = null) },
-			{ keys: 'x', description: 'Select / deselect', group: 'List', context: 'list', handler: toggleSelect },
-			// The tokenizer emits bare uppercase for a shifted letter (like G/D/R), so
-			// select-and-move must be registered as 'J'/'K', not 'Shift+j'/'Shift+k'
-			// (which never matched → the bindings were dead).
-			{ keys: 'J', description: 'Next thread (reading) / select down', group: 'List', context: 'list', handler: () => (openId ? stepThread(1) : selectAndMove(1)) },
-			{ keys: 'K', description: 'Prev thread (reading) / select up', group: 'List', context: 'list', handler: () => (openId ? stepThread(-1) : selectAndMove(-1)) },
+			// Pane movement (yazi h/l): folders ↔ list ↔ reading.
+			{ keys: 'l', description: 'Into reader', group: 'Panes', context: 'list', when: listOrReading, handler: paneRight },
+			{ keys: 'ArrowRight', description: 'Into reader', group: 'Panes', context: 'list', when: listOrReading, handler: paneRight },
+			{ keys: 'Enter', description: 'Open thread', group: 'Panes', context: 'list', when: listOrReading, handler: paneRight },
+			{ keys: 'h', description: 'Back to folders / list', group: 'Panes', context: 'list', when: listOrReading, handler: paneLeft },
+			{ keys: 'ArrowLeft', description: 'Back to folders / list', group: 'Panes', context: 'list', when: listOrReading, handler: paneLeft },
+			// Multi-select: Shift extends a range across every motion.
+			{ keys: 'x', description: 'Select / deselect', group: 'Select', context: 'list', when: inList, handler: toggleSelect },
+			{ keys: 'Shift+ArrowDown', description: 'Select down', group: 'Select', context: 'list', when: inList, handler: () => nav('line', 1, true) },
+			{ keys: 'Shift+ArrowUp', description: 'Select up', group: 'Select', context: 'list', when: inList, handler: () => nav('line', -1, true) },
+			{ keys: 'Ctrl+Shift+ArrowDown', description: 'Select down ×5', group: 'Select', context: 'list', when: inList, handler: () => nav('jump', 1, true) },
+			{ keys: 'Ctrl+Shift+ArrowUp', description: 'Select up ×5', group: 'Select', context: 'list', when: inList, handler: () => nav('jump', -1, true) },
+			{ keys: 'Shift+PageDown', description: 'Select page down', group: 'Select', context: 'list', when: inList, handler: () => nav('page', 1, true) },
+			{ keys: 'Shift+PageUp', description: 'Select page up', group: 'Select', context: 'list', when: inList, handler: () => nav('page', -1, true) },
+			{ keys: 'Shift+Home', description: 'Select to top', group: 'Select', context: 'list', when: inList, handler: () => navEdge('top', true) },
+			{ keys: 'Shift+End', description: 'Select to bottom', group: 'Select', context: 'list', when: inList, handler: () => navEdge('bottom', true) },
+			{ keys: 'J', description: 'Next thread / select down', group: 'Select', context: 'list', when: listOrReading, handler: () => (focus.is('reading') ? stepThread(1) : selectAndMove(1)) },
+			{ keys: 'K', description: 'Prev thread / select up', group: 'Select', context: 'list', when: listOrReading, handler: () => (focus.is('reading') ? stepThread(-1) : selectAndMove(-1)) },
+			// Actions — operate on the selection (or cursor) from any pane.
 			{ keys: 'a', description: 'Archive', group: 'Actions', context: 'list', handler: () => act('archive') },
 			{ keys: 'd', description: 'Trash', group: 'Actions', context: 'list', handler: () => act('trash') },
 			{ keys: 'D', description: 'Delete forever', group: 'Actions', context: 'list', handler: askDelete },
@@ -363,14 +462,16 @@
 			{ keys: 'r', description: 'Reply', group: 'Actions', context: 'list', handler: () => reply('reply') },
 			{ keys: 'R', description: 'Reply all', group: 'Actions', context: 'list', handler: () => reply('reply_all') },
 			{ keys: 'w', description: 'Forward', group: 'Actions', context: 'list', handler: () => reply('forward') },
-			{ keys: '/', description: 'Search', group: 'List', context: 'list', handler: startSearch },
-			{ keys: 'f', description: 'Filter loaded list', group: 'List', context: 'list', handler: startFilter },
-			{ keys: 'Escape', description: 'Close / clear', group: 'List', context: 'list', global: true, handler: () => {
+			{ keys: '/', description: 'Search', group: 'Find', context: 'list', handler: startSearch },
+			{ keys: 'f', description: 'Filter loaded list', group: 'Find', context: 'list', handler: startFilter },
+			{ keys: 'Escape', description: 'Close / clear', group: 'Panes', context: 'list', global: true, handler: () => {
 				if (confirmingDelete) confirmingDelete = false;
 				else if (moving) moving = false;
 				else if (searching) endSearch();
 				else if (filtering) endFilter();
-				else openId = null;
+				else if (selected.size) clearSelection();
+				else if (openId) { openId = null; focus.set('list'); }
+				else focus.set('list');
 			} },
 		]);
 		return () => {
@@ -382,10 +483,14 @@
 
 <svelte:head><title>{title} · Mail</title></svelte:head>
 
-<section class="list-pane">
+<section
+	class="list-pane pane"
+	class:active={focus.is('list')}
+	onmousedowncapture={() => focus.set('list')}>
 	<header class="list-head">
 		{#if searching}
 			<div class="searchbar">
+				<span class="search-icon" aria-hidden="true">⌕</span>
 				<!-- svelte-ignore a11y_autofocus -->
 				<input
 					bind:this={searchInput}
@@ -398,39 +503,46 @@
 							searchScope = searchScope === 'folder' ? 'all' : 'folder';
 						}
 					}} />
-				<span class="scope">Tab: {searchScope}</span>
+				<button class="scope" onclick={() => (searchScope = searchScope === 'folder' ? 'all' : 'folder')}>
+					<kbd>Tab</kbd>
+					{searchScope === 'all' ? 'All mail' : 'This folder'}
+				</button>
 			</div>
 		{:else}
 			<h1>{title}</h1>
+			{#if selected.size}
+				<span class="selcount">{selected.size} selected</span>
+			{/if}
 			<span class="count">{docs.length}</span>
 		{/if}
 	</header>
 
 	{#if filtering}
 		<div class="filterbar">
+			<span class="filter-icon" aria-hidden="true">≣</span>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				bind:this={filterInput}
 				bind:value={filterText}
-				placeholder="Filter…"
+				placeholder="Filter loaded conversations…"
 				onkeydown={(e) => e.key === 'Escape' && endFilter()} />
 		</div>
 	{/if}
 
 	{#if confirmingDelete}
 		<div class="bar danger" role="alertdialog" aria-label="Confirm delete">
-			<span>Delete {targets().length} forever? This can't be undone.</span>
-			<button class="yes" onclick={() => { confirmingDelete = false; act('delete'); }}>Enter · Delete</button>
-			<button onclick={() => (confirmingDelete = false)}>Esc</button>
+			<span class="bar-msg">Delete {targets().length} forever? This can't be undone.</span>
+			<button class="btn-danger" onclick={() => { confirmingDelete = false; act('delete'); }}><kbd>↵</kbd> Delete</button>
+			<button class="btn-ghost" onclick={() => (confirmingDelete = false)}><kbd>Esc</kbd></button>
 		</div>
 	{/if}
 	{#if moving}
 		<div class="bar" role="menu" aria-label="Move to folder">
-			<span>Move to:</span>
+			<span class="bar-msg">Move {targets().length} to</span>
 			{#each MOVE_FOLDERS as f}
-				<button role="menuitem" onclick={() => moveTo(f)}>{f}</button>
+				<button class="btn-ghost" role="menuitem" onclick={() => moveTo(f)}>{f}</button>
 			{/each}
-			<button onclick={() => (moving = false)}>Esc</button>
+			<button class="btn-ghost dim" onclick={() => (moving = false)}><kbd>Esc</kbd></button>
 		</div>
 	{/if}
 
@@ -444,8 +556,17 @@
 			onOpen={(i) => {
 				cursor = i;
 				openCursor();
+				if (openId) focus.set('reading');
 			}}
-			onCursor={(i) => (cursor = i)}
+			onCursor={(i) => {
+				cursor = i;
+				focus.set('list');
+			}}
+			onToggleSelect={(i) => {
+				cursor = i;
+				toggleSelect();
+			}}
+			onRows={(n) => (listRows = n)}
 			onSwipe={(i, dir) => {
 				cursor = i;
 				act(dir === 'archive' ? 'archive' : 'trash');
@@ -453,15 +574,43 @@
 	</div>
 </section>
 
-<div class="reading-pane" bind:this={readingEl}>
-	<ReadingPane {db} threadId={openId} />
+<div
+	class="reading-pane pane"
+	class:active={focus.is('reading')}
+	bind:this={readingEl}
+	onmousedowncapture={() => openId && focus.set('reading')}>
+	<ReadingPane {db} threadId={openId} onReply={reply} onAct={act} />
 </div>
 
 <style>
+	/* --- The pane-focus signature: the active column lifts and grows a top
+	   accent rule so yazi ←/→ movement is unmistakable, while inactive panes
+	   stay calm. --- */
+	.pane {
+		position: relative;
+		transition: background-color var(--duration-fast, 120ms) var(--ease-out, ease);
+	}
+	.pane::before {
+		content: '';
+		position: absolute;
+		inset: 0 0 auto 0;
+		height: 2px;
+		background: var(--color-primary);
+		opacity: 0;
+		transition: opacity var(--duration-fast, 120ms) var(--ease-out, ease);
+		z-index: 2;
+	}
+	.pane.active::before {
+		opacity: 1;
+	}
+	.pane.active {
+		background: var(--dm-focus-tint);
+	}
+
 	.list-pane {
-		width: 380px;
+		width: 400px;
 		flex-shrink: 0;
-		border-right: 1px solid var(--color-outline);
+		border-right: 1px solid var(--color-border);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -469,15 +618,25 @@
 	.list-head {
 		display: flex;
 		align-items: center;
-		gap: var(--size-2);
-		padding: var(--size-2) var(--size-3);
-		border-bottom: 1px solid var(--color-outline);
-		min-height: 44px;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		border-bottom: 1px solid var(--color-border);
+		min-height: 52px;
 	}
 	.list-head h1 {
-		font-size: var(--font-size-1);
+		font-size: var(--font-size-2);
+		font-weight: var(--font-weight-semibold, 600);
+		letter-spacing: -0.01em;
 		margin: 0;
 		flex: 1;
+	}
+	.selcount {
+		font-size: var(--font-size-00);
+		font-weight: var(--font-weight-medium, 500);
+		color: var(--color-primary);
+		background: var(--dm-accent-soft);
+		padding: 2px var(--space-2);
+		border-radius: var(--radius-cap, 99px);
 	}
 	.count {
 		color: var(--color-text-disabled);
@@ -488,53 +647,98 @@
 	.filterbar {
 		display: flex;
 		align-items: center;
-		gap: var(--size-2);
+		gap: var(--space-2);
 		width: 100%;
+	}
+	.search-icon,
+	.filter-icon {
+		color: var(--color-text-disabled);
+		font-size: 1.1em;
 	}
 	.searchbar input,
 	.filterbar input {
 		flex: 1;
-		padding: 5px 8px;
-		border: 1px solid var(--color-outline);
-		border-radius: var(--radius-2);
-		background: var(--color-bg-2);
+		padding: 6px 10px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-1);
 		color: inherit;
+		font: inherit;
+		font-size: var(--font-size-0);
+	}
+	.searchbar input:focus,
+	.filterbar input:focus {
+		outline: none;
+		border-color: var(--color-primary);
+		box-shadow: 0 0 0 3px var(--dm-accent-soft);
 	}
 	.filterbar {
-		padding: var(--size-1) var(--size-3);
-		border-bottom: 1px solid var(--color-outline);
+		padding: var(--space-1) var(--space-3) var(--space-2);
+		border-bottom: 1px solid var(--color-border);
 	}
 	.scope {
-		font-size: var(--font-size-00, 0.7rem);
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-size: var(--font-size-00);
 		color: var(--color-text-disabled);
+		background: none;
+		border: none;
+		cursor: pointer;
+		white-space: nowrap;
 	}
 	.bar {
 		display: flex;
 		align-items: center;
-		gap: var(--size-2);
-		padding: var(--size-1) var(--size-3);
-		border-bottom: 1px solid var(--color-outline);
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		border-bottom: 1px solid var(--color-border);
 		background: var(--color-bg-2);
-		font-size: var(--font-size-00, 0.75rem);
+		font-size: var(--font-size-0);
 		flex-wrap: wrap;
 	}
-	.bar.danger {
-		background: color-mix(in oklab, var(--color-danger, #dc2626) 12%, var(--color-bg-2));
+	.bar-msg {
+		flex: 1;
+		min-width: 0;
 	}
-	.bar button {
+	.bar.danger {
+		background: var(--color-error-bg, color-mix(in oklab, var(--color-error) 12%, var(--color-bg-2)));
+		color: var(--color-error-text, inherit);
+	}
+	.btn-ghost,
+	.btn-danger {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
 		background: var(--color-bg-1);
-		border: 1px solid var(--color-outline);
-		border-radius: var(--radius-2);
-		padding: 2px 8px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		padding: 3px 10px;
 		color: inherit;
 		cursor: pointer;
 		font: inherit;
-		font-size: var(--font-size-00, 0.72rem);
+		font-size: var(--font-size-00);
+		text-transform: capitalize;
 	}
-	.bar .yes {
-		background: var(--color-danger, #dc2626);
-		color: white;
+	.btn-ghost:hover {
+		background: var(--color-bg-3);
+	}
+	.btn-ghost.dim {
 		border-color: transparent;
+		background: none;
+		color: var(--color-text-disabled);
+	}
+	.btn-danger {
+		background: var(--color-error);
+		color: var(--color-error-text, white);
+		border-color: transparent;
+		font-weight: var(--font-weight-medium, 500);
+	}
+	.btn-danger kbd,
+	.btn-ghost kbd {
+		font-family: var(--font-mono);
+		font-size: 0.85em;
+		opacity: 0.9;
 	}
 	.list-body {
 		flex: 1;

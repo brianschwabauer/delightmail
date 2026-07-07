@@ -132,35 +132,36 @@
 	.scrim {
 		position: fixed;
 		inset: 0;
-		background: color-mix(in oklch, black 35%, transparent);
+		background: var(--color-backdrop, color-mix(in oklch, black 35%, transparent));
 		display: flex;
 		justify-content: center;
 		align-items: flex-start;
 		padding-top: 12vh;
-		z-index: 120;
+		z-index: var(--layer-modal, 120);
 	}
 	.palette {
 		width: min(560px, 92vw);
 		background: var(--color-bg-1);
-		border: 1px solid var(--color-outline);
-		border-radius: var(--radius-3);
-		box-shadow: var(--shadow-4, 0 20px 60px rgba(0, 0, 0, 0.4));
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-2xl, 0 20px 60px rgba(0, 0, 0, 0.4));
 		overflow: hidden;
 	}
 	.palette input {
 		width: 100%;
-		padding: var(--size-3) var(--size-4);
+		padding: var(--space-3) var(--space-4);
 		border: none;
-		border-bottom: 1px solid var(--color-outline);
+		border-bottom: 1px solid var(--color-border);
 		background: transparent;
 		color: inherit;
-		font-size: var(--font-size-1);
+		font: inherit;
+		font-size: var(--font-size-2);
 		outline: none;
 	}
 	ul {
 		list-style: none;
 		margin: 0;
-		padding: var(--size-1);
+		padding: var(--space-1);
 		max-height: 50vh;
 		overflow-y: auto;
 	}
@@ -169,34 +170,36 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		gap: var(--size-3);
+		gap: var(--space-3);
 		padding: 8px 12px;
 		border: none;
 		background: none;
-		border-radius: var(--radius-2);
+		border-radius: var(--radius-md);
 		color: inherit;
 		cursor: pointer;
 		font: inherit;
 		text-align: left;
 	}
 	li.active button {
-		background: var(--color-primary);
-		color: white;
-	}
-	li.active kbd {
-		color: white;
-		border-color: rgba(255, 255, 255, 0.4);
+		background: var(--dm-accent-soft);
+		box-shadow: inset 2px 0 0 var(--color-primary);
+		font-weight: var(--font-weight-medium, 500);
 	}
 	kbd {
-		font-family: var(--font-mono, monospace);
+		font-family: var(--font-mono);
 		font-size: 0.75em;
-		border: 1px solid var(--color-outline);
-		border-radius: 4px;
+		background: var(--color-bg-2);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
 		padding: 0 5px;
 		color: var(--color-text-disabled);
 	}
+	li.active kbd {
+		color: var(--color-primary);
+		border-color: var(--dm-focus-ring);
+	}
 	.none {
-		padding: var(--size-3) var(--size-4);
+		padding: var(--space-3) var(--space-4);
 		color: var(--color-text-disabled);
 	}
 </style>

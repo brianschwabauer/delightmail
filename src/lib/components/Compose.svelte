@@ -64,6 +64,7 @@
 	let sending = $state(false);
 	let attachments = $state<Attachment[]>([]);
 	let fileInput = $state<HTMLInputElement>();
+	let overlayEl = $state<HTMLElement>();
 
 	// --- contact autocomplete (local Orama index, §10.3) ---
 	let acField = $state<'to' | 'cc' | 'bcc' | null>(null);
@@ -135,6 +136,13 @@
 		if (!identityId && identities.docs.length) {
 			identityId = String((identities.docs[0] as Identity).id);
 		}
+		// Land the cursor in the first empty recipient field the moment compose
+		// opens — and, because focus is now inside the overlay, Esc reaches the
+		// overlay's own handler (fixing "n then Esc doesn't close it").
+		void tick().then(() => {
+			const first = overlayEl?.querySelector<HTMLInputElement>('.chips input');
+			first?.focus();
+		});
 		const timer = setInterval(() => {
 			if (sent || sending || !fromIdentity) return;
 			void saver.tick();
@@ -321,6 +329,7 @@
 	class="overlay"
 	role="dialog"
 	aria-label="Compose message"
+	bind:this={overlayEl}
 	onkeydown={onKeydown}
 	ondragover={(e) => e.preventDefault()}
 	ondrop={onDrop}>
@@ -411,99 +420,119 @@
 	{/if}
 
 	<footer>
-		<Button disabled={sending} onclick={send}>{sending ? 'Sending…' : 'Send'}</Button>
+		<Button accent disabled={sending} loading={sending} onclick={send}>{sending ? 'Sending…' : 'Send'}</Button>
 		<button class="attach-btn" onclick={() => fileInput?.click()} title="Ctrl+Shift+A">Attach</button>
 		<input bind:this={fileInput} type="file" multiple hidden onchange={onFilePicked} />
-		<span class="hint">Ctrl+Enter send · Ctrl+J identity · Ctrl+Shift+A attach · Esc close</span>
+		<span class="hint">
+			<span class="hk"><kbd>Ctrl</kbd><kbd>↵</kbd> Send</span>
+			<span class="hk"><kbd>Ctrl</kbd><kbd>J</kbd> Identity</span>
+			<span class="hk"><kbd>Esc</kbd> Close</span>
+		</span>
 	</footer>
 </div>
 
 <style>
 	.overlay {
 		position: fixed;
-		right: var(--size-4);
+		right: var(--space-5);
 		bottom: 0;
 		width: min(640px, 96vw);
-		max-height: 82vh;
+		max-height: 84vh;
 		display: flex;
 		flex-direction: column;
 		background: var(--color-bg-1);
-		border: 1px solid var(--color-outline);
+		border: 1px solid var(--color-border);
 		border-bottom: none;
-		border-radius: var(--radius-3) var(--radius-3) 0 0;
-		box-shadow: var(--shadow-4, 0 20px 60px rgba(0, 0, 0, 0.4));
-		z-index: 110;
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+		box-shadow: var(--shadow-2xl, 0 20px 60px rgba(0, 0, 0, 0.4));
+		z-index: var(--layer-modal, 110);
 	}
 	header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--size-2) var(--size-3);
+		padding: var(--space-3);
 		background: var(--color-bg-2);
-		border-bottom: 1px solid var(--color-outline);
-		border-radius: var(--radius-3) var(--radius-3) 0 0;
+		border-bottom: 1px solid var(--color-border);
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 	}
-	.title { font-weight: 600; font-size: var(--font-size-0); }
+	.title { font-weight: var(--font-weight-semibold, 600); font-size: var(--font-size-1); letter-spacing: -0.01em; }
 	.close, .cc-toggle {
 		background: none; border: none; color: var(--color-text-disabled); cursor: pointer; font: inherit;
+		border-radius: var(--radius-md); padding: 2px 6px;
 	}
-	.fields { padding: var(--size-2) var(--size-3); }
+	.close:hover, .cc-toggle:hover { background: var(--color-bg-3); color: var(--color-text); }
+	.fields { padding: 2px var(--space-3); }
 	.row {
 		display: flex;
 		align-items: center;
-		gap: var(--size-2);
-		border-bottom: 1px solid var(--color-outline);
-		padding: 4px 0;
+		gap: var(--space-2);
+		border-bottom: 1px solid var(--dm-hairline);
+		padding: var(--space-2) 0;
 	}
-	.row label { width: 48px; color: var(--color-text-disabled); font-size: var(--font-size-00, 0.72rem); flex-shrink: 0; }
-	.chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; align-items: center; }
+	.row label { width: 48px; color: var(--color-text-disabled); font-size: var(--font-size-00); flex-shrink: 0; }
+	.chips { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; align-items: center; }
 	.chip {
 		display: inline-flex; align-items: center; gap: 4px;
-		background: var(--color-bg-2); border-radius: 99px; padding: 1px 4px 1px 8px; font-size: var(--font-size-00, 0.75rem);
+		background: var(--dm-accent-soft); color: var(--color-text);
+		border-radius: var(--radius-cap, 99px); padding: 2px 4px 2px 10px; font-size: var(--font-size-00);
 	}
-	.chip button { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; }
-	.ac-wrap { position: relative; flex: 1; min-width: 120px; }
+	.chip button { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; line-height: 1; }
+	.chip button:hover { color: var(--color-error); }
+	.ac-wrap { position: relative; flex: 1; min-width: 140px; }
 	.chips input, .subject {
 		width: 100%; border: none; background: transparent; color: inherit; outline: none; padding: 4px 0; font: inherit;
 	}
+	.subject { font-size: var(--font-size-1); }
 	.ac-menu {
-		position: absolute; top: 100%; left: 0; z-index: 5; margin: 2px 0 0; padding: 4px; list-style: none;
-		min-width: 220px; background: var(--color-bg-1); border: 1px solid var(--color-outline);
-		border-radius: var(--radius-2); box-shadow: var(--shadow-3, 0 8px 24px rgba(0,0,0,0.3));
+		position: absolute; top: 100%; left: 0; z-index: 5; margin: 4px 0 0; padding: 4px; list-style: none;
+		min-width: 240px; background: var(--color-bg-1); border: 1px solid var(--color-border);
+		border-radius: var(--radius-md); box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.3));
 	}
 	.ac-menu button {
 		display: flex; gap: 6px; width: 100%; text-align: left; background: none; border: none; color: inherit;
-		cursor: pointer; padding: 4px 6px; border-radius: var(--radius-1); font-size: var(--font-size-00, 0.75rem);
+		cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); font-size: var(--font-size-0);
 	}
-	.ac-menu button:hover { background: var(--color-bg-3, var(--color-bg-2)); }
+	.ac-menu button:hover { background: var(--color-bg-3); }
 	.ac-email { color: var(--color-text-disabled); }
 	.toggles { display: flex; gap: 4px; }
 	.identity {
-		background: var(--color-bg-2); border: 1px solid var(--color-outline); border-radius: var(--radius-2);
-		padding: 2px 8px; color: inherit; cursor: pointer; font: inherit; font-size: var(--font-size-00, 0.75rem);
+		background: var(--color-bg-2); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+		padding: 3px 10px; color: inherit; cursor: pointer; font: inherit; font-size: var(--font-size-00);
 	}
-	.body { flex: 1; overflow-y: auto; padding: var(--size-3); min-height: 180px; }
-	.signature { margin-top: var(--size-3); color: var(--color-text-disabled); }
-	.sig-marker { font-family: var(--font-mono, monospace); }
-	.signature pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: var(--font-size-00, 0.8rem); }
+	.identity:hover { background: var(--color-bg-3); }
+	.body { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-3); min-height: 200px; }
+	.signature { margin-top: var(--space-4); color: var(--color-text-disabled); }
+	.sig-marker { font-family: var(--font-mono); }
+	.signature pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: var(--font-size-00); }
 	.attachments {
-		display: flex; flex-wrap: wrap; gap: 6px; padding: var(--size-2) var(--size-3);
-		border-top: 1px solid var(--color-outline);
+		display: flex; flex-wrap: wrap; gap: 6px; padding: var(--space-2) var(--space-3);
+		border-top: 1px solid var(--color-border);
 	}
 	.att-chip {
 		display: inline-flex; align-items: center; gap: 6px; background: var(--color-bg-2);
-		border-radius: var(--radius-2); padding: 2px 6px; font-size: var(--font-size-00, 0.72rem);
+		border-radius: var(--radius-md); padding: 3px 8px; font-size: var(--font-size-00);
 	}
 	.att-chip.uploading { opacity: 0.6; }
 	.att-size, .att-status { color: var(--color-text-disabled); }
 	.att-chip button { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; }
 	footer {
-		display: flex; align-items: center; gap: var(--size-3);
-		padding: var(--size-2) var(--size-3); border-top: 1px solid var(--color-outline);
+		display: flex; align-items: center; gap: var(--space-3);
+		padding: var(--space-3); border-top: 1px solid var(--color-border);
 	}
 	.attach-btn {
-		background: var(--color-bg-2); border: 1px solid var(--color-outline); border-radius: var(--radius-2);
-		padding: 4px 10px; color: inherit; cursor: pointer; font: inherit; font-size: var(--font-size-00, 0.75rem);
+		background: var(--color-bg-2); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+		padding: 6px 12px; color: inherit; cursor: pointer; font: inherit; font-size: var(--font-size-0);
 	}
-	.hint { font-size: var(--font-size-00, 0.7rem); color: var(--color-text-disabled); font-family: var(--font-mono, monospace); }
+	.attach-btn:hover { background: var(--color-bg-3); }
+	.hint { margin-left: auto; display: flex; gap: var(--space-3); font-size: var(--font-size-00); color: var(--color-text-disabled); }
+	.hk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+	.hint kbd {
+		font-family: var(--font-mono); font-size: 0.9em;
+		background: var(--color-bg-2); border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm); padding: 0 4px;
+	}
+	@media (max-width: 767px) {
+		.hint { display: none; }
+	}
 </style>
