@@ -119,9 +119,9 @@
 				<Button type="submit" full_width disabled={busy}>
 					{busy ? 'Verifying…' : 'Verify code'}
 				</Button>
-				<button type="button" class="link" onclick={() => (stage = 'email')}>
+				<Button type="button" transparent onclick={() => (stage = 'email')}>
 					Use a different email
-				</button>
+				</Button>
 			</form>
 		{/if}
 
@@ -176,13 +176,5 @@
 		flex: 1;
 		height: 1px;
 		background: var(--color-border);
-	}
-	.link {
-		background: none;
-		border: none;
-		color: var(--color-action, var(--color-primary));
-		cursor: pointer;
-		font: inherit;
-		padding: 0;
 	}
 </style>

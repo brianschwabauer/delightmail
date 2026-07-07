@@ -51,7 +51,7 @@
 		</div>
 		<div class="actions">
 			<Button disabled={busy} onclick={register}>{busy ? 'Setting up…' : 'Add passkey'}</Button>
-			<button class="later" onclick={dismiss}>Later</button>
+			<Button transparent onclick={dismiss}>Later</Button>
 		</div>
 	</div>
 {/if}
@@ -85,12 +85,5 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-	}
-	.later {
-		background: none;
-		border: none;
-		color: var(--color-text-disabled);
-		cursor: pointer;
-		font: inherit;
 	}
 </style>
