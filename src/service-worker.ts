@@ -52,10 +52,31 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// Everything else (API + navigations) → network, falling back to the shell
-	// so the app boots offline (its mirror then serves the data).
+	// Navigations → stale-while-revalidate (§10.4): serve the cached shell instantly
+	// so cold PWA start is fast, and refresh it in the background. The real data
+	// still comes from the DatabaseClient's IndexedDB mirror after boot.
 	if (req.mode === 'navigate') {
-		event.respondWith(networkThenShell(req));
+		event.respondWith(
+			(async () => {
+				const cache = await caches.open(SHELL_CACHE);
+				const cached = (await cache.match('/')) ?? (await cache.match(req));
+				const network = fetch(req)
+					.then((res) => {
+						if (res.ok) void cache.put('/', res.clone());
+						return res;
+					})
+					.catch(() => null);
+				if (cached) {
+					event.waitUntil(network);
+					return cached;
+				}
+				return (
+					(await network) ??
+					(await cache.match(SHELL_ASSETS[0])) ??
+					new Response('Offline', { status: 503 })
+				);
+			})(),
+		);
 	}
 });
 
@@ -66,16 +87,6 @@ async function cacheFirst(req: Request, cacheName: string): Promise<Response> {
 	const res = await fetch(req);
 	if (res.ok) cache.put(req, res.clone());
 	return res;
-}
-
-async function networkThenShell(req: Request): Promise<Response> {
-	try {
-		return await fetch(req);
-	} catch {
-		const cache = await caches.open(SHELL_CACHE);
-		const shell = await cache.match('/') ?? (await cache.match(SHELL_ASSETS[0]));
-		return shell ?? new Response('Offline', { status: 503 });
-	}
 }
 
 // --- Web push (§10.4) ---

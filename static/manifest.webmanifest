@@ -16,5 +16,11 @@
 		{ "name": "Compose", "url": "/compose" },
 		{ "name": "Inbox", "url": "/mail/inbox" },
 		{ "name": "AI Filtered", "url": "/mail/filtered" }
-	]
+	],
+	"share_target": {
+		"action": "/compose",
+		"method": "GET",
+		"params": { "title": "title", "text": "text", "url": "url" }
+	},
+	"protocol_handlers": [{ "protocol": "mailto", "url": "/compose?mailto=%s" }]
 }
