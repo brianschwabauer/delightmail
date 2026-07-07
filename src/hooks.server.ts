@@ -168,7 +168,24 @@ const websocketHandle = createWebsocketHandle({
 // ---------------------------------------------------------------------------
 // 4. Database — generated CRUD + /api/sync, with domain-rule hooks (§9)
 // ---------------------------------------------------------------------------
-const SERVER_ONLY_TABLES = new Set(['ai_review', 'outbox']);
+// R2 pointers are server-managed. If a client could set message.body_keys /
+// attachment.r2_key, it could aim a body/attachment read at another org's R2
+// object (§12 IDOR). Strip them from every client write; the server sets them
+// directly on the DO (ingest / send), which bypasses this handle.
+// body_keys is the IDOR vector (a client-aimed R2 read); provider_ids is the
+// two-way-sync mapping. Both are server-set. rfc822_message_id is intentionally
+// NOT stripped — it's a required field a client-side draft must supply, and a
+// forged value only affects that client's own per-account ingest dedupe (harmless).
+const MESSAGE_SERVER_FIELDS = ['body_keys', 'provider_ids'];
+const ATTACHMENT_SERVER_FIELDS = ['r2_key', 'image_id'];
+
+/** Delete server-managed fields from a client CRUD payload, in place. */
+function strip<T extends Record<string, unknown>>(data: T, fields: string[]): T {
+	const clean = { ...data } as Record<string, unknown>;
+	for (const f of fields) delete clean[f];
+	return clean as T;
+}
+
 const databaseHandle = createDatabaseHandle({
 	getDatabase: (event) => event.locals.db as never,
 	tables,
@@ -176,6 +193,14 @@ const databaseHandle = createDatabaseHandle({
 	hooks: {
 		ai_review: { beforeCreate: rejectClientWrite, beforeUpdate: rejectClientWrite },
 		outbox: { beforeCreate: rejectClientWrite, beforeUpdate: rejectClientWrite },
+		message: {
+			beforeCreate: ({ data }) => strip(data, MESSAGE_SERVER_FIELDS),
+			beforeUpdate: ({ data }) => strip(data, MESSAGE_SERVER_FIELDS),
+		},
+		attachment: {
+			beforeCreate: ({ data }) => strip(data, ATTACHMENT_SERVER_FIELDS),
+			beforeUpdate: ({ data }) => strip(data, ATTACHMENT_SERVER_FIELDS),
+		},
 		settings: {
 			// Settings is a singleton keyed 'main'.
 			beforeCreate: ({ data }) => ({ ...data, id: 'main' }),

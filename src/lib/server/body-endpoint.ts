@@ -35,6 +35,10 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 		return new Response('', { headers: { 'content-type': contentType } });
 	}
 
+	// Tenant guard: every R2 key is `{org_id}/…`. Never read a key outside the
+	// caller's org, even if a tampered body_keys points elsewhere (§12 IDOR).
+	if (!ownsKey(key, org_id)) return DelightError.notFound('Body not found').toResponse();
+
 	const cacheKey = `body:${org_id}:${id}:${format ?? 'html'}`;
 	const body = await readCached(r2, kv, key, cacheKey);
 	if (body === null) return DelightError.notFound('Body not found').toResponse();
@@ -52,15 +56,17 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 
 /** GET /api/messages/:id/raw → download the original .eml */
 export async function handleMessageRaw(event: RequestEvent, id: string): Promise<Response> {
-	const { db, r2 } = ctx(event);
-	if (!db || !r2) return DelightError.badRequest('No mailbox').toResponse();
+	const { db, r2, org_id } = ctx(event);
+	if (!db || !r2 || !org_id) return DelightError.badRequest('No mailbox').toResponse();
 	let msg: MessageRow;
 	try {
 		msg = (await db.get('message', id)) as unknown as MessageRow;
 	} catch {
 		return DelightError.notFound('Message not found').toResponse();
 	}
-	if (!msg.body_keys?.raw) return DelightError.notFound('Raw not available').toResponse();
+	if (!msg.body_keys?.raw || !ownsKey(msg.body_keys.raw, org_id)) {
+		return DelightError.notFound('Raw not available').toResponse();
+	}
 	const obj = await r2.get(msg.body_keys.raw);
 	if (!obj) return DelightError.notFound('Raw not found').toResponse();
 	return new Response(obj.body, {
@@ -74,8 +80,8 @@ export async function handleMessageRaw(event: RequestEvent, id: string): Promise
 
 /** GET /api/attachments/:id → stream attachment bytes (also serves cid: images) */
 export async function handleAttachment(event: RequestEvent, id: string): Promise<Response> {
-	const { db, r2 } = ctx(event);
-	if (!db || !r2) return DelightError.badRequest('No mailbox').toResponse();
+	const { db, r2, org_id } = ctx(event);
+	if (!db || !r2 || !org_id) return DelightError.badRequest('No mailbox').toResponse();
 	let att: { r2_key?: string; filename?: string; mime_type?: string };
 	try {
 		att = (await db.get('attachment', id)) as unknown as {
@@ -86,7 +92,9 @@ export async function handleAttachment(event: RequestEvent, id: string): Promise
 	} catch {
 		return DelightError.notFound('Attachment not found').toResponse();
 	}
-	if (!att.r2_key) return DelightError.notFound('Attachment not stored').toResponse();
+	if (!att.r2_key || !ownsKey(att.r2_key, org_id)) {
+		return DelightError.notFound('Attachment not stored').toResponse();
+	}
 	const obj = await r2.get(att.r2_key);
 	if (!obj) return DelightError.notFound('Attachment not found').toResponse();
 	return new Response(obj.body, {
@@ -96,6 +104,11 @@ export async function handleAttachment(event: RequestEvent, id: string): Promise
 			'cache-control': IMMUTABLE,
 		},
 	});
+}
+
+/** Every R2 key is `{org_id}/…` — reject anything outside the caller's org. */
+function ownsKey(key: string, org_id: string): boolean {
+	return key.startsWith(`${org_id}/`);
 }
 
 function ctx(event: RequestEvent) {
