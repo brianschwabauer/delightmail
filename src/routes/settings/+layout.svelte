@@ -35,18 +35,24 @@
 		min-height: 100dvh;
 	}
 	aside {
-		padding: var(--size-4);
-		border-right: 1px solid var(--color-outline);
+		padding: var(--space-4);
+		border-right: 1px solid var(--color-border);
 		background: var(--color-bg-2);
 	}
 	.back {
+		display: inline-block;
 		font-size: var(--font-size-0);
 		color: var(--color-text-disabled);
 		text-decoration: none;
 	}
+	.back:hover {
+		color: var(--color-text);
+	}
 	h1 {
 		font-size: var(--font-size-3);
-		margin: var(--size-3) 0;
+		font-weight: var(--font-weight-semibold, 600);
+		letter-spacing: -0.01em;
+		margin: var(--space-3) 0 var(--space-4);
 	}
 	nav {
 		display: flex;
@@ -54,18 +60,24 @@
 		gap: 2px;
 	}
 	nav a {
-		padding: 6px var(--size-2);
-		border-radius: var(--radius-2);
-		color: var(--color-text);
+		padding: 7px var(--space-3);
+		border-radius: var(--radius-md);
+		color: var(--color-text-muted, var(--color-text));
 		text-decoration: none;
 		font-size: var(--font-size-0);
 	}
+	nav a:hover {
+		background: var(--color-bg-3);
+		color: var(--color-text);
+	}
 	nav a.active {
-		background: var(--color-primary);
-		color: white;
+		background: var(--dm-accent-soft);
+		color: var(--color-text);
+		font-weight: var(--font-weight-semibold, 600);
+		box-shadow: inset 2px 0 0 var(--color-primary);
 	}
 	main {
-		padding: var(--size-5);
-		max-width: 720px;
+		padding: var(--space-6) var(--space-8);
+		max-width: 760px;
 	}
 </style>

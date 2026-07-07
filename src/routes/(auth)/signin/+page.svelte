@@ -140,14 +140,14 @@
 		align-items: center;
 		justify-content: center;
 		min-height: 100dvh;
-		padding: var(--size-5);
+		padding: var(--space-5);
 	}
 	.auth-card {
 		width: 100%;
 		max-width: 380px;
 		display: flex;
 		flex-direction: column;
-		gap: var(--size-4);
+		gap: var(--space-4);
 	}
 	.brand {
 		font-size: var(--font-size-5);
@@ -161,12 +161,12 @@
 	form {
 		display: flex;
 		flex-direction: column;
-		gap: var(--size-3);
+		gap: var(--space-3);
 	}
 	.divider {
 		display: flex;
 		align-items: center;
-		gap: var(--size-3);
+		gap: var(--space-3);
 		color: var(--color-text-disabled);
 		font-size: var(--font-size-0);
 	}
@@ -175,7 +175,7 @@
 		content: '';
 		flex: 1;
 		height: 1px;
-		background: var(--color-outline);
+		background: var(--color-border);
 	}
 	.link {
 		background: none;

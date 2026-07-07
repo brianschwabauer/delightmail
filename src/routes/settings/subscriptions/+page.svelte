@@ -72,11 +72,11 @@
 <style>
 	h2 { font-size: var(--font-size-3); }
 	.muted { color: var(--color-text-disabled); }
-	.list { list-style: none; padding: 0; margin: var(--size-4) 0; }
+	.list { list-style: none; padding: 0; margin: var(--space-4) 0; }
 	.list li {
 		display: flex; align-items: center; justify-content: space-between;
-		padding: var(--size-2) 0; border-bottom: 1px solid var(--color-outline);
+		padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border);
 	}
 	.info { display: flex; flex-direction: column; }
-	.empty { padding: var(--size-5) 0; }
+	.empty { padding: var(--space-5) 0; }
 </style>

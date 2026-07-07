@@ -55,7 +55,7 @@
 		display: block;
 	}
 	.excerpt {
-		padding: var(--size-3);
+		padding: var(--space-3);
 		white-space: pre-wrap;
 		font-family: inherit;
 		margin: 0;

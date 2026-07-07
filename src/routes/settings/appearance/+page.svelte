@@ -92,34 +92,39 @@
 	}
 	h3 {
 		font-size: var(--font-size-1);
-		margin: var(--size-4) 0 var(--size-2);
+		margin: var(--space-4) 0 var(--space-2);
 	}
 	.segmented {
 		display: inline-flex;
-		border: 1px solid var(--color-outline);
-		border-radius: var(--radius-2);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
 		overflow: hidden;
 	}
 	.segmented button {
-		padding: 6px 16px;
+		padding: 7px 18px;
 		border: none;
 		background: var(--color-bg-2);
-		color: inherit;
+		color: var(--color-text-muted, inherit);
 		cursor: pointer;
 		text-transform: capitalize;
 		font: inherit;
-		border-right: 1px solid var(--color-outline);
+		font-size: var(--font-size-0);
+		border-right: 1px solid var(--color-border);
+	}
+	.segmented button:hover {
+		background: var(--color-bg-3);
 	}
 	.segmented button:last-child {
 		border-right: none;
 	}
 	.segmented button.active {
-		background: var(--color-primary);
-		color: white;
+		background: var(--dm-accent-soft);
+		color: var(--color-text);
+		font-weight: var(--font-weight-semibold, 600);
 	}
 	.muted {
 		color: var(--color-text-disabled);
 		font-size: var(--font-size-0);
-		margin-top: var(--size-2);
+		margin-top: var(--space-2);
 	}
 </style>

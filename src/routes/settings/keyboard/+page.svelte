@@ -90,25 +90,25 @@
 
 <style>
 	h2 { font-size: var(--font-size-3); }
-	h3 { font-size: var(--font-size-1); margin: var(--size-4) 0 var(--size-2); }
+	h3 { font-size: var(--font-size-1); margin: var(--space-4) 0 var(--space-2); }
 	.muted { color: var(--color-text-disabled); }
 	.small { font-size: var(--font-size-00, 0.78rem); }
 	.edit-row {
-		display: flex; align-items: center; gap: var(--size-3); padding: 6px 0;
-		border-bottom: 1px solid var(--color-outline);
+		display: flex; align-items: center; gap: var(--space-3); padding: 6px 0;
+		border-bottom: 1px solid var(--color-border);
 	}
 	.desc { flex: 1; }
 	.def { color: var(--color-text-disabled); font-size: var(--font-size-00, 0.75rem); }
 	.key-input {
 		width: 80px; text-align: center; font-family: var(--font-mono, monospace);
-		padding: 4px 6px; border: 1px solid var(--color-outline); border-radius: var(--radius-2);
+		padding: 4px 6px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
 		background: var(--color-bg-1); color: inherit;
 	}
-	.actions { display: flex; align-items: center; gap: var(--size-3); margin-top: var(--size-4); }
+	.actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); }
 	.reset { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; font: inherit; }
 	kbd {
 		font-family: var(--font-mono, monospace); font-size: 0.8em;
-		background: var(--color-bg-2); border: 1px solid var(--color-outline);
+		background: var(--color-bg-2); border: 1px solid var(--color-border);
 		border-radius: 5px; padding: 1px 7px;
 	}
 </style>

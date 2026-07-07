@@ -4,7 +4,7 @@
 
 <style>
 	.redirecting {
-		padding: var(--size-4, 2rem);
+		padding: var(--space-4, 2rem);
 		color: var(--color-text-disabled);
 	}
 </style>

@@ -131,20 +131,20 @@
 
 <style>
 	h2 { font-size: var(--font-size-3); }
-	h3 { font-size: var(--font-size-1); margin: var(--size-4) 0 var(--size-2); }
+	h3 { font-size: var(--font-size-1); margin: var(--space-4) 0 var(--space-2); }
 	.muted { color: var(--color-text-disabled); }
 	.small { font-size: var(--font-size-0); }
-	.toggle { display: flex; align-items: center; gap: var(--size-2); margin: var(--size-4) 0; }
-	.segmented { display: inline-flex; border: 1px solid var(--color-outline); border-radius: var(--radius-2); overflow: hidden; }
-	.segmented button { padding: 6px 14px; border: none; background: var(--color-bg-2); color: inherit; cursor: pointer; border-right: 1px solid var(--color-outline); }
+	.toggle { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-4) 0; }
+	.segmented { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
+	.segmented button { padding: 6px 14px; border: none; background: var(--color-bg-2); color: inherit; cursor: pointer; border-right: 1px solid var(--color-border); }
 	.segmented button:last-child { border-right: none; }
 	.segmented button.active { background: var(--color-primary); color: white; }
-	textarea { width: 100%; border: 1px solid var(--color-outline); border-radius: var(--radius-2); background: var(--color-bg-2); color: inherit; padding: var(--size-3); font: inherit; font-size: var(--font-size-0); resize: vertical; }
-	.actions { display: flex; gap: var(--size-2); margin-top: var(--size-3); }
-	.preview .result { padding: var(--size-2) 0; border-bottom: 1px solid var(--color-outline); }
+	textarea { width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-2); color: inherit; padding: var(--space-3); font: inherit; font-size: var(--font-size-0); resize: vertical; }
+	.actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+	.preview .result { padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); }
 	.subj { font-weight: 600; font-size: var(--font-size-0); }
 	.verdict { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
 	.chip { font-size: var(--font-size-00, 0.72rem); background: var(--color-bg-2); border-radius: 99px; padding: 1px 8px; }
 	.chip.warn { background: color-mix(in oklch, var(--color-warning, orange) 30%, transparent); }
-	.err { color: var(--color-bad, #c0392b); font-size: var(--font-size-0); }
+	.err { color: var(--color-error, #c0392b); font-size: var(--font-size-0); }
 </style>

@@ -59,18 +59,18 @@
 <style>
 	.prompt {
 		position: fixed;
-		right: var(--size-4);
-		bottom: calc(28px + var(--size-3));
+		right: var(--space-4);
+		bottom: calc(28px + var(--space-3));
 		z-index: 50;
 		max-width: 320px;
 		display: flex;
 		flex-direction: column;
-		gap: var(--size-3);
-		padding: var(--size-4);
+		gap: var(--space-3);
+		padding: var(--space-4);
 		background: var(--color-bg-1);
-		border: 1px solid var(--color-outline);
-		border-radius: var(--radius-3);
-		box-shadow: var(--shadow-3, 0 8px 24px rgba(0, 0, 0, 0.18));
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.18));
 	}
 	.text {
 		display: flex;
@@ -84,7 +84,7 @@
 	.actions {
 		display: flex;
 		align-items: center;
-		gap: var(--size-2);
+		gap: var(--space-2);
 	}
 	.later {
 		background: none;

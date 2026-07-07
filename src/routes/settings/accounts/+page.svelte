@@ -172,14 +172,14 @@
 	.accounts {
 		list-style: none;
 		padding: 0;
-		margin: var(--size-4) 0;
+		margin: var(--space-4) 0;
 	}
 	.accounts li {
 		display: flex;
 		align-items: center;
-		gap: var(--size-3);
-		padding: var(--size-3) 0;
-		border-bottom: 1px solid var(--color-outline);
+		gap: var(--space-3);
+		padding: var(--space-3) 0;
+		border-bottom: 1px solid var(--color-border);
 	}
 	.dot {
 		width: 10px;
@@ -200,21 +200,21 @@
 		color: var(--color-text-disabled);
 	}
 	.status.err {
-		color: var(--color-bad, #c0392b);
+		color: var(--color-error, #c0392b);
 	}
 	.empty {
-		padding: var(--size-5) 0;
+		padding: var(--space-5) 0;
 	}
 	.add {
-		margin-top: var(--size-4);
+		margin-top: var(--space-4);
 	}
 	.add.domain h3 {
 		font-size: var(--font-size-1);
-		margin-bottom: var(--size-1);
+		margin-bottom: var(--space-1);
 	}
 	.domain-row {
 		display: flex;
-		gap: var(--size-2);
+		gap: var(--space-2);
 		align-items: center;
 		max-width: 420px;
 	}
@@ -223,18 +223,18 @@
 		flex: 1;
 	}
 	.hint {
-		margin-top: var(--size-2);
+		margin-top: var(--space-2);
 		font-size: var(--font-size-0);
 	}
 	.imap-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: var(--size-2);
+		gap: var(--space-2);
 		max-width: 480px;
-		margin: var(--size-2) 0;
+		margin: var(--space-2) 0;
 	}
 	.imap-actions {
 		display: flex;
-		gap: var(--size-2);
+		gap: var(--space-2);
 	}
 </style>
