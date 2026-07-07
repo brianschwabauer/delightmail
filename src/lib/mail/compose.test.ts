@@ -5,7 +5,44 @@ import {
 	replySubject,
 	replyAllRecipients,
 	quoteText,
+	docToText,
+	mergeSignatureDoc,
+	buildQuoteDoc,
 } from './compose';
+
+const para = (t: string) => ({ type: 'paragraph', content: [{ type: 'text', text: t }] });
+
+describe('docToText', () => {
+	it('flattens paragraphs to newline-separated text', () => {
+		const doc = { type: 'doc', content: [para('hello'), para('world')] };
+		expect(docToText(doc).trim()).toBe('hello\nworld');
+	});
+});
+
+describe('mergeSignatureDoc', () => {
+	it('appends the signature below a -- marker without touching the body', () => {
+		const body = { type: 'doc', content: [para('my message')] };
+		const sig = { type: 'doc', content: [para('Brian')] };
+		const merged = mergeSignatureDoc(body, sig);
+		expect(merged.content?.[0]).toEqual(para('my message'));
+		expect(docToText(merged)).toContain('-- ');
+		expect(docToText(merged)).toContain('Brian');
+	});
+	it('is a no-op when there is no signature', () => {
+		const body = { type: 'doc', content: [para('x')] };
+		expect(mergeSignatureDoc(body, null).content).toHaveLength(1);
+	});
+});
+
+describe('buildQuoteDoc', () => {
+	it('produces an empty paragraph then a blockquote with attribution', () => {
+		const doc = buildQuoteDoc({ from: { name: 'Ann', email: 'a@x' }, date: 0, text: 'hi\nthere' });
+		expect(doc.content?.[0]).toEqual({ type: 'paragraph' });
+		expect(doc.content?.[1]?.type).toBe('blockquote');
+		expect(docToText(doc)).toContain('Ann');
+		expect(docToText(doc)).toContain('hi');
+	});
+});
 
 describe('mintMessageId', () => {
 	it('uses the sender domain', () => {

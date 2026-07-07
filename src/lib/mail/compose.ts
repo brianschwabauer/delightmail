@@ -80,3 +80,71 @@ function dedupe(list: Address[], exclude: Set<string>, already: Address[] = []):
 function escapeHtml(s: string): string {
 	return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }
+
+// ---------------------------------------------------------------------------
+// Editor (ProseMirror) document helpers for compose (§10.3). Pure + tested.
+// ---------------------------------------------------------------------------
+export interface ProseNode {
+	type: string;
+	content?: ProseNode[];
+	text?: string;
+	attrs?: Record<string, unknown>;
+}
+
+const BLOCK_TYPES = new Set([
+	'paragraph',
+	'heading',
+	'blockquote',
+	'code_block',
+	'list_item',
+	'bullet_list',
+	'ordered_list',
+]);
+
+function asDoc(doc: unknown): ProseNode {
+	const d = doc as ProseNode | undefined;
+	if (d && d.type === 'doc') return { type: 'doc', content: d.content ?? [] };
+	return { type: 'doc', content: [] };
+}
+
+/** Flatten a ProseMirror doc to plain text (for signature/quote previews). */
+export function docToText(node: unknown): string {
+	const n = node as ProseNode | undefined;
+	if (!n) return '';
+	if (typeof n.text === 'string') return n.text;
+	const inner = (n.content ?? []).map(docToText).join('');
+	return BLOCK_TYPES.has(n.type) ? `${inner}\n` : inner;
+}
+
+/**
+ * Append an identity's signature (below a `--` marker) to the compose doc at send
+ * time, leaving what the user wrote untouched (§10.3). Null signature is a no-op.
+ */
+export function mergeSignatureDoc(editorDoc: unknown, signatureDoc: unknown): ProseNode {
+	const base = asDoc(editorDoc);
+	if (!signatureDoc) return base;
+	const sig = asDoc(signatureDoc);
+	const marker: ProseNode = { type: 'paragraph', content: [{ type: 'text', text: '-- ' }] };
+	return { type: 'doc', content: [...(base.content ?? []), marker, ...(sig.content ?? [])] };
+}
+
+/**
+ * Build the quoted-history doc for a reply: an empty paragraph to type into,
+ * then a blockquote with the attribution line and the original text (§10.3).
+ */
+export function buildQuoteDoc(original: { from?: Address; date?: number; text?: string }): ProseNode {
+	const when = original.date ? new Date(original.date).toUTCString() : '';
+	const who = original.from?.name || original.from?.email || 'someone';
+	const attribution: ProseNode = {
+		type: 'paragraph',
+		content: [{ type: 'text', text: `On ${when}, ${who} wrote:` }],
+	};
+	const quotedParas: ProseNode[] = (original.text ?? '').split('\n').map((line) => ({
+		type: 'paragraph',
+		content: line ? [{ type: 'text', text: line }] : [],
+	}));
+	return {
+		type: 'doc',
+		content: [{ type: 'paragraph' }, { type: 'blockquote', content: [attribution, ...quotedParas] }],
+	};
+}

@@ -6,7 +6,7 @@
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
 	import { useScope } from '$lib/mail/scope.svelte';
-	import { replySubject, replyAllRecipients } from '$lib/mail/compose';
+	import { replySubject, replyAllRecipients, buildQuoteDoc } from '$lib/mail/compose';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
 	import type { ComposeInit } from '$lib/components/Compose.svelte';
@@ -209,11 +209,15 @@
 			cc: nzList(m.cc),
 			reply_to: nzList(m.reply_to),
 		};
+		// Quoted history (from the excerpt available client-side), collapsed under a
+		// blockquote the user types above (§10.3).
+		const quoted = buildQuoteDoc({ from: src.from, date: m.date, text: m.text_excerpt ?? '' });
 		let init: ComposeInit;
 		if (kind === 'forward') {
 			init = {
 				subject: replySubject(m.subject ?? t.subject ?? '', 'forward'),
 				identity_id: undefined,
+				bodyDoc: quoted,
 				thread_id: String(t.id),
 			};
 		} else {
@@ -225,6 +229,7 @@
 				to: recipients.to,
 				cc: recipients.cc,
 				subject: replySubject(m.subject ?? t.subject ?? '', 'reply'),
+				bodyDoc: quoted,
 				in_reply_to: m.rfc822_message_id,
 				references: [...(m.references ?? []), m.rfc822_message_id],
 				thread_id: String(t.id),
