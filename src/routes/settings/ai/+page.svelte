@@ -87,7 +87,7 @@
 
 <section>
 	<h3>Mode</h3>
-	<ButtonGroup>
+	<ButtonGroup outline>
 		{#each MODES as [v, label] (v)}
 			<Button active={mode === v} onclick={() => (mode = v)}>{label}</Button>
 		{/each}

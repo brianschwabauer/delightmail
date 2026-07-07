@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { List, ListItem } from '@delightstack/components';
+	import Icon from '$lib/components/Icon.svelte';
 
 	const { children } = $props();
 
@@ -18,7 +19,7 @@
 
 <div class="settings">
 	<aside>
-		<a href="/mail/inbox" class="back">← Back to mail</a>
+		<a href="/mail/inbox" class="back"><Icon name="arrow-left" size={15} /> Back to mail</a>
 		<h1>Settings</h1>
 		<List type="button" dense class="settings-nav">
 			{#each TABS as t (t.id)}
@@ -41,7 +42,9 @@
 		background: var(--color-bg-2);
 	}
 	.back {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
 		font-size: var(--font-size-0);
 		color: var(--color-text-disabled);
 		text-decoration: none;
@@ -70,7 +73,6 @@
 		background: var(--dm-accent-soft);
 		color: var(--color-text);
 		font-weight: var(--font-weight-semibold, 600);
-		box-shadow: inset 2px 0 0 var(--color-primary);
 	}
 	main {
 		padding: var(--space-6) var(--space-8);

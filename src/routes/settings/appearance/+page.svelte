@@ -57,7 +57,7 @@
 
 <section>
 	<h3>Theme</h3>
-	<ButtonGroup>
+	<ButtonGroup outline>
 		{#each ['system', 'light', 'dark'] as const as t (t)}
 			<Button active={theme === t} onclick={() => setTheme(t)} class="cap">{t}</Button>
 		{/each}
@@ -66,7 +66,7 @@
 
 <section>
 	<h3>Density</h3>
-	<ButtonGroup>
+	<ButtonGroup outline>
 		{#each ['comfortable', 'compact'] as const as d (d)}
 			<Button active={density === d} onclick={() => setDensity(d)} class="cap">{d}</Button>
 		{/each}
