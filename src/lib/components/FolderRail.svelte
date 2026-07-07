@@ -2,6 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { List, ListItem } from '@delightstack/components';
+	import Icon, { type IconName } from './Icon.svelte';
 	import type { AuthClient } from '@delightstack/auth/client';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import { useScope } from '$lib/mail/scope.svelte';
@@ -32,15 +33,15 @@
 		window.location.href = '/signin';
 	}
 
-	const FOLDERS = [
-		{ id: 'inbox', label: 'Inbox', glyph: '📥' },
-		{ id: 'filtered', label: 'AI Filtered', glyph: '🧯' },
-		{ id: 'starred', label: 'Starred', glyph: '★' },
-		{ id: 'sent', label: 'Sent', glyph: '➤' },
-		{ id: 'drafts', label: 'Drafts', glyph: '✎' },
-		{ id: 'archive', label: 'Archive', glyph: '🗄' },
-		{ id: 'spam', label: 'Spam', glyph: '⦸' },
-		{ id: 'trash', label: 'Trash', glyph: '🗑' },
+	const FOLDERS: Array<{ id: string; label: string; icon: IconName }> = [
+		{ id: 'inbox', label: 'Inbox', icon: 'inbox' },
+		{ id: 'filtered', label: 'AI Filtered', icon: 'sparkles' },
+		{ id: 'starred', label: 'Starred', icon: 'star' },
+		{ id: 'sent', label: 'Sent', icon: 'send' },
+		{ id: 'drafts', label: 'Drafts', icon: 'pencil' },
+		{ id: 'archive', label: 'Archive', icon: 'archive' },
+		{ id: 'spam', label: 'Spam', icon: 'ban' },
+		{ id: 'trash', label: 'Trash', icon: 'trash' },
 	];
 
 	// Live account list drives the per-account scope switcher (§10.1).
@@ -118,7 +119,7 @@
 				active={view === f.id}
 				class={focus.is('folders') && i === hi ? 'khl' : ''}
 				onclick={() => focus.set('list')}>
-				<span class="glyph" aria-hidden="true">{f.glyph}</span>
+				<span class="glyph"><Icon name={f.icon} size={17} /></span>
 				<span class="label">{f.label}</span>
 				{#if f.id === 'inbox' && unreadCount > 0}
 					<span class="count">{unreadCount}</span>
@@ -144,10 +145,10 @@
 	<div class="spacer"></div>
 	<List type="button" dense class="rail-list">
 		<ListItem href="/settings/accounts" class="quiet">
-			<span class="glyph" aria-hidden="true">⚙</span><span class="label">Settings</span>
+			<span class="glyph"><Icon name="settings" size={17} /></span><span class="label">Settings</span>
 		</ListItem>
 		<ListItem class="quiet" onclick={signOut}>
-			<span class="glyph" aria-hidden="true">⏻</span><span class="label">Sign out</span>
+			<span class="glyph"><Icon name="log-out" size={17} /></span><span class="label">Sign out</span>
 		</ListItem>
 	</List>
 </nav>
@@ -205,6 +206,10 @@
 		gap: var(--space-2);
 		padding: 7px var(--space-2);
 		border-radius: var(--radius-md);
+		/* Native <button> defaults to text-align:center, which the flex-filled
+		   label inherits — force left so accounts + Sign out read left-aligned. */
+		justify-content: flex-start;
+		text-align: left;
 	}
 	:global(.rail-list .list-item.active > a),
 	:global(.rail-list .list-item.active > button) {
@@ -221,11 +226,14 @@
 		color: var(--color-text-disabled);
 	}
 	.glyph {
+		display: grid;
+		place-items: center;
 		width: 1.25em;
-		text-align: center;
-		font-size: 0.95em;
-		opacity: 0.85;
+		color: var(--color-text-muted, var(--color-text-disabled));
 		flex-shrink: 0;
+	}
+	:global(.rail-list .list-item.active) .glyph {
+		color: inherit;
 	}
 	.label {
 		flex: 1;
