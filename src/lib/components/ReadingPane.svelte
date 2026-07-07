@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Avatar, Button } from '@delightstack/components';
+	import { ripple } from '@delightstack/utilities';
+	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Message } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
@@ -102,7 +104,7 @@
 
 {#if !threadId}
 	<div class="placeholder">
-		<div class="ph-mark" aria-hidden="true">✉</div>
+		<div class="ph-mark" aria-hidden="true"><Icon name="mail" size={44} stroke={1.5} /></div>
 		<p class="ph-title">No conversation open</p>
 		<p class="ph-sub">Pick a message with <kbd>↵</kbd> or <kbd>→</kbd>. Move with <kbd>j</kbd>&nbsp;<kbd>k</kbd>.</p>
 	</div>
@@ -110,20 +112,20 @@
 	<article class="thread">
 		<header class="thread-head">
 			<div class="subject-row">
-				{#if starred}<span class="star" title="Starred">★</span>{/if}
+				{#if starred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
 				<h1 class="subject">{subject}</h1>
 			</div>
 			{#if onReply || onAct}
 				<div class="toolbar">
 					{#if onReply}
-						<Button size="0" transparent onclick={() => onReply('reply')}>Reply</Button>
-						<Button size="0" transparent onclick={() => onReply('reply_all')}>Reply all</Button>
-						<Button size="0" transparent onclick={() => onReply('forward')}>Forward</Button>
+						<Button size="0" transparent onclick={() => onReply('reply')}><Icon name="reply" size={15} /> Reply</Button>
+						<Button size="0" transparent onclick={() => onReply('reply_all')}><Icon name="reply-all" size={15} /> Reply all</Button>
+						<Button size="0" transparent onclick={() => onReply('forward')}><Icon name="forward" size={15} /> Forward</Button>
 					{/if}
 					{#if onAct}
 						<span class="tb-gap"></span>
-						<Button size="0" transparent onclick={() => onAct('archive')}>Archive</Button>
-						<Button size="0" transparent onclick={() => onAct('trash')}>Trash</Button>
+						<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+						<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
 					{/if}
 				</div>
 			{/if}
@@ -131,7 +133,7 @@
 
 		{#each docs as m (m.id)}
 			<section class="message" class:collapsed={!isExpanded(String(m.id))}>
-				<button class="msg-head" onclick={() => toggle(String(m.id))}>
+				<button class="msg-head" onclick={() => toggle(String(m.id))} {@attach ripple({ opacity: 0.08 })}>
 					<Avatar name={who(m)} size="2" />
 					<span class="meta">
 						<span class="from">{who(m)}</span>
@@ -197,8 +199,9 @@
 		gap: var(--space-2);
 	}
 	.star {
+		display: inline-flex;
+		align-items: center;
 		color: var(--color-warning);
-		font-size: var(--font-size-2);
 	}
 	.subject {
 		font-size: var(--font-size-3);
@@ -230,6 +233,8 @@
 		padding-top: var(--space-3);
 	}
 	.msg-head {
+		position: relative;
+		overflow: hidden;
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
