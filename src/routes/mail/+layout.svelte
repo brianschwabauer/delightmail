@@ -89,7 +89,10 @@
 		const free = () => !overlayOpen;
 		const off = kb.registerAll([
 			{ keys: '?', description: 'Keyboard help', group: 'Global', context: 'global', when: free, handler: () => (helpOpen = !helpOpen) },
-			{ keys: 'Ctrl+k', description: 'Command palette', group: 'Global', context: 'global', global: true, when: free, handler: () => (paletteOpen = true) },
+			// Ctrl/Cmd+K is owned by the delightstack CommandPalette itself (it binds
+			// a global listener and toggles `paletteOpen`); we only list it for the help
+			// overlay + command palette registry — no handler, so it can't double-fire.
+			{ keys: 'Ctrl+k', description: 'Command palette', group: 'Global', context: 'global', when: () => false, handler: () => {} },
 			{ keys: 'z', description: 'Undo last action', group: 'Global', context: 'global', when: free, handler: () => actions.undo() },
 			{ keys: 'n', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
 			{ keys: 'c', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
@@ -128,7 +131,7 @@
 <PasskeyPrompt {auth} />
 <ChordHint {kb} />
 <KeyboardHelp {kb} open={helpOpen} onClose={() => (helpOpen = false)} />
-<CommandPalette {db} open={paletteOpen} onClose={() => (paletteOpen = false)} />
+<CommandPalette bind:open={paletteOpen} />
 {#if composeInit}
 	<Compose {db} init={composeInit} onClose={() => (composeInit = null)} />
 {/if}
