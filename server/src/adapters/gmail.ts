@@ -13,6 +13,7 @@ import {
 	type StoredAttachment,
 } from '../body-store';
 import type { NormalizedMessage } from '../ingest';
+import { fetchWithTimeout } from '../http';
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -34,7 +35,7 @@ export async function refreshAccessToken(
 	client_secret: string,
 	refresh_token: string,
 ): Promise<{ access_token: string; expires_in: number }> {
-	const res = await fetch(TOKEN_URL, {
+	const res = await fetchWithTimeout(TOKEN_URL, {
 		method: 'POST',
 		headers: { 'content-type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams({
@@ -55,7 +56,7 @@ export async function exchangeCode(
 	code: string,
 	redirect_uri: string,
 ): Promise<{ access_token: string; refresh_token?: string; expires_in: number }> {
-	const res = await fetch(TOKEN_URL, {
+	const res = await fetchWithTimeout(TOKEN_URL, {
 		method: 'POST',
 		headers: { 'content-type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams({
@@ -100,7 +101,7 @@ export class GmailClient {
 	constructor(private access_token: string) {}
 
 	private async call<T>(path: string, init?: RequestInit): Promise<T> {
-		const res = await fetch(`${GMAIL_BASE}${path}`, {
+		const res = await fetchWithTimeout(`${GMAIL_BASE}${path}`, {
 			...init,
 			headers: {
 				authorization: `Bearer ${this.access_token}`,

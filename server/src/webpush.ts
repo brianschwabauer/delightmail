@@ -6,6 +6,8 @@
  * Not unit-tested here (needs a live push service + VAPID keypair); implemented
  * to the spec. Verify against a real endpoint before relying on it in production.
  */
+import { fetchWithTimeout } from './http';
+
 export interface PushSub {
 	endpoint: string;
 	keys: { p256dh: string; auth: string };
@@ -30,7 +32,7 @@ export async function sendWebPush(
 		encryptPayload(payload, sub.keys.p256dh, sub.keys.auth),
 	]);
 
-	return fetch(sub.endpoint, {
+	return fetchWithTimeout(sub.endpoint, {
 		method: 'POST',
 		headers: {
 			TTL: String(ttl),
@@ -89,11 +91,9 @@ async function encryptPayload(
 	const plaintext = new TextEncoder().encode(payload);
 
 	// Ephemeral (server) ECDH keypair. (workers-types doesn't narrow the union.)
-	const localKeys = (await crypto.subtle.generateKey(
-		{ name: 'ECDH', namedCurve: 'P-256' },
-		true,
-		['deriveBits'],
-	)) as CryptoKeyPair;
+	const localKeys = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, [
+		'deriveBits',
+	])) as CryptoKeyPair;
 	const localPublicRaw = new Uint8Array(
 		(await crypto.subtle.exportKey('raw', localKeys.publicKey)) as ArrayBuffer,
 	);
@@ -168,7 +168,10 @@ function b64urlBytes(bytes: Uint8Array): string {
 	return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 function fromB64url(s: string): Uint8Array {
-	const b64 = s.replace(/-/g, '+').replace(/_/g, '/').padEnd(s.length + ((4 - (s.length % 4)) % 4), '=');
+	const b64 = s
+		.replace(/-/g, '+')
+		.replace(/_/g, '/')
+		.padEnd(s.length + ((4 - (s.length % 4)) % 4), '=');
 	const bin = atob(b64);
 	const out = new Uint8Array(bin.length);
 	for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

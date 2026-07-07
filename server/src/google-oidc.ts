@@ -4,6 +4,8 @@
  * issuer / audience / service-account email. JWKS is cached in module memory
  * for the isolate's lifetime.
  */
+import { fetchWithTimeout } from './http';
+
 const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const VALID_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com']);
 
@@ -72,7 +74,7 @@ export async function verifyGoogleOidc(
 async function findKey(kid: string | undefined): Promise<Jwk | undefined> {
 	if (!kid) return undefined;
 	if (!jwksCache || Date.now() - jwksCache.fetchedAt > JWKS_TTL_MS) {
-		const res = await fetch(GOOGLE_CERTS_URL);
+		const res = await fetchWithTimeout(GOOGLE_CERTS_URL);
 		const body = (await res.json()) as { keys: Jwk[] };
 		jwksCache = { keys: body.keys, fetchedAt: Date.now() };
 	}
@@ -84,10 +86,10 @@ function b64urlToString(b64url: string): string {
 }
 
 function b64urlToBytes(b64url: string): Uint8Array {
-	const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/').padEnd(
-		b64url.length + ((4 - (b64url.length % 4)) % 4),
-		'=',
-	);
+	const b64 = b64url
+		.replace(/-/g, '+')
+		.replace(/_/g, '/')
+		.padEnd(b64url.length + ((4 - (b64url.length % 4)) % 4), '=');
 	const bin = atob(b64);
 	const out = new Uint8Array(bin.length);
 	for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
