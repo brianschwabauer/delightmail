@@ -5,7 +5,13 @@
  */
 import { parseEmail } from '../../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../../src/lib/mail/sanitize';
-import { messagePrefix, writeBodies, writeAttachments } from '../body-store';
+import {
+	messagePrefix,
+	writeBodies,
+	writeAttachments,
+	type BodyKeys,
+	type StoredAttachment,
+} from '../body-store';
 import type { NormalizedMessage } from '../ingest';
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -70,7 +76,7 @@ interface GmailListResponse {
 	resultSizeEstimate?: number;
 }
 
-interface GmailMessage {
+export interface GmailMessage {
 	id: string;
 	threadId: string;
 	labelIds?: string[];
@@ -196,9 +202,20 @@ export function gmailLabelsToState(labelIds: string[] = []): {
 
 /** Gmail's built-in system labels — everything else is a user label (§5.1). */
 const SYSTEM_LABELS = new Set([
-	'INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'UNREAD', 'STARRED', 'IMPORTANT',
-	'CHAT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS',
-	'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
+	'INBOX',
+	'SENT',
+	'DRAFT',
+	'TRASH',
+	'SPAM',
+	'UNREAD',
+	'STARRED',
+	'IMPORTANT',
+	'CHAT',
+	'CATEGORY_PERSONAL',
+	'CATEGORY_SOCIAL',
+	'CATEGORY_PROMOTIONS',
+	'CATEGORY_UPDATES',
+	'CATEGORY_FORUMS',
 ]);
 
 /** Decode Gmail's base64url `raw`, parse, sanitize, write bodies, normalize. */
@@ -220,24 +237,34 @@ export async function gmailToNormalized(
 
 	const html = parsed.html ? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' }) : '';
 	const prefix = await messagePrefix(ctx.org_id, parsed.rfc822_message_id);
-	const body_keys = await writeBodies(ctx.r2, prefix, {
-		raw: rawBytes,
-		html: html || undefined,
-		text: parsed.text || undefined,
-	});
-	// format=raw carries attachment bytes inline, so store them here. (The >2MB
-	// lazy-fetch optimization from §5.1 is a follow-up; correctness first.)
-	const attachments = await writeAttachments(
-		ctx.r2,
-		prefix,
-		parsed.attachments.map((a) => ({
-			filename: a.filename,
-			mime_type: a.mime_type,
-			content: a.content,
-			content_id: a.content_id,
-			size_bytes: a.size_bytes,
-		})),
-	);
+	// R2 writes are the transient-failure surface here. Wrap them as RetryableError
+	// so a storage blip retries the whole page instead of dropping the message and
+	// letting the sync cursor advance past it (§5.1, R8 — never silently lose mail).
+	let body_keys: BodyKeys;
+	let attachments: StoredAttachment[];
+	try {
+		body_keys = await writeBodies(ctx.r2, prefix, {
+			raw: rawBytes,
+			html: html || undefined,
+			text: parsed.text || undefined,
+		});
+		// format=raw carries attachment bytes inline, so store them here. (The >2MB
+		// lazy-fetch optimization from §5.1 is a follow-up; correctness first.)
+		attachments = await writeAttachments(
+			ctx.r2,
+			prefix,
+			parsed.attachments.map((a) => ({
+				filename: a.filename,
+				mime_type: a.mime_type,
+				content: a.content,
+				content_id: a.content_id,
+				size_bytes: a.size_bytes,
+			})),
+		);
+	} catch (err) {
+		if (err instanceof RetryableError) throw err;
+		throw new RetryableError(`R2 write failed for message ${msg.id}: ${String(err)}`);
+	}
 
 	return {
 		rfc822_message_id: parsed.rfc822_message_id,
@@ -268,7 +295,7 @@ export async function gmailToNormalized(
 	};
 }
 
-function base64UrlToBytes(b64url: string): Uint8Array {
+export function base64UrlToBytes(b64url: string): Uint8Array {
 	const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
 	const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
 	const bin = atob(padded);

@@ -14,7 +14,9 @@ import {
 	refreshAccessToken,
 	gmailToNormalized,
 	gmailLabelsToState,
+	base64UrlToBytes,
 	RetryableError,
+	type GmailMessage,
 } from './adapters/gmail';
 import type { NormalizedMessage } from './ingest';
 import { buildMimeMessage } from './mime-build';
@@ -226,7 +228,10 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #credentials(): Promise<{ refresh_token: string } | null> {
 		const state = this.#state();
 		if (!state.credentials_encrypted) return null;
-		const plain = await decryptSecret(state.credentials_encrypted, this.env.CREDENTIALS_ENCRYPTION_KEY);
+		const plain = await decryptSecret(
+			state.credentials_encrypted,
+			this.env.CREDENTIALS_ENCRYPTION_KEY,
+		);
 		return plain ? (JSON.parse(plain) as { refresh_token: string }) : null;
 	}
 
@@ -293,7 +298,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				const attempts = job.attempts + 1;
 				const message = err instanceof Error ? err.message : String(err);
 				if (attempts >= MAX_ATTEMPTS) {
-					this.#sql.exec(`UPDATE job SET status = 'failed', last_error = ? WHERE id = ?`, message, job.id);
+					this.#sql.exec(
+						`UPDATE job SET status = 'failed', last_error = ? WHERE id = ?`,
+						message,
+						job.id,
+					);
 					await this.#reportError(message);
 				} else {
 					this.#sql.exec(
@@ -378,7 +387,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		this.#emitProgress('backfill', percent);
 
 		if (list.nextPageToken) {
-			await this.scheduleJob('backfill_page', { page_token: list.nextPageToken }, RAW_BATCH_PAUSE_MS);
+			await this.scheduleJob(
+				'backfill_page',
+				{ page_token: list.nextPageToken },
+				RAW_BATCH_PAUSE_MS,
+			);
 		} else {
 			await this.#setAccountStatus('live');
 			// Kick an immediate history sync to catch anything since backfill start.
@@ -459,12 +472,8 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 
 	async #sendMessage(payload: SendPayload): Promise<void> {
 		const state = this.#state();
-		const htmlObj = payload.body_keys?.html
-			? await this.env.R2.get(payload.body_keys.html)
-			: null;
-		const textObj = payload.body_keys?.text
-			? await this.env.R2.get(payload.body_keys.text)
-			: null;
+		const htmlObj = payload.body_keys?.html ? await this.env.R2.get(payload.body_keys.html) : null;
+		const textObj = payload.body_keys?.text ? await this.env.R2.get(payload.body_keys.text) : null;
 		const html = htmlObj ? await htmlObj.text() : '';
 		const text = textObj ? await textObj.text() : '';
 		// Pull each attachment's bytes from R2 and base64-encode for the MIME build.
@@ -540,8 +549,9 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		// 1. Cloudflare Email Service (env.EMAIL binding).
 		if (this.env.EMAIL) {
 			const mod: unknown = await import(/* @vite-ignore */ 'cloudflare:email').catch(() => null);
-			const EmailMessage = (mod as { EmailMessage?: new (from: string, to: string, raw: string) => unknown })
-				?.EmailMessage;
+			const EmailMessage = (
+				mod as { EmailMessage?: new (from: string, to: string, raw: string) => unknown }
+			)?.EmailMessage;
 			if (EmailMessage) {
 				for (const to of recipients) {
 					await this.env.EMAIL.send(new EmailMessage(fromEmail, to, raw));
@@ -576,8 +586,13 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		const recipients = this.#recipients(payload);
 		if (!recipients.length) throw new Error('No recipients');
 		const mod: unknown = await import(/* @vite-ignore */ 'worker-mailer').catch(() => null);
-		const WorkerMailer = (mod as { WorkerMailer?: { connect(o: unknown): Promise<{ send(m: unknown): Promise<void>; close(): Promise<void> }> } })
-			?.WorkerMailer;
+		const WorkerMailer = (
+			mod as {
+				WorkerMailer?: {
+					connect(o: unknown): Promise<{ send(m: unknown): Promise<void>; close(): Promise<void> }>;
+				};
+			}
+		)?.WorkerMailer;
 		if (!WorkerMailer) throw new Error('worker-mailer unavailable for SMTP send');
 		const port = cfg.port || 587;
 		const mailer = await WorkerMailer.connect({
@@ -610,7 +625,8 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			if (!client) {
 				return {
 					ok: false,
-					error: 'IMAP transport unavailable in this runtime — see R1 spike (imapflow over Workers sockets, or the Container fallback).',
+					error:
+						'IMAP transport unavailable in this runtime — see R1 spike (imapflow over Workers sockets, or the Container fallback).',
 				};
 			}
 			const list = (await client.list()) as Array<{ path: string }>;
@@ -678,7 +694,10 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #decryptCreds(): Promise<Record<string, unknown> | null> {
 		const state = this.#state();
 		if (!state.credentials_encrypted) return null;
-		const plain = await decryptSecret(state.credentials_encrypted, this.env.CREDENTIALS_ENCRYPTION_KEY);
+		const plain = await decryptSecret(
+			state.credentials_encrypted,
+			this.env.CREDENTIALS_ENCRYPTION_KEY,
+		);
 		return plain ? (JSON.parse(plain) as Record<string, unknown>) : null;
 	}
 
@@ -767,8 +786,17 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		const labelMap = await this.#labelMap(gmail);
 		const out: NormalizedMessage[] = [];
 		for (const id of ids) {
+			let msg: GmailMessage;
 			try {
-				const msg = await gmail.getRaw(id);
+				msg = await gmail.getRaw(id);
+			} catch (err) {
+				if (err instanceof RetryableError) throw err;
+				// Message no longer retrievable at Gmail (e.g. 404 — deleted between
+				// the list and this fetch). Nothing to capture; safe to skip.
+				console.error(`[SyncEngine] getRaw ${id} failed, skipping:`, err);
+				continue;
+			}
+			try {
 				out.push(
 					await gmailToNormalized(msg, {
 						account_id: state.account_id!,
@@ -778,11 +806,48 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 					}),
 				);
 			} catch (err) {
+				// Retryable (incl. R2 write blips) → bubble up so the whole page retries
+				// and the cursor is NOT advanced past this message.
 				if (err instanceof RetryableError) throw err;
-				console.error(`[SyncEngine] skip message ${id}:`, err);
+				// Non-retryable (e.g. unparseable MIME): capture the raw bytes durably
+				// before moving on, so the message is recoverable rather than silently
+				// lost when the sync cursor advances (§5.1, R8).
+				await this.#deadLetterRawMessage(state, id, msg.raw ?? '', err);
 			}
 		}
 		return out;
+	}
+
+	/**
+	 * Persist a message that could not be normalized (bad MIME, etc.) so it is
+	 * never silently lost: the raw bytes go to a durable R2 dead-letter key and a
+	 * KV marker records it for operator visibility / replay. If even the R2
+	 * capture fails, throw RetryableError so the page retries rather than advancing
+	 * the sync cursor past an unrecoverable message (§5.1, R8).
+	 */
+	async #deadLetterRawMessage(
+		state: SyncState,
+		gmail_id: string,
+		rawB64Url: string,
+		cause: unknown,
+	): Promise<void> {
+		const key = `${state.org_id}/deadletter/gmail/${state.account_id}/${gmail_id}.eml`;
+		try {
+			await this.env.R2.put(key, base64UrlToBytes(rawB64Url), {
+				httpMetadata: { contentType: 'message/rfc822' },
+			});
+		} catch (putErr) {
+			throw new RetryableError(`dead-letter capture failed for ${gmail_id}: ${String(putErr)}`);
+		}
+		try {
+			await this.env.KV.put(
+				`deadletter:${state.org_id}:${state.account_id}:${gmail_id}`,
+				JSON.stringify({ key, error: String(cause), at: Date.now() }),
+			);
+		} catch {
+			/* marker is best-effort; the R2 raw is the durable record */
+		}
+		console.error(`[SyncEngine] dead-lettered message ${gmail_id} → ${key}:`, cause);
 	}
 
 	async #applyLabelChange(gmail_id: string): Promise<void> {
