@@ -22,20 +22,39 @@ export interface Binding {
 	when?: () => boolean;
 	/** Fire even while an input/editor is focused. */
 	global?: boolean;
+	/** The originally-registered key, before any user override (set internally). */
+	defaultKeys?: string;
 }
 
 const CHORD_TIMEOUT = 1200;
 
 export class Keyboard {
 	#bindings = new Set<Binding>();
+	#overrides: Record<string, string> = {};
 	contextStack = $state<string[]>(['global']);
 	pendingChord = $state<string | null>(null);
 	#chordTimer: ReturnType<typeof setTimeout> | null = null;
 
 	/** Register a binding; returns an unregister function. */
 	register(binding: Binding): () => void {
+		binding.defaultKeys = binding.keys;
+		const override = this.#overrides[binding.keys];
+		if (override) binding.keys = override;
 		this.#bindings.add(binding);
 		return () => this.#bindings.delete(binding);
+	}
+
+	/**
+	 * Apply user key overrides (settings.keyboard_overrides), a map of
+	 * default-key → replacement-key. Retroactively re-keys already-registered
+	 * bindings so it can be called after the mail view has mounted (§10.2).
+	 */
+	setOverrides(map: Record<string, string>): void {
+		this.#overrides = map ?? {};
+		for (const b of this.#bindings) {
+			const def = b.defaultKeys ?? b.keys;
+			b.keys = this.#overrides[def] ?? def;
+		}
 	}
 
 	registerAll(bindings: Binding[]): () => void {

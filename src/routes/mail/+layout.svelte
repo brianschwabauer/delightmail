@@ -49,8 +49,21 @@
 		history.replaceState(history.state, '', url);
 	}
 
+	// Apply user key overrides (settings.keyboard_overrides) once settings load.
+	async function applyKeyboardOverrides() {
+		try {
+			const e = db.entity('settings', 'main');
+			await e.load();
+			const raw = (e.loaded ? (e.value as { keyboard_overrides?: string }).keyboard_overrides : '') ?? '';
+			if (raw) kb.setOverrides(JSON.parse(raw) as Record<string, string>);
+		} catch {
+			/* keep defaults */
+		}
+	}
+
 	onMount(() => {
 		composeFromUrl();
+		void applyKeyboardOverrides();
 		const onKey = (e: KeyboardEvent) => {
 			if (helpOpen && e.key === 'Escape') {
 				helpOpen = false;

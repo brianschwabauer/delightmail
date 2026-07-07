@@ -102,9 +102,19 @@
 
 	const title = $derived(viewTitle(view));
 
+	let readingEl = $state<HTMLElement>();
 	function move(delta: number) {
 		if (!docs.length) return;
 		cursor = Math.min(docs.length - 1, Math.max(0, cursor + delta));
+	}
+	function scrollReading(dy: number) {
+		readingEl?.scrollBy({ top: dy, behavior: 'smooth' });
+	}
+	/** Advance the cursor AND the open thread — next/prev without leaving the reader. */
+	function stepThread(delta: number) {
+		move(delta);
+		const t = docs[cursor];
+		if (t) openId = String(t.id);
 	}
 	function openCursor() {
 		// Enter (and l/→) confirm a pending delete first — "D then Enter" is fast.
@@ -114,7 +124,31 @@
 			return;
 		}
 		const t = docs[cursor];
-		if (t) openId = String(t.id);
+		if (!t) return;
+		// In Drafts, opening resumes editing in the compose overlay, not the reader.
+		if (view === 'drafts') {
+			void openDraft(t);
+			return;
+		}
+		openId = String(t.id);
+	}
+	async function openDraft(t: Thread) {
+		const m = await latestMessage(String(t.id));
+		if (!m) return;
+		let bodyDoc: unknown;
+		try {
+			bodyDoc = m.draft_doc ? JSON.parse(m.draft_doc) : undefined;
+		} catch {
+			bodyDoc = undefined;
+		}
+		compose.open({
+			draft_id: String(m.id),
+			thread_id: String(t.id),
+			to: nzList(m.to),
+			cc: nzList(m.cc),
+			subject: m.subject ?? '',
+			bodyDoc,
+		});
 	}
 
 	// D → confirm-modal defaulting to Yes (Enter confirms, Esc cancels) — never
@@ -294,10 +328,12 @@
 	onMount(() => {
 		kb.pushContext('list');
 		const off = kb.registerAll([
-			{ keys: 'j', description: 'Next', group: 'List', context: 'list', handler: () => move(1) },
+			{ keys: 'j', description: 'Next / scroll message', group: 'List', context: 'list', handler: () => (openId ? scrollReading(90) : move(1)) },
 			{ keys: 'ArrowDown', description: 'Next', group: 'List', context: 'list', handler: () => move(1) },
-			{ keys: 'k', description: 'Previous', group: 'List', context: 'list', handler: () => move(-1) },
+			{ keys: 'k', description: 'Previous / scroll up', group: 'List', context: 'list', handler: () => (openId ? scrollReading(-90) : move(-1)) },
 			{ keys: 'ArrowUp', description: 'Previous', group: 'List', context: 'list', handler: () => move(-1) },
+			{ keys: ']', description: 'Next thread (keep reading)', group: 'Reading', context: 'list', handler: () => stepThread(1) },
+			{ keys: '[', description: 'Previous thread (keep reading)', group: 'Reading', context: 'list', handler: () => stepThread(-1) },
 			{ keys: 'Ctrl+d', description: 'Half page down', group: 'List', context: 'list', handler: () => move(10) },
 			{ keys: 'Ctrl+u', description: 'Half page up', group: 'List', context: 'list', handler: () => move(-10) },
 			{ keys: 'g g', description: 'Top of list', group: 'List', context: 'list', handler: () => (cursor = 0) },
@@ -313,8 +349,8 @@
 			// The tokenizer emits bare uppercase for a shifted letter (like G/D/R), so
 			// select-and-move must be registered as 'J'/'K', not 'Shift+j'/'Shift+k'
 			// (which never matched → the bindings were dead).
-			{ keys: 'J', description: 'Select and move down', group: 'List', context: 'list', handler: () => selectAndMove(1) },
-			{ keys: 'K', description: 'Select and move up', group: 'List', context: 'list', handler: () => selectAndMove(-1) },
+			{ keys: 'J', description: 'Next thread (reading) / select down', group: 'List', context: 'list', handler: () => (openId ? stepThread(1) : selectAndMove(1)) },
+			{ keys: 'K', description: 'Prev thread (reading) / select up', group: 'List', context: 'list', handler: () => (openId ? stepThread(-1) : selectAndMove(-1)) },
 			{ keys: 'a', description: 'Archive', group: 'Actions', context: 'list', handler: () => act('archive') },
 			{ keys: 'd', description: 'Trash', group: 'Actions', context: 'list', handler: () => act('trash') },
 			{ keys: 'D', description: 'Delete forever', group: 'Actions', context: 'list', handler: askDelete },
@@ -417,7 +453,7 @@
 	</div>
 </section>
 
-<div class="reading-pane">
+<div class="reading-pane" bind:this={readingEl}>
 	<ReadingPane {db} threadId={openId} />
 </div>
 
@@ -507,7 +543,7 @@
 	.reading-pane {
 		flex: 1;
 		min-width: 0;
-		overflow: hidden;
+		overflow-y: auto;
 	}
 	@media (max-width: 767px) {
 		.list-pane {
