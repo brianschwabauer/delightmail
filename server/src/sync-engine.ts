@@ -788,10 +788,10 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			console.log(`[SyncEngine] provider_action ${payload.op} skipped (kind=${state.kind}, R1)`);
 			return;
 		}
-		// Label create/map and free-form moves aren't mapped to Gmail yet; skip
-		// rather than throw so the job doesn't retry forever on an unmapped op.
-		if (payload.op === 'move' || payload.op === 'label') {
-			console.log(`[SyncEngine] provider_action ${payload.op} not yet mapped to Gmail labels`);
+		// User-label add/remove isn't mapped to Gmail yet (needs the label
+		// provider_map); skip rather than throw so the job doesn't retry forever.
+		if (payload.op === 'label') {
+			console.log(`[SyncEngine] provider_action label not yet mapped to Gmail`);
 			return;
 		}
 		const gmail = await this.#gmail();
@@ -808,6 +808,10 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				case 'spam':
 					await gmail.modify(id, ['SPAM'], ['INBOX']);
 					break;
+				case 'move':
+					// Undo of archive/trash/spam moves the message back to a folder (§5.1, H6).
+					await this.#moveOnGmail(gmail, id, payload.folder);
+					break;
 				case 'read':
 					await gmail.modify(id, [], ['UNREAD']);
 					break;
@@ -823,6 +827,29 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				default:
 					break;
 			}
+		}
+	}
+
+	/** Map a folder move to Gmail label ops. `untrash` first for inbox/archive so
+	 *  undo of a trash also restores the message (untrash is a no-op otherwise). */
+	async #moveOnGmail(gmail: GmailClient, id: string, folder: string | undefined): Promise<void> {
+		switch (folder) {
+			case 'trash':
+				await gmail.trash(id);
+				return;
+			case 'spam':
+				await gmail.modify(id, ['SPAM'], ['INBOX']);
+				return;
+			case 'inbox':
+				await gmail.untrash(id);
+				await gmail.modify(id, ['INBOX'], ['SPAM']);
+				return;
+			case 'archive':
+				await gmail.untrash(id);
+				await gmail.modify(id, [], ['INBOX', 'SPAM']);
+				return;
+			default:
+				console.log(`[SyncEngine] move to '${folder}' not mapped to Gmail`);
 		}
 	}
 
@@ -968,6 +995,8 @@ interface ProviderActionPayload {
 	op: string;
 	gmail_ids?: string[];
 	thread_ids?: string[];
+	/** Target folder for op='move' (e.g. undo of archive/trash → 'inbox'). */
+	folder?: string;
 }
 
 function safeParse(json: string | null): unknown {

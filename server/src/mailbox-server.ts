@@ -138,9 +138,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	// -------------------------------------------------------------------------
 	// Ingest (§5) — idempotent on rfc822_message_id, runs threading + counters.
 	// -------------------------------------------------------------------------
-	async ingestMessages(
-		batch: NormalizedMessage[],
-	): Promise<{ ingested: number; skipped: number }> {
+	async ingestMessages(batch: NormalizedMessage[]): Promise<{ ingested: number; skipped: number }> {
 		const result = ingestBatch(this, batch);
 		for (const m of result.new_messages) {
 			this.broadcastMail({
@@ -199,10 +197,15 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 
 		const affected = applyThreadActionLocal(this, action);
 
-		// Fan out provider write-back to each owning SyncEngine.
+		// Fan out provider write-back to each owning SyncEngine. `move` carries the
+		// target folder so undo of archive/trash reaches Gmail (§5.1, H6).
 		for (const [account_id, gmail_ids] of byAccount) {
 			if (!gmail_ids.length) continue;
-			this.#enqueueProviderAction(account_id, { op, gmail_ids });
+			this.#enqueueProviderAction(account_id, {
+				op,
+				gmail_ids,
+				...(op === 'move' ? { folder: action.folder } : {}),
+			});
 		}
 		return { affected };
 	}
@@ -408,11 +411,14 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 
 		// Recording recipients as known correspondents here (not just when the sent
 		// copy syncs back) covers cf_domain/imap accounts that have no sync-back.
-		maintainContacts(this as never, {
-			is_outbound: true,
-			to: payload.to,
-			cc: payload.cc,
-		} as NormalizedMessage);
+		maintainContacts(
+			this as never,
+			{
+				is_outbound: true,
+				to: payload.to,
+				cc: payload.cc,
+			} as NormalizedMessage,
+		);
 
 		this.create('outbox', {
 			message_id: msg.id,
@@ -689,9 +695,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			return [{ error: 'AI Gateway is not configured on this instance.' }];
 		}
 		const { createAiGateway } = await import('@delightstack/ai/server');
-		const { buildTriageMessages, parseVerdict, applyGuardrails } = await import(
-			'../../src/lib/mail/triage'
-		);
+		const { buildTriageMessages, parseVerdict, applyGuardrails } =
+			await import('../../src/lib/mail/triage');
 		const gateway = createAiGateway({
 			ai: this.#menv.AI as never,
 			gateway: this.#menv.AI_GATEWAY_NAME,
@@ -847,11 +852,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			};
 			if (!sub.endpoint || !sub.keys) continue;
 			try {
-				const res = await sendWebPush(
-					{ endpoint: sub.endpoint, keys: sub.keys },
-					body,
-					{ publicKey: VAPID_PUBLIC_KEY, privateKey: VAPID_PRIVATE_KEY, subject: VAPID_SUBJECT ?? 'mailto:admin@delightmail' },
-				);
+				const res = await sendWebPush({ endpoint: sub.endpoint, keys: sub.keys }, body, {
+					publicKey: VAPID_PUBLIC_KEY,
+					privateKey: VAPID_PRIVATE_KEY,
+					subject: VAPID_SUBJECT ?? 'mailto:admin@delightmail',
+				});
 				if (res.status === 404 || res.status === 410) {
 					// Subscription gone — prune it.
 					try {
@@ -1042,7 +1047,10 @@ function withinQuietHours(window: string | undefined): boolean {
 async function sha40(input: string): Promise<string> {
 	const data = new TextEncoder().encode(input);
 	const digest = await crypto.subtle.digest('SHA-256', data);
-	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+	return [...new Uint8Array(digest)]
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')
+		.slice(0, 40);
 }
 
 /** Map a thread action to the provider operation for two-way sync (§5.1). */

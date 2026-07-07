@@ -167,6 +167,10 @@ export class GmailClient {
 		return this.call(`/messages/${id}/trash`, { method: 'POST' });
 	}
 
+	untrash(id: string): Promise<unknown> {
+		return this.call(`/messages/${id}/untrash`, { method: 'POST' });
+	}
+
 	send(rawBase64Url: string, threadId?: string): Promise<{ id: string; threadId: string }> {
 		return this.call('/messages/send', {
 			method: 'POST',
