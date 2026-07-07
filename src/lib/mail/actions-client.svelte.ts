@@ -48,10 +48,10 @@ export class ActionManager {
 		opts: { folder?: string; label_id?: string } = {},
 	): Promise<void> {
 		if (!threads.length) return;
-		const ids = threads.map((t) => t.id);
+		const ids = threads.map((t) => String(t.id));
 
 		// Snapshot previous state for undo.
-		const prev = new Map(threads.map((t) => [t.id, snapshot(t)]));
+		const prev = new Map(threads.map((t) => [String(t.id), snapshot(t)]));
 
 		// Optimistic overlay.
 		const patch = computeThreadPatch(
@@ -61,24 +61,26 @@ export class ActionManager {
 		);
 		this.#applyOverlay(ids, action, patch);
 
-		// Undo entry.
-		const restore = async () => {
-			this.#clearOverlay(ids);
-			// Re-apply the previous folder/flags via a move + flag actions.
-			await this.#post(ids, inverseAction(action), {
-				folder: prev.get(ids[0])?.folder,
-			});
-		};
-		this.#pushUndo({ thread_ids: ids, label: undoLabel(action, ids.length), restore });
-
 		// Authoritative call.
 		try {
 			await this.#post(ids, action, opts);
 		} catch (err) {
-			// Roll back the overlay on failure.
+			// Roll back the overlay on failure — and register NO undo entry, so a
+			// later `z` can't fire an inverse action for something that never happened.
 			this.#clearOverlay(ids);
 			toast(`Couldn't ${action}: ${(err as Error).message}`);
 			return;
+		}
+
+		// Register undo only after the action actually succeeded (§10.2), and show
+		// the undo toast the plan requires where undo is possible.
+		if (isUndoable(action)) {
+			const restore = async () => {
+				this.#clearOverlay(ids);
+				await this.#post(ids, inverseAction(action), { folder: prev.get(ids[0])?.folder });
+			};
+			this.#pushUndo({ thread_ids: ids, label: undoLabel(action, ids.length), restore });
+			toast(`${capitalize(undoLabel(action, ids.length))} · press z to undo`);
 		}
 
 		// Clear the overlay after reconciliation.
@@ -154,6 +156,18 @@ function stateOf(t: Thread): ThreadStateForAction {
 		message_count: t.message_count ?? 1,
 		label_ids: (t.label_ids as string[]) ?? [],
 	};
+}
+
+/**
+ * Whether `z` can meaningfully reverse this action. delete (hard delete forever)
+ * can't be locally restored, so it never enters the undo stack (§10.2).
+ */
+function isUndoable(action: ThreadActionName): boolean {
+	return action !== 'delete';
+}
+
+function capitalize(s: string): string {
+	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /** The action that reverses a given action (for undo). */

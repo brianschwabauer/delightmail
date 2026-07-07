@@ -13,6 +13,7 @@
 	import type { ComposeInit } from '$lib/components/Compose.svelte';
 	import { provideKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { provideActions } from '$lib/mail/actions-client.svelte';
+	import { provideScope } from '$lib/mail/scope.svelte';
 
 	const { data, children } = $props();
 	const { auth, db, ws } = $derived(data);
@@ -21,6 +22,7 @@
 
 	const kb = provideKeyboard();
 	const actions = provideActions();
+	const scope = provideScope();
 	let helpOpen = $state(false);
 	let paletteOpen = $state(false);
 	let composeInit = $state<ComposeInit | null>(null);
@@ -30,7 +32,25 @@
 	}
 	setContext('mail:compose', { open: openCompose });
 
+	// mailto: / share-target land on /compose which redirects here with ?compose=1
+	// (+ to/subject/body). Open the overlay and strip the params from the URL.
+	function composeFromUrl() {
+		const p = page.url.searchParams;
+		if (p.get('compose') !== '1') return;
+		const to = p.get('to');
+		const cc = p.get('cc');
+		openCompose({
+			to: to ? to.split(/[,;]/).map((e) => ({ email: e.trim() })).filter((a) => a.email) : undefined,
+			cc: cc ? cc.split(/[,;]/).map((e) => ({ email: e.trim() })).filter((a) => a.email) : undefined,
+			subject: p.get('subject') ?? undefined,
+		});
+		const url = new URL(location.href);
+		for (const k of ['compose', 'to', 'cc', 'subject', 'body']) url.searchParams.delete(k);
+		history.replaceState(history.state, '', url);
+	}
+
 	onMount(() => {
+		composeFromUrl();
 		const onKey = (e: KeyboardEvent) => {
 			if (helpOpen && e.key === 'Escape') {
 				helpOpen = false;
@@ -53,6 +73,15 @@
 			{ keys: 'g t', description: 'Go to Sent', group: 'Go to', context: 'global', handler: () => goto('/mail/sent') },
 			{ keys: 'g d', description: 'Go to Drafts', group: 'Go to', context: 'global', handler: () => goto('/mail/drafts') },
 			{ keys: 'g a', description: 'Go to Archive', group: 'Go to', context: 'global', handler: () => goto('/mail/archive') },
+			// Account scope: Ctrl+1 = All, Ctrl+2..9 = accounts in order (§10.1).
+			...Array.from({ length: 9 }, (_, i) => ({
+				keys: `Ctrl+${i + 1}`,
+				description: i === 0 ? 'Scope: all accounts' : `Scope: account ${i}`,
+				group: 'Scope',
+				context: 'global',
+				global: true,
+				handler: () => scope.setByIndex(i),
+			})),
 		]);
 
 		return () => {

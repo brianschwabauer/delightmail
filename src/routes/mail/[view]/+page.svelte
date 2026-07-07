@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { tick, onMount, untrack, getContext } from 'svelte';
+	import { toast } from '@delightstack/components';
 	import { viewToQuery, viewTitle } from '$lib/mail/views';
 	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
+	import { useScope } from '$lib/mail/scope.svelte';
 	import { replySubject, replyAllRecipients } from '$lib/mail/compose';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
@@ -18,6 +20,7 @@
 
 	const kb = useKeyboard();
 	const actions = useActions();
+	const scope = useScope();
 
 	// --- search (/) and filter (f) state ---
 	let searching = $state(false);
@@ -42,9 +45,11 @@
 	const docs = $derived.by(() => {
 		let all = (results.docs ?? []) as Thread[];
 		all = all
-			.filter((t) => !actions.isRemoved(t.id))
+			.filter((t) => !actions.isRemoved(String(t.id)))
+			// Account scope filter (All / per-account, §10.1).
+			.filter((t) => scope.includes(t.account_ids as string[] | undefined))
 			.map((t) => {
-				const patch = actions.patchFor(t.id);
+				const patch = actions.patchFor(String(t.id));
 				return patch ? ({ ...t, ...patch } as Thread) : t;
 			});
 		if (!filtering || !filterText.trim()) return all;
@@ -61,7 +66,29 @@
 	let selected = $state<Set<string>>(new Set());
 	let openId = $state<string | null>(null);
 	let density = $state<Density>('comfortable');
-	onMount(() => (density = currentDensity()));
+	let confirmingDelete = $state(false);
+	let moving = $state(false);
+	const MOVE_FOLDERS = ['inbox', 'archive', 'spam', 'trash'] as const;
+	onMount(() => {
+		density = currentDensity();
+		// Deep-link: /mail/[view]?t=<thread_id> opens a thread (push notificationclick
+		// lands here, §10.4). Selection lives in the query so list scroll never resets.
+		const t = new URLSearchParams(location.search).get('t');
+		if (t) openId = t;
+	});
+
+	// Mirror the open thread into the URL (?t=) without a navigation, so reload and
+	// the notification deep-link stay in sync.
+	$effect(() => {
+		const id = openId;
+		if (typeof history === 'undefined') return;
+		untrack(() => {
+			const url = new URL(location.href);
+			if (id) url.searchParams.set('t', id);
+			else url.searchParams.delete('t');
+			history.replaceState(history.state, '', url);
+		});
+	});
 
 	$effect(() => {
 		// Clamp cursor when the list shrinks. Depend on length only; read/write
@@ -80,15 +107,67 @@
 		cursor = Math.min(docs.length - 1, Math.max(0, cursor + delta));
 	}
 	function openCursor() {
+		// Enter (and l/→) confirm a pending delete first — "D then Enter" is fast.
+		if (confirmingDelete) {
+			confirmingDelete = false;
+			void act('delete');
+			return;
+		}
 		const t = docs[cursor];
-		if (t) openId = t.id;
+		if (t) openId = String(t.id);
+	}
+
+	// D → confirm-modal defaulting to Yes (Enter confirms, Esc cancels) — never
+	// hard-delete on a single keystroke (Gmail-scope caveat §5.1).
+	function askDelete() {
+		if (targets().length) confirmingDelete = true;
+	}
+
+	// v / m → move picker. e → unsubscribe from the cursor thread's sender.
+	function openMove() {
+		if (targets().length) moving = true;
+	}
+	async function moveTo(folder: string) {
+		moving = false;
+		await act('move', { folder });
+	}
+	async function unsubscribeCursor() {
+		const t = docs[cursor];
+		if (!t) return;
+		const m = await latestMessage(String(t.id));
+		if (!m) return;
+		// unsubscribe_task is indexed by sender_domain (message_id isn't searchable).
+		const domain = (m.from?.email ?? '').split('@')[1]?.toLowerCase();
+		if (!domain) return toast('No unsubscribe option for this sender.');
+		try {
+			const res = (await db.list('unsubscribe_task', {
+				where: { sender_domain: [domain], status: { eq: 'suggested' } },
+				limit: 1,
+			})) as unknown as { docs?: Array<{ id: string | number }> };
+			const task = res.docs?.[0];
+			if (!task) return toast('No unsubscribe option for this sender.');
+			const r = await fetch(`/api/unsubscribe/${encodeURIComponent(String(task.id))}`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{}',
+			});
+			const body = (await r.json().catch(() => ({}))) as { ok?: boolean; manual?: string };
+			if (body.ok) toast('Unsubscribed.');
+			else if (body.manual) {
+				window.open(body.manual, '_blank', 'noopener');
+				toast('Opened the unsubscribe page.');
+			} else toast('Could not unsubscribe automatically.');
+		} catch (e) {
+			toast((e as Error).message);
+		}
 	}
 	function toggleSelect() {
 		const t = docs[cursor];
 		if (!t) return;
+		const id = String(t.id);
 		const next = new Set(selected);
-		if (next.has(t.id)) next.delete(t.id);
-		else next.add(t.id);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
 		selected = next;
 	}
 	function selectAndMove(delta: number) {
@@ -98,7 +177,7 @@
 
 	/** The threads an action targets: the selection, or the cursor thread. */
 	function targets(): Thread[] {
-		if (selected.size) return docs.filter((t) => selected.has(t.id));
+		if (selected.size) return docs.filter((t) => selected.has(String(t.id)));
 		const t = docs[cursor];
 		return t ? [t] : [];
 	}
@@ -106,12 +185,12 @@
 	// --- reply / reply-all / forward ---
 	async function latestMessage(threadId: string): Promise<Message | null> {
 		try {
-			const res = await db.list('message', {
+			const res = (await db.list('message', {
 				where: { thread_id: threadId },
 				order: [{ key: 'date', direction: 'DESC' }],
 				limit: 1,
-			});
-			return (res.docs?.[0] as Message) ?? null;
+			})) as unknown as { docs?: Message[] };
+			return res.docs?.[0] ?? null;
 		} catch {
 			return null;
 		}
@@ -119,28 +198,36 @@
 	async function reply(kind: 'reply' | 'reply_all' | 'forward') {
 		const t = docs[cursor];
 		if (!t) return;
-		const m = await latestMessage(t.id);
+		const m = await latestMessage(String(t.id));
 		if (!m) return;
 		const selfEmails = m.identity_email ? [m.identity_email] : [];
+		// The DSL types message addresses as nullable ({name: string|null}); the pure
+		// compose helpers want the clean {name?: string} shape — normalize here.
+		const src = {
+			from: nzAddr(m.from),
+			to: nzList(m.to),
+			cc: nzList(m.cc),
+			reply_to: nzList(m.reply_to),
+		};
 		let init: ComposeInit;
 		if (kind === 'forward') {
 			init = {
 				subject: replySubject(m.subject ?? t.subject ?? '', 'forward'),
 				identity_id: undefined,
-				thread_id: t.id,
+				thread_id: String(t.id),
 			};
 		} else {
 			const recipients =
 				kind === 'reply_all'
-					? replyAllRecipients(m, selfEmails)
-					: { to: m.reply_to?.length ? m.reply_to : m.from ? [m.from] : [], cc: [] };
+					? replyAllRecipients(src, selfEmails)
+					: { to: src.reply_to.length ? src.reply_to : src.from ? [src.from] : [], cc: [] };
 			init = {
 				to: recipients.to,
 				cc: recipients.cc,
 				subject: replySubject(m.subject ?? t.subject ?? '', 'reply'),
 				in_reply_to: m.rfc822_message_id,
 				references: [...(m.references ?? []), m.rfc822_message_id],
-				thread_id: t.id,
+				thread_id: String(t.id),
 			};
 		}
 		compose.open(init);
@@ -162,9 +249,18 @@
 		selected = new Set();
 		// Auto-advance past a removed cursor thread.
 		if (isOut) {
-			if (openId && ts.some((t) => t.id === openId)) openId = null;
+			if (openId && ts.some((t) => String(t.id) === openId)) openId = null;
 			cursor = Math.min(cursor, Math.max(0, docs.length - 1));
 		}
+	}
+
+	// Normalize DSL-nullable addresses ({name: string|null}) to the clean shape.
+	type CleanAddr = { name?: string; email?: string };
+	function nzAddr(a: { name?: string | null; email?: string | null } | null | undefined): CleanAddr | undefined {
+		return a ? { name: a.name ?? undefined, email: a.email ?? undefined } : undefined;
+	}
+	function nzList(list: Array<{ name?: string | null; email?: string | null }> | null | undefined): CleanAddr[] {
+		return (list ?? []).map((a) => ({ name: a.name ?? undefined, email: a.email ?? undefined }));
 	}
 
 	async function startSearch() {
@@ -209,21 +305,29 @@
 			{ keys: 'h', description: 'Close thread', group: 'List', context: 'list', handler: () => (openId = null) },
 			{ keys: 'ArrowLeft', description: 'Close thread', group: 'List', context: 'list', handler: () => (openId = null) },
 			{ keys: 'x', description: 'Select / deselect', group: 'List', context: 'list', handler: toggleSelect },
-			{ keys: 'Shift+j', description: 'Select and move down', group: 'List', context: 'list', handler: () => selectAndMove(1) },
-			{ keys: 'Shift+k', description: 'Select and move up', group: 'List', context: 'list', handler: () => selectAndMove(-1) },
+			// The tokenizer emits bare uppercase for a shifted letter (like G/D/R), so
+			// select-and-move must be registered as 'J'/'K', not 'Shift+j'/'Shift+k'
+			// (which never matched → the bindings were dead).
+			{ keys: 'J', description: 'Select and move down', group: 'List', context: 'list', handler: () => selectAndMove(1) },
+			{ keys: 'K', description: 'Select and move up', group: 'List', context: 'list', handler: () => selectAndMove(-1) },
 			{ keys: 'a', description: 'Archive', group: 'Actions', context: 'list', handler: () => act('archive') },
 			{ keys: 'd', description: 'Trash', group: 'Actions', context: 'list', handler: () => act('trash') },
-			{ keys: 'D', description: 'Delete forever', group: 'Actions', context: 'list', handler: () => act('delete') },
+			{ keys: 'D', description: 'Delete forever', group: 'Actions', context: 'list', handler: askDelete },
 			{ keys: 's', description: 'Toggle star', group: 'Actions', context: 'list', handler: () => act(starTarget()) },
 			{ keys: 'u', description: 'Toggle read/unread', group: 'Actions', context: 'list', handler: () => act(readTarget()) },
 			{ keys: '!', description: 'Mark spam', group: 'Actions', context: 'list', handler: () => act('spam') },
+			{ keys: 'v', description: 'Move to…', group: 'Actions', context: 'list', handler: openMove },
+			{ keys: 'm', description: 'Move to…', group: 'Actions', context: 'list', handler: openMove },
+			{ keys: 'e', description: 'Unsubscribe', group: 'Actions', context: 'list', handler: () => void unsubscribeCursor() },
 			{ keys: 'r', description: 'Reply', group: 'Actions', context: 'list', handler: () => reply('reply') },
 			{ keys: 'R', description: 'Reply all', group: 'Actions', context: 'list', handler: () => reply('reply_all') },
 			{ keys: 'w', description: 'Forward', group: 'Actions', context: 'list', handler: () => reply('forward') },
 			{ keys: '/', description: 'Search', group: 'List', context: 'list', handler: startSearch },
 			{ keys: 'f', description: 'Filter loaded list', group: 'List', context: 'list', handler: startFilter },
 			{ keys: 'Escape', description: 'Close / clear', group: 'List', context: 'list', global: true, handler: () => {
-				if (searching) endSearch();
+				if (confirmingDelete) confirmingDelete = false;
+				else if (moving) moving = false;
+				else if (searching) endSearch();
 				else if (filtering) endFilter();
 				else openId = null;
 			} },
@@ -269,6 +373,23 @@
 				bind:value={filterText}
 				placeholder="Filter…"
 				onkeydown={(e) => e.key === 'Escape' && endFilter()} />
+		</div>
+	{/if}
+
+	{#if confirmingDelete}
+		<div class="bar danger" role="alertdialog" aria-label="Confirm delete">
+			<span>Delete {targets().length} forever? This can't be undone.</span>
+			<button class="yes" onclick={() => { confirmingDelete = false; act('delete'); }}>Enter · Delete</button>
+			<button onclick={() => (confirmingDelete = false)}>Esc</button>
+		</div>
+	{/if}
+	{#if moving}
+		<div class="bar" role="menu" aria-label="Move to folder">
+			<span>Move to:</span>
+			{#each MOVE_FOLDERS as f}
+				<button role="menuitem" onclick={() => moveTo(f)}>{f}</button>
+			{/each}
+			<button onclick={() => (moving = false)}>Esc</button>
 		</div>
 	{/if}
 
@@ -345,6 +466,34 @@
 	.scope {
 		font-size: var(--font-size-00, 0.7rem);
 		color: var(--color-text-disabled);
+	}
+	.bar {
+		display: flex;
+		align-items: center;
+		gap: var(--size-2);
+		padding: var(--size-1) var(--size-3);
+		border-bottom: 1px solid var(--color-outline);
+		background: var(--color-bg-2);
+		font-size: var(--font-size-00, 0.75rem);
+		flex-wrap: wrap;
+	}
+	.bar.danger {
+		background: color-mix(in oklab, var(--color-danger, #dc2626) 12%, var(--color-bg-2));
+	}
+	.bar button {
+		background: var(--color-bg-1);
+		border: 1px solid var(--color-outline);
+		border-radius: var(--radius-2);
+		padding: 2px 8px;
+		color: inherit;
+		cursor: pointer;
+		font: inherit;
+		font-size: var(--font-size-00, 0.72rem);
+	}
+	.bar .yes {
+		background: var(--color-danger, #dc2626);
+		color: white;
+		border-color: transparent;
 	}
 	.list-body {
 		flex: 1;

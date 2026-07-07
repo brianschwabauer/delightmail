@@ -1,9 +1,13 @@
 <script lang="ts">
 	/**
 	 * Renders a message body inside a sandboxed iframe (§12). The body HTML is
-	 * served sanitized from /api/messages/:id/body with a strict CSP, so scripts
-	 * can never run even if sanitization missed something. The iframe is
-	 * same-origin (no allow-scripts), so we can auto-size it to its content.
+	 * served sanitized from /api/messages/:id/body with a strict CSP
+	 * (`default-src 'none'`), and the sandbox omits `allow-scripts`, so scripts can
+	 * never run even if sanitization missed something. We DO grant
+	 * `allow-same-origin` — with `allow-scripts` absent that grants no script
+	 * capability, but it lets the parent read `contentDocument.scrollHeight` to
+	 * auto-size the frame (without it the document is opaque-origin and the read
+	 * throws, pinning every body at the 120px default).
 	 */
 	interface Props {
 		messageId: string;
@@ -37,7 +41,7 @@
 		bind:this={iframe}
 		title="Message body"
 		src="/api/messages/{encodeURIComponent(messageId)}/body"
-		sandbox="allow-popups allow-popups-to-escape-sandbox"
+		sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 		referrerpolicy="no-referrer"
 		style:height="{frameHeight}px"
 		onload={onLoad}></iframe>

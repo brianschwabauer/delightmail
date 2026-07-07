@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { AuthClient } from '@delightstack/auth/client';
 	import type { MailDatabaseClient } from '$lib/clients';
-	import { goto } from '$app/navigation';
+	import { useScope } from '$lib/mail/scope.svelte';
 
 	interface Props {
 		db: MailDatabaseClient;
@@ -9,6 +9,8 @@
 		auth: AuthClient;
 	}
 	const { db, view, auth }: Props = $props();
+
+	const scope = useScope();
 
 	const FOLDERS = [
 		{ id: 'inbox', label: 'Inbox' },
@@ -32,6 +34,15 @@
 	const unreadCount = $derived(
 		inboxUnread.docs.reduce((n, t) => n + (t.unread_count > 0 ? 1 : 0), 0),
 	);
+
+	// Feed the live account list into the scope switcher so Ctrl+1..9 maps to them.
+	$effect(() => {
+		scope.accounts = accounts.docs.map((a) => ({
+			id: String(a.id),
+			label: (a.display_name || a.email) as string,
+			color: a.color as string | undefined,
+		}));
+	});
 </script>
 
 <nav class="rail" aria-label="Folders">
@@ -56,16 +67,20 @@
 	<div class="section">Accounts</div>
 	<ul class="folders">
 		<li>
-			<a href="/mail/inbox" class="item" class:active={view === 'inbox'}>
+			<button class="item" class:active={scope.current === 'all'} onclick={() => scope.set('all')}>
 				<span>All</span>
-			</a>
+			</button>
 		</li>
-		{#each accounts.docs as a (a.id)}
+		{#each scope.accounts as a (a.id)}
 			<li>
-				<div class="item static">
+				<button
+					class="item"
+					class:active={scope.current === a.id}
+					onclick={() => scope.set(a.id)}
+					title="Scope to {a.label}">
 					<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>
-					<span class="acct">{a.display_name || a.email}</span>
-				</div>
+					<span class="acct">{a.label}</span>
+				</button>
 			</li>
 		{/each}
 	</ul>
