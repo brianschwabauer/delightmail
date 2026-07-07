@@ -115,6 +115,12 @@ interface SendPayload {
 	gmail_thread_id?: string;
 }
 
+interface SendResult {
+	ok: boolean;
+	provider_ids?: Record<string, unknown>;
+	error?: string;
+}
+
 export class SyncEngine extends DurableObject<SyncEnv> {
 	readonly #sql: SqlStorage;
 
@@ -133,6 +139,15 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			type TEXT NOT NULL, payload TEXT, run_at INTEGER NOT NULL,
 			attempts INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending',
 			last_error TEXT
+		)`);
+		// Send idempotency (§6, H2): a message-level result marker plus a
+		// per-recipient log so retries never re-deliver an already-sent message.
+		this.#sql.exec(`CREATE TABLE IF NOT EXISTS send_result (
+			message_id TEXT PRIMARY KEY, result TEXT NOT NULL
+		)`);
+		this.#sql.exec(`CREATE TABLE IF NOT EXISTS sent_recipient (
+			message_id TEXT NOT NULL, recipient TEXT NOT NULL,
+			PRIMARY KEY (message_id, recipient)
 		)`);
 	}
 
@@ -470,8 +485,49 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		await this.scheduleJob('renew_watch', {}, 6 * 24 * 60 * 60 * 1000);
 	}
 
+	// -- send idempotency helpers (§6, H2) --
+	#priorSendResult(message_id: string): SendResult | null {
+		const row = this.#sql
+			.exec(`SELECT result FROM send_result WHERE message_id = ?`, message_id)
+			.toArray()[0] as unknown as { result?: string } | undefined;
+		return row?.result ? (JSON.parse(row.result) as SendResult) : null;
+	}
+	#recordSendResult(message_id: string, result: SendResult): void {
+		this.#sql.exec(
+			`INSERT INTO send_result (message_id, result) VALUES (?, ?)
+			 ON CONFLICT(message_id) DO UPDATE SET result = excluded.result`,
+			message_id,
+			JSON.stringify(result),
+		);
+		// Per-recipient progress is redundant once the whole send has completed.
+		this.#sql.exec(`DELETE FROM sent_recipient WHERE message_id = ?`, message_id);
+	}
+	#recipientSent(message_id: string, recipient: string): boolean {
+		return !!this.#sql
+			.exec(
+				`SELECT 1 FROM sent_recipient WHERE message_id = ? AND recipient = ?`,
+				message_id,
+				recipient,
+			)
+			.toArray()[0];
+	}
+	#recordRecipientSent(message_id: string, recipient: string): void {
+		this.#sql.exec(
+			`INSERT OR IGNORE INTO sent_recipient (message_id, recipient) VALUES (?, ?)`,
+			message_id,
+			recipient,
+		);
+	}
+
 	async #sendMessage(payload: SendPayload): Promise<void> {
 		const state = this.#state();
+		// Idempotency guard: if a prior attempt already delivered this message, never
+		// re-send — just re-affirm the result to the mailbox and stop (§6, H2).
+		const prior = this.#priorSendResult(payload.message_id);
+		if (prior?.ok) {
+			await this.#mailbox().markSendResult(payload.message_id, prior);
+			return;
+		}
 		const htmlObj = payload.body_keys?.html ? await this.env.R2.get(payload.body_keys.html) : null;
 		const textObj = payload.body_keys?.text ? await this.env.R2.get(payload.body_keys.text) : null;
 		const html = htmlObj ? await htmlObj.text() : '';
@@ -502,7 +558,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		});
 
 		const fromEmail = payload.from?.email ?? state.account_email ?? '';
-		let result: { ok: boolean; provider_ids?: Record<string, unknown>; error?: string };
+		let result: SendResult;
 		try {
 			if (state.kind === 'gmail') {
 				const gmail = await this.#gmail();
@@ -527,6 +583,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		} catch (err) {
 			result = { ok: false, error: err instanceof Error ? err.message : String(err) };
 		}
+		if (result.ok) this.#recordSendResult(payload.message_id, result);
 		await this.#mailbox().markSendResult(payload.message_id, result);
 		if (!result.ok) throw new Error(result.error); // let the job retry with backoff
 	}
@@ -554,10 +611,13 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			)?.EmailMessage;
 			if (EmailMessage) {
 				// Deliver per-recipient via the envelope; strip Bcc from the header so
-				// blind-copy recipients aren't disclosed to everyone (§6, H1).
+				// blind-copy recipients aren't disclosed to everyone (§6, H1). Skip any
+				// recipient a prior attempt already reached so a retry can't re-send (H2).
 				const safeRaw = stripBccHeader(raw);
 				for (const to of recipients) {
+					if (this.#recipientSent(payload.message_id, to)) continue;
 					await this.env.EMAIL.send(new EmailMessage(fromEmail, to, safeRaw));
+					this.#recordRecipientSent(payload.message_id, to);
 				}
 				return;
 			}
