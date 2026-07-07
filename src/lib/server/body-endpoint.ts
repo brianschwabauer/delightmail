@@ -28,8 +28,7 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 
 	const format = event.url.searchParams.get('format');
 	const key = format === 'text' ? msg.body_keys?.text : msg.body_keys?.html;
-	const contentType =
-		format === 'text' ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8';
+	const contentType = format === 'text' ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8';
 	if (!key) {
 		// No stored HTML — fall back to the plain excerpt so the pane isn't blank.
 		return new Response('', { headers: { 'content-type': contentType } });
@@ -46,6 +45,7 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	return new Response(body, {
 		headers: {
 			'content-type': contentType,
+			'x-content-type-options': 'nosniff',
 			'cache-control': IMMUTABLE,
 			// The reading pane iframe pins a strict CSP (§12).
 			'content-security-policy':
@@ -72,7 +72,8 @@ export async function handleMessageRaw(event: RequestEvent, id: string): Promise
 	return new Response(obj.body, {
 		headers: {
 			'content-type': 'message/rfc822',
-			'content-disposition': `attachment; filename="${id}.eml"`,
+			'content-disposition': contentDisposition('attachment', `${id}.eml`),
+			'x-content-type-options': 'nosniff',
 			'cache-control': IMMUTABLE,
 		},
 	});
@@ -97,10 +98,20 @@ export async function handleAttachment(event: RequestEvent, id: string): Promise
 	}
 	const obj = await r2.get(att.r2_key);
 	if (!obj) return DelightError.notFound('Attachment not found').toResponse();
+	// Attachment bytes and their mime_type are attacker-controlled (they come
+	// straight from inbound MIME) and are served from the app origin. Only render
+	// safe raster images inline (cid: images resolve here); force everything else —
+	// notably text/html and image/svg+xml, which execute script when rendered as a
+	// document — to download so it can never run in our origin (§12 stored XSS).
+	const mime = (att.mime_type ?? 'application/octet-stream').replace(/[\r\n]/g, '');
+	const baseType = mime.split(';')[0].trim().toLowerCase();
+	const disposition = INLINE_SAFE_TYPES.has(baseType) ? 'inline' : 'attachment';
 	return new Response(obj.body, {
 		headers: {
-			'content-type': att.mime_type ?? 'application/octet-stream',
-			'content-disposition': `inline; filename="${att.filename ?? 'attachment'}"`,
+			'content-type': mime,
+			'content-disposition': contentDisposition(disposition, att.filename),
+			'x-content-type-options': 'nosniff',
+			'content-security-policy': "default-src 'none'; sandbox",
 			'cache-control': IMMUTABLE,
 		},
 	});
@@ -109,6 +120,31 @@ export async function handleAttachment(event: RequestEvent, id: string): Promise
 /** Every R2 key is `{org_id}/…` — reject anything outside the caller's org. */
 function ownsKey(key: string, org_id: string): boolean {
 	return key.startsWith(`${org_id}/`);
+}
+
+/**
+ * Raster image types safe to render inline in the reading-pane iframe. Anything
+ * not listed (text/html, image/svg+xml, PDFs, …) is served as a download so a
+ * top-level open of the attachment URL can never execute in the app origin.
+ */
+const INLINE_SAFE_TYPES = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/gif',
+	'image/webp',
+	'image/bmp',
+	'image/avif',
+	'image/x-icon',
+	'image/vnd.microsoft.icon',
+]);
+
+/** Build a header-injection-safe Content-Disposition with a UTF-8 filename. */
+function contentDisposition(kind: 'inline' | 'attachment', filename?: string): string {
+	const name = filename && filename.trim() ? filename : 'attachment';
+	// ASCII fallback strips anything outside printable ASCII (incl. CR/LF) plus the
+	// quote/backslash that could break out of the quoted string.
+	const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') || 'attachment';
+	return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB (§10.3)
