@@ -52,6 +52,26 @@ function fakeDb() {
 						json: JSON.stringify({ participants: t.participants ?? [] }),
 					}));
 			}
+			if (
+				/is_read, is_starred, is_outbound, folder FROM message\s+WHERE thread_id = \?/.test(sql)
+			) {
+				return Object.values(messages)
+					.filter((r) => r.thread_id === bindings[0])
+					.map((r) => ({
+						is_read: r.is_read,
+						is_starred: r.is_starred,
+						is_outbound: r.is_outbound,
+						folder: r.folder,
+					}));
+			}
+			if (
+				/SELECT folder FROM message\s+WHERE thread_id = \? ORDER BY date DESC LIMIT 1/.test(sql)
+			) {
+				const ms = Object.values(messages)
+					.filter((r) => r.thread_id === bindings[0])
+					.sort((a, b) => (b.date as number) - (a.date as number));
+				return ms.length ? [{ folder: ms[0].folder }] : [];
+			}
 			return [];
 		},
 		get(entity, gid) {
@@ -116,6 +136,28 @@ describe('ingestBatch', () => {
 		expect(Object.keys(messages)).toHaveLength(2);
 	});
 
+	it('reconciles read/starred/folder + thread on re-ingest of a changed copy (H7)', () => {
+		const { db, threads, messages } = fakeDb();
+		ingestBatch(db, [
+			msg({ rfc822_message_id: '<h7@x>', account_id: 'acc-1', is_read: false, folder: 'inbox' }),
+		]);
+		const tid = Object.values(messages)[0].thread_id as string;
+		expect((threads[tid] as { unread_count?: number }).unread_count).toBe(1);
+
+		// Re-list after a stale cursor: the same message now read + archived on Gmail.
+		const r = ingestBatch(db, [
+			msg({ rfc822_message_id: '<h7@x>', account_id: 'acc-1', is_read: true, folder: 'archive' }),
+		]);
+		expect(r.skipped).toBe(1);
+
+		const m = Object.values(messages)[0] as { is_read?: boolean; folder?: string };
+		expect(m.is_read).toBe(true);
+		expect(m.folder).toBe('archive');
+		const t = threads[tid] as { unread_count?: number; folder?: string };
+		expect(t.unread_count).toBe(0);
+		expect(t.folder).toBe('archive');
+	});
+
 	it('backfills provider ids on re-delivery of an already-ingested message', () => {
 		const { db, messages } = fakeDb();
 		ingestBatch(db, [msg({ rfc822_message_id: '<pid@x>', account_id: 'acc-1' })]);
@@ -144,8 +186,20 @@ describe('ingestBatch', () => {
 
 	it('threads by Gmail threadId across messages', () => {
 		const { db, threads } = fakeDb();
-		ingestBatch(db, [msg({ rfc822_message_id: '<g1@x>', gmail_thread_id: 'T1', provider_ids: { gmail_thread_id: 'T1' } })]);
-		ingestBatch(db, [msg({ rfc822_message_id: '<g2@x>', gmail_thread_id: 'T1', provider_ids: { gmail_thread_id: 'T1' } })]);
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<g1@x>',
+				gmail_thread_id: 'T1',
+				provider_ids: { gmail_thread_id: 'T1' },
+			}),
+		]);
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<g2@x>',
+				gmail_thread_id: 'T1',
+				provider_ids: { gmail_thread_id: 'T1' },
+			}),
+		]);
 		expect(Object.keys(threads)).toHaveLength(1);
 	});
 
@@ -165,7 +219,9 @@ describe('ingestBatch', () => {
 
 	it('records the sender as a contact (received, not yet known) on inbound mail', () => {
 		const { db, contacts } = fakeDb();
-		ingestBatch(db, [msg({ rfc822_message_id: '<c1@x>', from: { name: 'Ann', email: 'ann@x.com' } })]);
+		ingestBatch(db, [
+			msg({ rfc822_message_id: '<c1@x>', from: { name: 'Ann', email: 'ann@x.com' } }),
+		]);
 		const c = Object.values(contacts).find((r) => r.email === 'ann@x.com');
 		expect(c?.receive_count).toBe(1);
 		expect(c?.is_known_correspondent).toBe(false);
@@ -174,7 +230,12 @@ describe('ingestBatch', () => {
 	it('marks recipients of outbound mail as known correspondents', () => {
 		const { db, contacts } = fakeDb();
 		ingestBatch(db, [
-			msg({ rfc822_message_id: '<c2@x>', is_outbound: true, folder: 'sent', to: [{ email: 'boss@x.com' }] }),
+			msg({
+				rfc822_message_id: '<c2@x>',
+				is_outbound: true,
+				folder: 'sent',
+				to: [{ email: 'boss@x.com' }],
+			}),
 		]);
 		const c = Object.values(contacts).find((r) => r.email === 'boss@x.com');
 		expect(c?.send_count).toBe(1);
@@ -188,7 +249,12 @@ describe('ingestBatch', () => {
 				rfc822_message_id: '<a1@x>',
 				attachment_count: 1,
 				attachments: [
-					{ filename: 'a.pdf', mime_type: 'application/pdf', size_bytes: 10, r2_key: 'org/msg/h/att/0' },
+					{
+						filename: 'a.pdf',
+						mime_type: 'application/pdf',
+						size_bytes: 10,
+						r2_key: 'org/msg/h/att/0',
+					},
 				],
 			}),
 		]);
@@ -211,13 +277,25 @@ describe('ingestBatch', () => {
 		expect(label.name).toBe('Work');
 		expect((label.provider_map as Array<{ provider_id: string }>)[0].provider_id).toBe('Label_7');
 		const thread = Object.values(threads)[0];
-		expect((thread.label_ids as string[])).toContain(label.id);
+		expect(thread.label_ids as string[]).toContain(label.id);
 	});
 
 	it('reuses an existing label and adds a second account to its provider_map', () => {
 		const { db, labels } = fakeDb();
-		ingestBatch(db, [msg({ rfc822_message_id: '<l2@x>', account_id: 'acc-1', labels: [{ name: 'Work', provider_id: 'A1' }] })]);
-		ingestBatch(db, [msg({ rfc822_message_id: '<l3@x>', account_id: 'acc-2', labels: [{ name: 'Work', provider_id: 'B2' }] })]);
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<l2@x>',
+				account_id: 'acc-1',
+				labels: [{ name: 'Work', provider_id: 'A1' }],
+			}),
+		]);
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<l3@x>',
+				account_id: 'acc-2',
+				labels: [{ name: 'Work', provider_id: 'B2' }],
+			}),
+		]);
 		expect(Object.keys(labels)).toHaveLength(1);
 		const pm = Object.values(labels)[0].provider_map as Array<{ account_id: string }>;
 		expect(pm.map((p) => p.account_id).sort()).toEqual(['acc-1', 'acc-2']);
@@ -225,7 +303,9 @@ describe('ingestBatch', () => {
 
 	it('merges participants across messages in a thread', () => {
 		const { db, threads } = fakeDb();
-		ingestBatch(db, [msg({ rfc822_message_id: '<m1@x>', subject: 'Chat', from: { email: 'a@x.com' } })]);
+		ingestBatch(db, [
+			msg({ rfc822_message_id: '<m1@x>', subject: 'Chat', from: { email: 'a@x.com' } }),
+		]);
 		ingestBatch(db, [
 			msg({
 				rfc822_message_id: '<m2@x>',

@@ -91,14 +91,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 		) as Array<{ id: string; thread_id: string }>;
 		if (existing.length) {
 			result.skipped++;
-			// Cheap reconcile: backfill provider ids the first delivery lacked.
-			if (msg.provider_ids && Object.keys(msg.provider_ids).length) {
-				try {
-					db.update('message', existing[0].id, { provider_ids: msg.provider_ids });
-				} catch {
-					/* best-effort */
-				}
-			}
+			reconcileExistingMessage(db, existing[0], msg);
 			continue;
 		}
 
@@ -251,6 +244,82 @@ function makeLookups(db: DbLike): ThreadLookups {
 	};
 }
 
+/**
+ * Reconcile an already-ingested message against a re-fetched copy (resync,
+ * 404-recovery, backfill overlap). The dedup skip used to only backfill provider
+ * ids and discard the authoritative flag/folder state, so read/archived changes
+ * made while the history cursor was stale could never be repaired (§5.1, H7).
+ * Note: a re-fetch that races an in-flight local action can momentarily revert it
+ * — the version-guard for that race is a separate follow-up.
+ */
+function reconcileExistingMessage(
+	db: DbLike,
+	existing: { id: string; thread_id: string },
+	msg: NormalizedMessage,
+): void {
+	if (msg.provider_ids && Object.keys(msg.provider_ids).length) {
+		try {
+			db.update('message', existing.id, { provider_ids: msg.provider_ids });
+		} catch {
+			/* best-effort */
+		}
+	}
+
+	let cur: { is_read?: unknown; is_starred?: unknown; folder?: string };
+	try {
+		cur = db.get('message', existing.id) as never;
+	} catch {
+		return;
+	}
+	const nextRead = msg.is_read ?? !!msg.is_outbound;
+	const nextStarred = msg.is_starred ?? false;
+	const nextFolder = (msg.folder ?? (msg.is_outbound ? 'sent' : 'inbox')) as string;
+
+	const patch: Record<string, unknown> = {};
+	if (!!cur.is_read !== nextRead) patch.is_read = nextRead;
+	if (!!cur.is_starred !== nextStarred) patch.is_starred = nextStarred;
+	if (cur.folder !== nextFolder) patch.folder = nextFolder;
+	if (!Object.keys(patch).length) return;
+
+	try {
+		db.update('message', existing.id, patch);
+	} catch {
+		return;
+	}
+	recomputeThreadFromMessages(db, existing.thread_id);
+}
+
+/** Recompute a thread's unread_count / folder / starred from its message rows,
+ *  after a flag reconcile (§5.1, H7). Thread lives in inbox if any message does,
+ *  otherwise it follows its newest message. */
+function recomputeThreadFromMessages(db: DbLike, thread_id: string): void {
+	const rows = db.exec(
+		`SELECT is_read, is_starred, is_outbound, folder FROM message WHERE thread_id = ?`,
+		thread_id,
+	) as Array<{ is_read?: unknown; is_starred?: unknown; is_outbound?: unknown; folder?: string }>;
+	if (!rows.length) return;
+
+	let unread = 0;
+	let anyInbox = false;
+	let anyStarred = false;
+	for (const r of rows) {
+		if (!r.is_outbound && !r.is_read) unread++;
+		if (r.folder === 'inbox') anyInbox = true;
+		if (r.is_starred) anyStarred = true;
+	}
+	const newest = db.exec(
+		`SELECT folder FROM message WHERE thread_id = ? ORDER BY date DESC LIMIT 1`,
+		thread_id,
+	) as Array<{ folder?: string }>;
+	const folder = anyInbox ? 'inbox' : (newest[0]?.folder ?? 'archive');
+
+	try {
+		db.update('thread', thread_id, { unread_count: unread, folder, starred: anyStarred });
+	} catch {
+		/* best-effort */
+	}
+}
+
 function updateThreadCounters(
 	db: DbLike,
 	thread_id: string,
@@ -288,8 +357,7 @@ function updateThreadCounters(
 
 	db.update('thread', thread_id, {
 		message_count: (thread.message_count ?? 0) + 1,
-		unread_count:
-			(thread.unread_count ?? 0) + (inbound && !(msg.is_read ?? false) ? 1 : 0),
+		unread_count: (thread.unread_count ?? 0) + (inbound && !(msg.is_read ?? false) ? 1 : 0),
 		participants: mergedParticipants,
 		participant_text: participantText(mergedParticipants),
 		account_ids: [...accountIds],
@@ -332,9 +400,10 @@ function ensureLabel(
 	}>;
 	if (rows.length) {
 		const id = rows[0].id;
-		const existing = (safeJson(rows[0].json).provider_map as
-			| Array<{ account_id: string; provider_id: string }>
-			| undefined) ?? [];
+		const existing =
+			(safeJson(rows[0].json).provider_map as
+				| Array<{ account_id: string; provider_id: string }>
+				| undefined) ?? [];
 		if (!existing.some((p) => p.account_id === account_id && p.provider_id === provider_id)) {
 			db.update('label', id, {
 				provider_map: [...existing, { account_id, provider_id }],
