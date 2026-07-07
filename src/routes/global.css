@@ -1,11 +1,40 @@
-/* Design tokens + base styles from the shared package. Brand seed overrides
-   for DelightMail — a calm, text-forward blue accent (§10). */
+/* Design tokens + base styles from the shared package (this pulls in tokens.css
+   and the styled-native scrollbar). Brand seed + app-level semantic tokens for
+   DelightMail — a calm, text-forward blue accent (§10). */
 @import '@delightstack/styles/global.css';
 
 :root {
+	/* Brand seed — a calm, slightly desaturated blue. */
 	--color-primary: oklch(55% 0.16 262);
 	--dm-account-a: oklch(62% 0.15 55);
 	--dm-account-b: oklch(60% 0.12 200);
+
+	/* --- App semantic tokens (all derived from real delightstack tokens) --- */
+
+	/* The keyboard cursor row + a stronger variant for the open thread. */
+	--dm-cursor-bg: color-mix(in oklab, var(--color-primary) 9%, var(--color-bg-1));
+	--dm-cursor-bar: var(--color-primary);
+
+	/* Multi-selection fill (Shift+arrow / x). */
+	--dm-selection-bg: color-mix(in oklab, var(--color-primary) 15%, transparent);
+
+	/* Soft accent pill behind the active folder / segmented option. */
+	--dm-accent-soft: color-mix(in oklab, var(--color-primary) 14%, transparent);
+	--dm-accent-soft-hover: color-mix(in oklab, var(--color-primary) 20%, transparent);
+
+	/* The signature "which pane am I in" treatment. */
+	--dm-focus-ring: color-mix(in oklab, var(--color-primary) 42%, transparent);
+	--dm-focus-tint: color-mix(in oklab, var(--color-primary) 4%, var(--color-bg-1));
+
+	/* A quiet hairline that reads softer than the raw border token in dense UI. */
+	--dm-hairline: color-mix(in oklab, var(--color-border) 70%, transparent);
+
+	/* Thread-row height, switched by density (JS virtualization mirrors these). */
+	--dm-row-h: 64px;
+}
+
+:root[data-density='compact'] {
+	--dm-row-h: 46px;
 }
 
 html,
@@ -18,9 +47,23 @@ body {
 	background: var(--color-bg-1);
 	color: var(--color-text);
 	font-family: var(--font-sans, system-ui, sans-serif);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
 	overscroll-behavior: none;
 }
 
 * {
 	box-sizing: border-box;
+}
+
+::selection {
+	background: color-mix(in oklab, var(--color-primary) 28%, transparent);
+}
+
+/* Calm, consistent keyboard focus ring for anything not styling its own. */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+	outline: 2px solid var(--dm-focus-ring);
+	outline-offset: 1px;
+	border-radius: var(--radius-sm);
 }
