@@ -11,7 +11,7 @@
 	const EditorView = EditorComponents.Editor as unknown as import('svelte').Component<{
 		editor: EditorClass;
 	}>;
-	import { Button, toast } from '@delightstack/components';
+	import { Button, Modal, toast } from '@delightstack/components';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
 	import { mergeSignatureDoc, docToText } from '$lib/mail/compose';
@@ -37,6 +37,12 @@
 		onClose: () => void;
 	}
 	const { db, init, onClose }: Props = $props();
+
+	// The Modal is open for the lifetime of this component (it only mounts while a
+	// draft is being composed). Closing it — Escape, backdrop, or the ✕ — resolves
+	// through `onClose`, which unmounts us. Escape is owned by the Modal alone, so
+	// it can no longer leak past compose to close the mail you were reading.
+	let open = $state(true);
 
 	const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 
@@ -321,148 +327,132 @@
 		else if (mod && e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); showCc = true; }
 		else if (mod && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); showBcc = true; }
 		else if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); cycleIdentity(); }
-		else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+		// Escape is deliberately NOT handled here — the Modal owns it, so pressing
+		// Escape closes only the compose dialog, never the mail behind it.
 	}
 </script>
 
-<div
-	class="overlay"
-	role="dialog"
-	aria-label="Compose message"
-	bind:this={overlayEl}
-	onkeydown={onKeydown}
-	ondragover={(e) => e.preventDefault()}
-	ondrop={onDrop}>
-	<header>
-		<span class="title">New message</span>
-		<button class="close" onclick={onClose} aria-label="Close">✕</button>
-	</header>
+<!-- `.compose-host` scopes the no-animation CSS override to this modal only, so
+     the dialog and its backdrop appear instantly (snappy) instead of animating. -->
+<div class="compose-host">
+	<Modal bind:open onclose={onClose} class="compose-modal" title="New message" width="640px">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="compose"
+			bind:this={overlayEl}
+			onkeydown={onKeydown}
+			ondragover={(e) => e.preventDefault()}
+			ondrop={onDrop}>
+			<div class="fields">
+				<div class="row from">
+					<span class="rowlabel">From</span>
+					<Button size="0" outline onclick={cycleIdentity} tooltip="Ctrl+J to cycle">
+						{fromIdentity?.email ?? 'No identity'}
+					</Button>
+				</div>
 
-	<div class="fields">
-		<div class="row from">
-			<label for="from">From</label>
-			<button id="from" class="identity" onclick={cycleIdentity} title="Ctrl+J to cycle">
-				{fromIdentity?.email ?? 'No identity'}
-			</button>
-		</div>
-
-		{#each [{ f: 'to', label: 'To', chips: to, input: toInput, show: true }, { f: 'cc', label: 'Cc', chips: cc, input: ccInput, show: showCc }, { f: 'bcc', label: 'Bcc', chips: bcc, input: bccInput, show: showBcc }] as row (row.f)}
-			{#if row.show}
-				<div class="row">
-					<label for={row.f}>{row.label}</label>
-					<div class="chips">
-						{#each row.chips as a, i (i)}
-							<span class="chip">{a.name || a.email}<button onclick={() => removeChip(row.f as 'to' | 'cc' | 'bcc', i)}>✕</button></span>
-						{/each}
-						<div class="ac-wrap">
-							<input
-								id={row.f}
-								value={fieldValue(row.f as 'to' | 'cc' | 'bcc')}
-								placeholder={row.f === 'to' ? 'recipient@example.com' : ''}
-								oninput={(e) => setField(row.f as 'to' | 'cc' | 'bcc', (e.target as HTMLInputElement).value)}
-								onfocus={() => (acField = row.f as 'to' | 'cc' | 'bcc')}
-								onblur={() => setTimeout(() => { if (acField === row.f) acField = null; }, 150)}
-								onkeydown={(e) => {
-									if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
-										e.preventDefault();
-										commitChip(row.f as 'to' | 'cc' | 'bcc');
-									}
-								}} />
-							{#if acField === row.f && suggestions.length}
-								<ul class="ac-menu">
-									{#each suggestions as c (c.email)}
-										<li>
-											<button onmousedown={(e) => { e.preventDefault(); pickSuggestion(row.f as 'to' | 'cc' | 'bcc', c); }}>
-												{#if c.name}<strong>{c.name}</strong>{/if}<span class="ac-email">{c.email}</span>
-											</button>
-										</li>
-									{/each}
-								</ul>
+				{#each [{ f: 'to', label: 'To', chips: to, input: toInput, show: true }, { f: 'cc', label: 'Cc', chips: cc, input: ccInput, show: showCc }, { f: 'bcc', label: 'Bcc', chips: bcc, input: bccInput, show: showBcc }] as row (row.f)}
+					{#if row.show}
+						<div class="row">
+							<label for={row.f}>{row.label}</label>
+							<div class="chips">
+								{#each row.chips as a, i (i)}
+									<span class="chip">{a.name || a.email}<button onclick={() => removeChip(row.f as 'to' | 'cc' | 'bcc', i)}>✕</button></span>
+								{/each}
+								<div class="ac-wrap">
+									<input
+										id={row.f}
+										value={fieldValue(row.f as 'to' | 'cc' | 'bcc')}
+										placeholder={row.f === 'to' ? 'recipient@example.com' : ''}
+										oninput={(e) => setField(row.f as 'to' | 'cc' | 'bcc', (e.target as HTMLInputElement).value)}
+										onfocus={() => (acField = row.f as 'to' | 'cc' | 'bcc')}
+										onblur={() => setTimeout(() => { if (acField === row.f) acField = null; }, 150)}
+										onkeydown={(e) => {
+											if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+												e.preventDefault();
+												commitChip(row.f as 'to' | 'cc' | 'bcc');
+											}
+										}} />
+									{#if acField === row.f && suggestions.length}
+										<ul class="ac-menu">
+											{#each suggestions as c (c.email)}
+												<li>
+													<button onmousedown={(e) => { e.preventDefault(); pickSuggestion(row.f as 'to' | 'cc' | 'bcc', c); }}>
+														{#if c.name}<strong>{c.name}</strong>{/if}<span class="ac-email">{c.email}</span>
+													</button>
+												</li>
+											{/each}
+										</ul>
+									{/if}
+								</div>
+							</div>
+							{#if row.f === 'to'}
+								<span class="toggles">
+									{#if !showCc}<Button size="0" transparent onclick={() => (showCc = true)}>Cc</Button>{/if}
+									{#if !showBcc}<Button size="0" transparent onclick={() => (showBcc = true)}>Bcc</Button>{/if}
+								</span>
 							{/if}
 						</div>
-					</div>
-					{#if row.f === 'to'}
-						<span class="toggles">
-							{#if !showCc}<button class="cc-toggle" onclick={() => (showCc = true)}>Cc</button>{/if}
-							{#if !showBcc}<button class="cc-toggle" onclick={() => (showBcc = true)}>Bcc</button>{/if}
-						</span>
 					{/if}
+				{/each}
+
+				<div class="row">
+					<label for="subject">Subject</label>
+					<input id="subject" class="subject" bind:value={subject} placeholder="Subject" />
+				</div>
+			</div>
+
+			<div class="body">
+				<EditorView {editor} />
+				{#if signaturePreview}
+					<div class="signature" aria-label="Signature">
+						<div class="sig-marker">--</div>
+						<pre>{signaturePreview}</pre>
+					</div>
+				{/if}
+			</div>
+
+			{#if attachments.length}
+				<div class="attachments">
+					{#each attachments as a (a.id)}
+						<span class="att-chip" class:uploading={a.uploading}>
+							📎 {a.filename} <span class="att-size">{fmtSize(a.size)}</span>
+							{#if a.uploading}<span class="att-status">uploading…</span>{/if}
+							<button onclick={() => removeAttachment(a.id)} aria-label="Remove attachment">✕</button>
+						</span>
+					{/each}
 				</div>
 			{/if}
-		{/each}
-
-		<div class="row">
-			<label for="subject">Subject</label>
-			<input id="subject" class="subject" bind:value={subject} placeholder="Subject" />
 		</div>
-	</div>
 
-	<div class="body">
-		<EditorView {editor} />
-		{#if signaturePreview}
-			<div class="signature" aria-label="Signature">
-				<div class="sig-marker">--</div>
-				<pre>{signaturePreview}</pre>
-			</div>
-		{/if}
-	</div>
-
-	{#if attachments.length}
-		<div class="attachments">
-			{#each attachments as a (a.id)}
-				<span class="att-chip" class:uploading={a.uploading}>
-					📎 {a.filename} <span class="att-size">{fmtSize(a.size)}</span>
-					{#if a.uploading}<span class="att-status">uploading…</span>{/if}
-					<button onclick={() => removeAttachment(a.id)} aria-label="Remove attachment">✕</button>
+		{#snippet footer()}
+			<div class="footer-row">
+				<Button accent disabled={sending} loading={sending} onclick={send}>{sending ? 'Sending…' : 'Send'}</Button>
+				<Button transparent onclick={() => fileInput?.click()} tooltip="Ctrl+Shift+A">Attach</Button>
+				<input bind:this={fileInput} type="file" multiple hidden onchange={onFilePicked} />
+				<span class="hint">
+					<span class="hk"><kbd>Ctrl</kbd><kbd>↵</kbd> Send</span>
+					<span class="hk"><kbd>Ctrl</kbd><kbd>J</kbd> Identity</span>
+					<span class="hk"><kbd>Esc</kbd> Close</span>
 				</span>
-			{/each}
-		</div>
-	{/if}
-
-	<footer>
-		<Button accent disabled={sending} loading={sending} onclick={send}>{sending ? 'Sending…' : 'Send'}</Button>
-		<button class="attach-btn" onclick={() => fileInput?.click()} title="Ctrl+Shift+A">Attach</button>
-		<input bind:this={fileInput} type="file" multiple hidden onchange={onFilePicked} />
-		<span class="hint">
-			<span class="hk"><kbd>Ctrl</kbd><kbd>↵</kbd> Send</span>
-			<span class="hk"><kbd>Ctrl</kbd><kbd>J</kbd> Identity</span>
-			<span class="hk"><kbd>Esc</kbd> Close</span>
-		</span>
-	</footer>
+			</div>
+		{/snippet}
+	</Modal>
 </div>
 
 <style>
-	.overlay {
-		position: fixed;
-		right: var(--space-5);
-		bottom: 0;
-		width: min(640px, 96vw);
-		max-height: 84vh;
+	/* Instant, snappy open/close: kill the Modal's built-in Svelte transitions
+	   (they apply via inline `animation`, which a stylesheet `!important` beats)
+	   on both the dialog panel and its backdrop. */
+	:global(.compose-host .modal),
+	:global(.compose-host .modal-bg) {
+		animation: none !important;
+	}
+	.compose {
 		display: flex;
 		flex-direction: column;
-		background: var(--color-bg-1);
-		border: 1px solid var(--color-border);
-		border-bottom: none;
-		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-		box-shadow: var(--shadow-2xl, 0 20px 60px rgba(0, 0, 0, 0.4));
-		z-index: var(--layer-modal, 110);
 	}
-	header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-3);
-		background: var(--color-bg-2);
-		border-bottom: 1px solid var(--color-border);
-		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-	}
-	.title { font-weight: var(--font-weight-semibold, 600); font-size: var(--font-size-1); letter-spacing: -0.01em; }
-	.close, .cc-toggle {
-		background: none; border: none; color: var(--color-text-disabled); cursor: pointer; font: inherit;
-		border-radius: var(--radius-md); padding: 2px 6px;
-	}
-	.close:hover, .cc-toggle:hover { background: var(--color-bg-3); color: var(--color-text); }
-	.fields { padding: 2px var(--space-3); }
+	.fields { padding: 2px 0 var(--space-2); }
 	.row {
 		display: flex;
 		align-items: center;
@@ -470,7 +460,7 @@
 		border-bottom: 1px solid var(--dm-hairline);
 		padding: var(--space-2) 0;
 	}
-	.row label { width: 48px; color: var(--color-text-disabled); font-size: var(--font-size-00); flex-shrink: 0; }
+	.row label, .row .rowlabel { width: 48px; color: var(--color-text-disabled); font-size: var(--font-size-00); flex-shrink: 0; }
 	.chips { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; align-items: center; }
 	.chip {
 		display: inline-flex; align-items: center; gap: 4px;
@@ -496,18 +486,13 @@
 	.ac-menu button:hover { background: var(--color-bg-3); }
 	.ac-email { color: var(--color-text-disabled); }
 	.toggles { display: flex; gap: 4px; }
-	.identity {
-		background: var(--color-bg-2); border: 1px solid var(--color-border); border-radius: var(--radius-md);
-		padding: 3px 10px; color: inherit; cursor: pointer; font: inherit; font-size: var(--font-size-00);
-	}
-	.identity:hover { background: var(--color-bg-3); }
-	.body { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-3); min-height: 200px; }
+	.body { flex: 1; padding: var(--space-4) 0 var(--space-2); min-height: 220px; }
 	.signature { margin-top: var(--space-4); color: var(--color-text-disabled); }
 	.sig-marker { font-family: var(--font-mono); }
 	.signature pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: var(--font-size-00); }
 	.attachments {
-		display: flex; flex-wrap: wrap; gap: 6px; padding: var(--space-2) var(--space-3);
-		border-top: 1px solid var(--color-border);
+		display: flex; flex-wrap: wrap; gap: 6px; padding: var(--space-2) 0 0;
+		border-top: 1px solid var(--color-border); margin-top: var(--space-2);
 	}
 	.att-chip {
 		display: inline-flex; align-items: center; gap: 6px; background: var(--color-bg-2);
@@ -516,15 +501,9 @@
 	.att-chip.uploading { opacity: 0.6; }
 	.att-size, .att-status { color: var(--color-text-disabled); }
 	.att-chip button { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; }
-	footer {
-		display: flex; align-items: center; gap: var(--space-3);
-		padding: var(--space-3); border-top: 1px solid var(--color-border);
+	.footer-row {
+		display: flex; align-items: center; gap: var(--space-3); width: 100%;
 	}
-	.attach-btn {
-		background: var(--color-bg-2); border: 1px solid var(--color-border); border-radius: var(--radius-md);
-		padding: 6px 12px; color: inherit; cursor: pointer; font: inherit; font-size: var(--font-size-0);
-	}
-	.attach-btn:hover { background: var(--color-bg-3); }
 	.hint { margin-left: auto; display: flex; gap: var(--space-3); font-size: var(--font-size-00); color: var(--color-text-disabled); }
 	.hk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 	.hint kbd {
