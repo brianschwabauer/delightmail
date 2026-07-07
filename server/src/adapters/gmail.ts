@@ -128,6 +128,10 @@ export class GmailClient {
 		return this.call<GmailMessage>(`/messages/${id}?format=minimal`);
 	}
 
+	listLabels(): Promise<{ labels?: Array<{ id: string; name: string; type: string }> }> {
+		return this.call('/labels');
+	}
+
 	listHistory(startHistoryId: string, pageToken?: string): Promise<GmailHistoryResponse> {
 		const params = new URLSearchParams({ startHistoryId, maxResults: '500' });
 		if (pageToken) params.set('pageToken', pageToken);
@@ -190,16 +194,29 @@ export function gmailLabelsToState(labelIds: string[] = []): {
 	};
 }
 
+/** Gmail's built-in system labels — everything else is a user label (§5.1). */
+const SYSTEM_LABELS = new Set([
+	'INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'UNREAD', 'STARRED', 'IMPORTANT',
+	'CHAT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS',
+	'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
+]);
+
 /** Decode Gmail's base64url `raw`, parse, sanitize, write bodies, normalize. */
 export async function gmailToNormalized(
 	msg: GmailMessage,
-	ctx: { account_id: string; org_id: string; r2: R2Bucket },
+	ctx: { account_id: string; org_id: string; r2: R2Bucket; labelMap?: Record<string, string> },
 ): Promise<NormalizedMessage> {
 	const rawBytes = base64UrlToBytes(msg.raw ?? '');
 	const parsed = await parseEmail(rawBytes, {
 		receivedAt: msg.internalDate ? Number(msg.internalDate) : undefined,
 	});
 	const state = gmailLabelsToState(msg.labelIds);
+
+	// User (non-system) Gmail labels → DelightMail labels, carrying the Gmail label
+	// id so the provider_map can round-trip (§5.1). Names come from the cached map.
+	const labels = (msg.labelIds ?? [])
+		.filter((id) => !SYSTEM_LABELS.has(id) && ctx.labelMap?.[id])
+		.map((id) => ({ name: ctx.labelMap![id], provider_id: id }));
 
 	const html = parsed.html ? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' }) : '';
 	const prefix = await messagePrefix(ctx.org_id, parsed.rfc822_message_id);
@@ -245,6 +262,7 @@ export async function gmailToNormalized(
 		folder: state.folder,
 		headers_subset: parsed.headers_subset as Record<string, unknown>,
 		attachments,
+		labels,
 		attachment_count: parsed.attachments.length,
 		size_bytes: parsed.size_bytes,
 	};

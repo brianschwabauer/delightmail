@@ -70,6 +70,8 @@ interface SyncState {
 	backfill_cursor?: string;
 	backfill_ingested?: number;
 	backfill_total?: number;
+	label_map?: Record<string, string>;
+	label_map_at?: number;
 	access_token?: string;
 	access_token_expiry?: number;
 }
@@ -740,8 +742,29 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		}
 	}
 
+	/** Gmail label-id → name map for USER labels, cached in sync_state (~1h TTL). */
+	async #labelMap(gmail: GmailClient): Promise<Record<string, string>> {
+		const state = this.#state();
+		if (state.label_map && Date.now() - (state.label_map_at ?? 0) < 60 * 60_000) {
+			return state.label_map;
+		}
+		try {
+			const res = await gmail.listLabels();
+			const map: Record<string, string> = {};
+			for (const l of res.labels ?? []) {
+				if (l.type === 'user') map[l.id] = l.name;
+			}
+			this.#saveState({ label_map: map, label_map_at: Date.now() });
+			return map;
+		} catch (err) {
+			console.error('[SyncEngine] label list failed:', err);
+			return state.label_map ?? {};
+		}
+	}
+
 	async #fetchAndNormalize(gmail: GmailClient, ids: string[]): Promise<NormalizedMessage[]> {
 		const state = this.#state();
+		const labelMap = await this.#labelMap(gmail);
 		const out: NormalizedMessage[] = [];
 		for (const id of ids) {
 			try {
@@ -751,6 +774,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 						account_id: state.account_id!,
 						org_id: state.org_id!,
 						r2: this.env.R2,
+						labelMap,
 					}),
 				);
 			} catch (err) {

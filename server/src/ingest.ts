@@ -45,6 +45,8 @@ export interface NormalizedMessage {
 		content_id?: string;
 		r2_key: string;
 	}>;
+	/** User (non-system) provider labels to map onto DelightMail labels (§5.1). */
+	labels?: Array<{ name: string; provider_id: string }>;
 	attachment_count?: number;
 	size_bytes?: number;
 }
@@ -117,6 +119,8 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 		);
 
 		const folder = (msg.folder ?? (msg.is_outbound ? 'sent' : 'inbox')) as string;
+		// Resolve user provider-labels to DelightMail label rows (with provider_map).
+		const label_ids = resolveLabelIds(db, msg);
 
 		// Thread create + message insert + counter update must land together (§5.4).
 		// DatabaseServer.transaction is a *declarative batch* API and can't express
@@ -139,6 +143,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 					has_attachments: (msg.attachment_count ?? 0) > 0,
 					folder,
 					last_message_at: msg.date,
+					label_ids: label_ids.length ? label_ids : undefined,
 					gmail_thread_ids: msg.gmail_thread_id
 						? [{ account_id: msg.account_id, thread_id: msg.gmail_thread_id }]
 						: undefined,
@@ -173,7 +178,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 				size_bytes: msg.size_bytes ?? 0,
 			});
 
-			updateThreadCounters(db, thread_id, msg, participants);
+			updateThreadCounters(db, thread_id, msg, participants, label_ids);
 
 			// Attachment rows (bytes already in R2) for the reading-pane chips.
 			for (const att of msg.attachments ?? []) {
@@ -251,6 +256,7 @@ function updateThreadCounters(
 	thread_id: string,
 	msg: NormalizedMessage,
 	participants: Address[],
+	label_ids: string[],
 ): void {
 	const thread = db.get('thread', thread_id) as {
 		message_count?: number;
@@ -261,8 +267,10 @@ function updateThreadCounters(
 		last_message_at?: number;
 		has_attachments?: boolean;
 		starred?: boolean;
+		label_ids?: string[];
 		gmail_thread_ids?: Array<{ account_id: string; thread_id: string }>;
 	};
+	const mergedLabels = [...new Set([...(thread.label_ids ?? []), ...label_ids])];
 
 	const mergedParticipants = dedupeAddresses([...(thread.participants ?? []), ...participants]);
 	const accountIds = new Set([...(thread.account_ids ?? []), msg.account_id]);
@@ -289,11 +297,57 @@ function updateThreadCounters(
 		last_message_at: Math.max(thread.last_message_at ?? 0, msg.date),
 		snippet: msg.snippet ?? msg.text_excerpt?.slice(0, 120),
 		starred: thread.starred || (msg.is_starred ?? false),
+		label_ids: mergedLabels.length ? mergedLabels : undefined,
 		has_attachments: thread.has_attachments || (msg.attachment_count ?? 0) > 0,
 		subject: msg.subject ?? undefined,
 		subject_normalized: normalizeSubject(msg.subject),
 		gmail_thread_ids: gmailIds.length ? gmailIds : undefined,
 	});
+}
+
+/**
+ * Ensure a DelightMail `label` row exists for each user provider-label on the
+ * message, recording the provider id in `provider_map` for two-way sync, and
+ * return the label row ids (§5.1). No-op when the message carries no user labels.
+ */
+function resolveLabelIds(db: DbLike, msg: NormalizedMessage): string[] {
+	if (!msg.labels?.length) return [];
+	const ids: string[] = [];
+	for (const l of msg.labels) {
+		const id = ensureLabel(db, l.name, msg.account_id, l.provider_id);
+		if (id) ids.push(id);
+	}
+	return ids;
+}
+
+function ensureLabel(
+	db: DbLike,
+	name: string,
+	account_id: string,
+	provider_id: string,
+): string | undefined {
+	const rows = db.exec(`SELECT id, json FROM label WHERE name = ? LIMIT 1`, name) as Array<{
+		id: string;
+		json?: string;
+	}>;
+	if (rows.length) {
+		const id = rows[0].id;
+		const existing = (safeJson(rows[0].json).provider_map as
+			| Array<{ account_id: string; provider_id: string }>
+			| undefined) ?? [];
+		if (!existing.some((p) => p.account_id === account_id && p.provider_id === provider_id)) {
+			db.update('label', id, {
+				provider_map: [...existing, { account_id, provider_id }],
+			});
+		}
+		return id;
+	}
+	const created = db.create('label', {
+		name,
+		provider_map: [{ account_id, provider_id }],
+		position: 0,
+	});
+	return created.id as string;
 }
 
 /**

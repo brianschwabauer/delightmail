@@ -12,6 +12,7 @@ function fakeDb() {
 		message: {},
 		contact: {},
 		attachment: {},
+		label: {},
 	};
 	const threads = stores.thread;
 	const messages = stores.message;
@@ -31,6 +32,10 @@ function fakeDb() {
 			if (/FROM contact WHERE email = \?/.test(sql)) {
 				const c = Object.values(contacts).find((r) => r.email === bindings[0]);
 				return c ? [{ id: c.id, send_count: c.send_count, receive_count: c.receive_count }] : [];
+			}
+			if (/FROM label WHERE name = \?/.test(sql)) {
+				const l = Object.values(storeFor('label')).find((r) => r.name === bindings[0]);
+				return l ? [{ id: l.id, json: JSON.stringify(l) }] : [];
 			}
 			if (/json_extract\(json, '\$\.provider_ids\.gmail_thread_id'\)/.test(sql)) {
 				const m = Object.values(messages).find(
@@ -67,7 +72,7 @@ function fakeDb() {
 		},
 	};
 
-	return { db, threads, messages, contacts, attachments: stores.attachment };
+	return { db, threads, messages, contacts, attachments: stores.attachment, labels: stores.label };
 }
 
 function msg(overrides: Partial<NormalizedMessage>): NormalizedMessage {
@@ -191,6 +196,31 @@ describe('ingestBatch', () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0].filename).toBe('a.pdf');
 		expect(rows[0].r2_key).toBe('org/msg/h/att/0');
+	});
+
+	it('maps user provider-labels onto label rows with provider_map + thread.label_ids', () => {
+		const { db, threads, labels } = fakeDb();
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<l1@x>',
+				account_id: 'acc-1',
+				labels: [{ name: 'Work', provider_id: 'Label_7' }],
+			}),
+		]);
+		const label = Object.values(labels)[0];
+		expect(label.name).toBe('Work');
+		expect((label.provider_map as Array<{ provider_id: string }>)[0].provider_id).toBe('Label_7');
+		const thread = Object.values(threads)[0];
+		expect((thread.label_ids as string[])).toContain(label.id);
+	});
+
+	it('reuses an existing label and adds a second account to its provider_map', () => {
+		const { db, labels } = fakeDb();
+		ingestBatch(db, [msg({ rfc822_message_id: '<l2@x>', account_id: 'acc-1', labels: [{ name: 'Work', provider_id: 'A1' }] })]);
+		ingestBatch(db, [msg({ rfc822_message_id: '<l3@x>', account_id: 'acc-2', labels: [{ name: 'Work', provider_id: 'B2' }] })]);
+		expect(Object.keys(labels)).toHaveLength(1);
+		const pm = Object.values(labels)[0].provider_map as Array<{ account_id: string }>;
+		expect(pm.map((p) => p.account_id).sort()).toEqual(['acc-1', 'acc-2']);
 	});
 
 	it('merges participants across messages in a thread', () => {
