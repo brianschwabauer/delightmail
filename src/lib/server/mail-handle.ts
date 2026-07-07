@@ -21,7 +21,7 @@ import {
 	handleAttachmentUpload,
 } from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
-import { handleSend, handleUndoSend } from './send';
+import { handleSend, handleUndoSend, handleSaveDraft, handleDeleteDraft } from './send';
 import { handleTriageTest, handleUnsubscribe, handleUnsubscribeBulk } from './triage-endpoints';
 import { handleVapidKey, handlePushSubscribe, handlePushUnsubscribe } from './push';
 import { handleDevSeed } from './dev-seed';
@@ -106,6 +106,14 @@ async function route(event: RequestEvent): Promise<Response> {
 		return handleUndoSend(event, decodeURIComponent(parts[2]));
 	}
 
+	// --- drafts (autosave) ---
+	if (pathname === '/api/drafts' && method === 'POST') {
+		return handleSaveDraft(event);
+	}
+	if (parts[1] === 'drafts' && parts[2] && method === 'DELETE') {
+		return handleDeleteDraft(event, decodeURIComponent(parts[2]));
+	}
+
 	// --- AI triage + unsubscribe (P5) ---
 	if (pathname === '/api/triage/test' && method === 'POST') {
 		return handleTriageTest(event);
@@ -139,6 +147,7 @@ const MAIL_PREFIXES = [
 	'/api/attachments/',
 	'/api/threads/',
 	'/api/send',
+	'/api/drafts',
 	'/api/unsubscribe/',
 	'/api/push/',
 	'/api/triage/',

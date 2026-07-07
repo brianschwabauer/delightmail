@@ -76,3 +76,34 @@ export async function handleUndoSend(event: RequestEvent, messageId: string): Pr
 	const result = await db.undoSend(messageId);
 	return Response.json(result);
 }
+
+/** POST /api/drafts — autosave a compose draft (§6). */
+export async function handleSaveDraft(event: RequestEvent): Promise<Response> {
+	const db = event.locals.db;
+	if (!db) return DelightError.badRequest('No mailbox').toResponse();
+	const body = (await event.request.json().catch(() => null)) as {
+		draft_id?: string;
+		identity_id?: string;
+		to?: Address[];
+		cc?: Address[];
+		subject?: string;
+		doc?: unknown;
+	} | null;
+	if (!body?.identity_id) return DelightError.badRequest('Missing identity').toResponse();
+	const result = await db.saveDraft({
+		draft_id: body.draft_id,
+		identity_id: body.identity_id,
+		to: body.to ?? [],
+		cc: body.cc ?? [],
+		subject: body.subject ?? '',
+		doc: JSON.stringify(body.doc ?? {}),
+	});
+	return Response.json(result);
+}
+
+/** DELETE /api/drafts/:id */
+export async function handleDeleteDraft(event: RequestEvent, id: string): Promise<Response> {
+	const db = event.locals.db;
+	if (!db) return DelightError.badRequest('No mailbox').toResponse();
+	return Response.json(await db.deleteDraft(id));
+}

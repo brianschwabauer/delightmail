@@ -7,7 +7,7 @@
  *
  * This is a hand-maintained subset — grow it as the server gains methods.
  */
-import type { Tables, Message, Thread } from './schema';
+import type { Tables, Message, Thread, Address } from './schema';
 import type { Database } from '@delightstack/database';
 
 export interface IngestBatchItem {
@@ -71,6 +71,17 @@ export interface MailboxRpc {
 	enqueueSend(message: Partial<Message>, identity_id: string): Promise<{ message_id: string }>;
 	/** Cancel a queued send within the undo window. */
 	undoSend(message_id: string): Promise<{ ok: boolean }>;
+	/** Create or update an autosaved draft (§6). */
+	saveDraft(input: {
+		draft_id?: string;
+		identity_id: string;
+		to: Address[];
+		cc?: Address[];
+		subject: string;
+		doc: string;
+	}): Promise<{ draft_id: string; thread_id: string }>;
+	/** Delete a draft message. */
+	deleteDraft(draft_id: string): Promise<{ ok: boolean }>;
 	/** Fetch the newest threads for a folder (server-side, used by SSR/tests). */
 	listThreads(folder: string, limit?: number): Promise<Thread[]>;
 	/** Run the triage test harness against N recent messages without acting. */

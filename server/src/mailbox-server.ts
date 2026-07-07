@@ -474,6 +474,110 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		}
 	}
 
+	/**
+	 * Create or update an autosaved draft (§6). Drafts are message rows
+	 * (is_draft=true, folder=drafts) in a standalone thread; the client autosaves
+	 * every 3s and deletes on send.
+	 */
+	async saveDraft(input: {
+		draft_id?: string;
+		identity_id: string;
+		to: { name?: string; email?: string }[];
+		cc?: { name?: string; email?: string }[];
+		subject: string;
+		doc: string;
+	}): Promise<{ draft_id: string; thread_id: string }> {
+		const identity = this.get('identity', input.identity_id) as {
+			id: string;
+			email: string;
+			name?: string;
+			account_id: string;
+		};
+		const now = Date.now();
+		const snippet = (input.subject || '(no subject)').slice(0, 120);
+
+		if (input.draft_id) {
+			let msg: Message | undefined;
+			try {
+				msg = this.get('message', input.draft_id) as Message;
+			} catch {
+				msg = undefined;
+			}
+			if (msg && msg.is_draft) {
+				this.update('message', input.draft_id, {
+					subject: input.subject,
+					to: input.to,
+					cc: input.cc,
+					draft_doc: input.doc,
+				} as never);
+				this.update('thread', msg.thread_id, {
+					subject: input.subject || '(no subject)',
+					snippet,
+					last_message_at: now,
+				} as never);
+				return { draft_id: String(input.draft_id), thread_id: String(msg.thread_id) };
+			}
+		}
+
+		const thread = this.create('thread', {
+			subject: input.subject || '(no subject)',
+			subject_normalized: input.subject.toLowerCase(),
+			snippet,
+			participants: input.to,
+			participant_text: input.to.map((a) => a.email).join(', '),
+			account_ids: [identity.account_id],
+			message_count: 1,
+			folder: 'drafts',
+			last_message_at: now,
+		} as never) as Thread;
+		const rfc822 = `<draft-${crypto.randomUUID()}@${identity.email.split('@')[1] ?? 'delightmail.local'}>`;
+		const msg = this.create('message', {
+			thread_id: thread.id,
+			account_id: identity.account_id,
+			identity_email: identity.email,
+			rfc822_message_id: rfc822,
+			from: { name: identity.name, email: identity.email },
+			to: input.to,
+			cc: input.cc,
+			subject: input.subject,
+			draft_doc: input.doc,
+			date: now,
+			is_read: true,
+			is_draft: true,
+			is_outbound: true,
+			folder: 'drafts',
+		} as never) as Message;
+		return { draft_id: String(msg.id), thread_id: String(thread.id) };
+	}
+
+	async deleteDraft(draft_id: string): Promise<{ ok: boolean }> {
+		let msg: Message;
+		try {
+			msg = this.get('message', draft_id) as Message;
+		} catch {
+			return { ok: false };
+		}
+		if (!msg.is_draft) return { ok: false };
+		const thread_id = msg.thread_id;
+		try {
+			this.delete('message', draft_id);
+		} catch {
+			/* already gone */
+		}
+		const rows = this.exec(
+			`SELECT COUNT(*) AS n FROM message WHERE thread_id = ?`,
+			thread_id,
+		) as Array<{ n: number }>;
+		if ((rows[0]?.n ?? 0) === 0) {
+			try {
+				this.delete('thread', thread_id);
+			} catch {
+				/* ignore */
+			}
+		}
+		return { ok: true };
+	}
+
 	/** Called by SyncEngine after a successful/failed transport send. */
 	async markSendResult(
 		message_id: string,

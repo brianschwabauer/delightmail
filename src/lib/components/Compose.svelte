@@ -26,6 +26,8 @@
 		in_reply_to?: string;
 		references?: string[];
 		thread_id?: string;
+		/** Set when editing an existing draft so autosave updates it in place. */
+		draft_id?: string;
 	}
 
 	interface Props {
@@ -83,11 +85,50 @@
 		content: (init.bodyDoc as never) ?? undefined,
 	});
 
+	// --- draft autosave (§6): every 3s of idle, persist to a draft row ---
+	let draftId = $state<string | undefined>(init.draft_id);
+	let lastSavedSig = '';
+	let sent = $state(false);
+
+	function currentSig(): string {
+		return JSON.stringify({ s: subject, t: to, c: cc, d: editor.doc });
+	}
+	function hasContent(): boolean {
+		return !!(subject.trim() || to.length || docToText(editor.doc).trim());
+	}
+	async function autosave(): Promise<void> {
+		if (sent || sending || !fromIdentity || !hasContent()) return;
+		const sig = currentSig();
+		if (sig === lastSavedSig) return;
+		lastSavedSig = sig;
+		try {
+			const res = await fetch('/api/drafts', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					draft_id: draftId,
+					identity_id: fromIdentity.id,
+					to,
+					cc: showCc ? cc : [],
+					subject,
+					doc: editor.doc,
+				}),
+			});
+			if (res.ok) draftId = ((await res.json()) as { draft_id: string }).draft_id;
+		} catch {
+			lastSavedSig = ''; // retry next tick
+		}
+	}
+
 	onMount(() => {
 		if (!identityId && identities.docs.length) {
 			identityId = String((identities.docs[0] as Identity).id);
 		}
-		return () => editor.destroy();
+		const timer = setInterval(() => void autosave(), 3000);
+		return () => {
+			clearInterval(timer);
+			editor.destroy();
+		};
 	});
 
 	const fromIdentity = $derived(
@@ -242,6 +283,11 @@
 			if (!res.ok) {
 				const err = (await res.json().catch(() => ({}))) as { message?: string };
 				throw new Error(err.message || `Send failed (${res.status})`);
+			}
+			// The sent message supersedes the draft — drop it (and stop autosaving).
+			sent = true;
+			if (draftId) {
+				void fetch(`/api/drafts/${encodeURIComponent(draftId)}`, { method: 'DELETE' });
 			}
 			toast('Sending… (undo from the outbox within your undo window)');
 			onClose();
