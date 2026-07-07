@@ -111,6 +111,30 @@ function ownsKey(key: string, org_id: string): boolean {
 	return key.startsWith(`${org_id}/`);
 }
 
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB (§10.3)
+
+/** POST /api/attachments/upload — store a compose attachment, return its R2 key. */
+export async function handleAttachmentUpload(event: RequestEvent): Promise<Response> {
+	const { r2, org_id } = ctx(event);
+	if (!r2 || !org_id) return DelightError.badRequest('No mailbox').toResponse();
+	let file: File | null = null;
+	try {
+		const form = await event.request.formData();
+		const f = form.get('file');
+		if (f instanceof File) file = f;
+	} catch {
+		/* not multipart */
+	}
+	if (!file) return DelightError.badRequest('No file uploaded').toResponse();
+	if (file.size > MAX_ATTACHMENT_BYTES) {
+		return DelightError.badRequest('Attachment exceeds the 25 MB limit.').toResponse();
+	}
+	const r2_key = `${org_id}/att/upload/${crypto.randomUUID()}`;
+	const mime_type = file.type || 'application/octet-stream';
+	await r2.put(r2_key, await file.arrayBuffer(), { httpMetadata: { contentType: mime_type } });
+	return Response.json({ r2_key, filename: file.name || 'attachment', mime_type, size: file.size });
+}
+
 function ctx(event: RequestEvent) {
 	return {
 		db: event.locals.db,

@@ -10,13 +10,14 @@
 import type { Env } from './index';
 import { parseEmail } from '../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
-import { messagePrefix, writeBodies } from './body-store';
+import { messagePrefix, writeBodies, writeAttachments } from './body-store';
 import type { NormalizedMessage } from './ingest';
 
 interface CfDomainMailbox {
 	ingestMessages(batch: unknown[]): Promise<{ ingested: number; skipped: number }>;
 	ensureCfDomainAccount(domain: string): Promise<{ account_id: string }>;
 	ensureIdentity(account_id: string, email: string): Promise<void>;
+	scheduleJob(type: string, payload: unknown, delay_ms: number): Promise<void>;
 }
 
 export async function handleInboundEmail(
@@ -74,6 +75,17 @@ export async function handleInboundEmail(
 			html: html || undefined,
 			text: parsed.text || undefined,
 		});
+		const attachments = await writeAttachments(
+			env.R2,
+			prefix,
+			parsed.attachments.map((a) => ({
+				filename: a.filename,
+				mime_type: a.mime_type,
+				content: a.content,
+				content_id: a.content_id,
+				size_bytes: a.size_bytes,
+			})),
+		);
 
 		const normalized: NormalizedMessage = {
 			rfc822_message_id: parsed.rfc822_message_id,
@@ -95,6 +107,7 @@ export async function handleInboundEmail(
 			is_outbound: false,
 			folder: 'inbox',
 			headers_subset: parsed.headers_subset as Record<string, unknown>,
+			attachments,
 			attachment_count: parsed.attachments.length,
 			size_bytes: parsed.size_bytes,
 		};
@@ -108,9 +121,19 @@ export async function handleInboundEmail(
 		await env.KV.delete(`pending-email:${raw_key}`).catch(() => {});
 	} catch (err) {
 		console.error('[email] ingest failed, keeping R2 copy for replay:', err);
+		// Keep a KV marker AND enqueue a replay job so the message is actually
+		// re-ingested from R2 later (§5.2, R8) rather than sitting captured-but-lost.
 		await env.KV.put(`pending-email:${raw_key}`, JSON.stringify({ to, from, domain, org_id }), {
 			expirationTtl: 60 * 60 * 24 * 14,
 		});
+		try {
+			const mailbox = env.MAILBOX.get(
+				env.MAILBOX.idFromName(org_id),
+			) as unknown as CfDomainMailbox;
+			await mailbox.scheduleJob('replay_r2', { raw_key, to: to.toLowerCase() }, 30_000);
+		} catch (scheduleErr) {
+			console.error('[email] could not schedule replay_r2:', scheduleErr);
+		}
 	}
 }
 

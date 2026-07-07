@@ -14,7 +14,12 @@ import {
 	handleAccountLifecycle,
 	handleAccountDelete,
 } from './accounts';
-import { handleMessageBody, handleMessageRaw, handleAttachment } from './body-endpoint';
+import {
+	handleMessageBody,
+	handleMessageRaw,
+	handleAttachment,
+	handleAttachmentUpload,
+} from './body-endpoint';
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend } from './send';
 import { handleTriageTest, handleUnsubscribe, handleUnsubscribeBulk } from './triage-endpoints';
@@ -81,6 +86,9 @@ async function route(event: RequestEvent): Promise<Response> {
 	}
 
 	// --- attachments ---
+	if (pathname === '/api/attachments/upload' && method === 'POST') {
+		return handleAttachmentUpload(event);
+	}
 	if (parts[1] === 'attachments' && parts[2] && method === 'GET') {
 		return handleAttachment(event, decodeURIComponent(parts[2]));
 	}

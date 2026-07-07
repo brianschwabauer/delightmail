@@ -7,10 +7,18 @@ import { ingestBatch, type DbLike, type NormalizedMessage } from './ingest';
  * plus create/get/update over two tables.
  */
 function fakeDb() {
-	const threads: Record<string, Record<string, unknown>> = {};
-	const messages: Record<string, Record<string, unknown>> = {};
+	const stores: Record<string, Record<string, Record<string, unknown>>> = {
+		thread: {},
+		message: {},
+		contact: {},
+		attachment: {},
+	};
+	const threads = stores.thread;
+	const messages = stores.message;
+	const contacts = stores.contact;
 	let seq = 0;
 	const id = (p: string) => `${p}-${++seq}`;
+	const storeFor = (entity: string) => (stores[entity] ??= {});
 
 	const db: DbLike = {
 		exec(sql, ...bindings) {
@@ -19,6 +27,10 @@ function fakeDb() {
 					(r) => r.rfc822_message_id === bindings[0] && r.account_id === bindings[1],
 				);
 				return m ? [{ id: m.id, thread_id: m.thread_id }] : [];
+			}
+			if (/FROM contact WHERE email = \?/.test(sql)) {
+				const c = Object.values(contacts).find((r) => r.email === bindings[0]);
+				return c ? [{ id: c.id, send_count: c.send_count, receive_count: c.receive_count }] : [];
 			}
 			if (/json_extract\(json, '\$\.provider_ids\.gmail_thread_id'\)/.test(sql)) {
 				const m = Object.values(messages).find(
@@ -38,25 +50,24 @@ function fakeDb() {
 			return [];
 		},
 		get(entity, gid) {
-			const store = entity === 'thread' ? threads : messages;
-			const row = store[String(gid)];
+			const row = storeFor(entity)[String(gid)];
 			if (!row) throw new Error(`not found ${entity} ${gid}`);
 			return row;
 		},
 		create(entity, data) {
-			const store = entity === 'thread' ? threads : messages;
+			const store = storeFor(entity);
 			const gid = id(entity);
 			store[gid] = { ...data, id: gid };
 			return store[gid];
 		},
 		update(entity, gid, data) {
-			const store = entity === 'thread' ? threads : messages;
+			const store = storeFor(entity);
 			store[String(gid)] = { ...store[String(gid)], ...data };
 			return store[String(gid)];
 		},
 	};
 
-	return { db, threads, messages };
+	return { db, threads, messages, contacts, attachments: stores.attachment };
 }
 
 function msg(overrides: Partial<NormalizedMessage>): NormalizedMessage {
@@ -145,6 +156,41 @@ describe('ingestBatch', () => {
 		ingestBatch(db, [msg({ rfc822_message_id: '<o1@x>', is_outbound: true, folder: 'sent' })]);
 		const t = Object.values(threads)[0];
 		expect(t.unread_count).toBe(0);
+	});
+
+	it('records the sender as a contact (received, not yet known) on inbound mail', () => {
+		const { db, contacts } = fakeDb();
+		ingestBatch(db, [msg({ rfc822_message_id: '<c1@x>', from: { name: 'Ann', email: 'ann@x.com' } })]);
+		const c = Object.values(contacts).find((r) => r.email === 'ann@x.com');
+		expect(c?.receive_count).toBe(1);
+		expect(c?.is_known_correspondent).toBe(false);
+	});
+
+	it('marks recipients of outbound mail as known correspondents', () => {
+		const { db, contacts } = fakeDb();
+		ingestBatch(db, [
+			msg({ rfc822_message_id: '<c2@x>', is_outbound: true, folder: 'sent', to: [{ email: 'boss@x.com' }] }),
+		]);
+		const c = Object.values(contacts).find((r) => r.email === 'boss@x.com');
+		expect(c?.send_count).toBe(1);
+		expect(c?.is_known_correspondent).toBe(true);
+	});
+
+	it('creates attachment rows for a message with attachments', () => {
+		const { db, attachments } = fakeDb();
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<a1@x>',
+				attachment_count: 1,
+				attachments: [
+					{ filename: 'a.pdf', mime_type: 'application/pdf', size_bytes: 10, r2_key: 'org/msg/h/att/0' },
+				],
+			}),
+		]);
+		const rows = Object.values(attachments);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].filename).toBe('a.pdf');
+		expect(rows[0].r2_key).toBe('org/msg/h/att/0');
 	});
 
 	it('merges participants across messages in a thread', () => {

@@ -8,6 +8,12 @@ import { DelightError } from '@delightstack/utilities';
 import { renderHTML, renderText } from '@delightstack/editor/render';
 import type { Address } from '$lib/schema';
 
+interface SendAttachment {
+	r2_key: string;
+	filename: string;
+	mime_type: string;
+	size?: number;
+}
 interface SendBody {
 	identity_id: string;
 	to: Address[];
@@ -18,6 +24,7 @@ interface SendBody {
 	in_reply_to?: string;
 	references?: string[];
 	thread_id?: string;
+	attachments?: SendAttachment[];
 }
 
 /** POST /api/send */
@@ -53,6 +60,9 @@ export async function handleSend(event: RequestEvent): Promise<Response> {
 			references: body.references ?? [],
 			thread_id: body.thread_id,
 			draft_doc: JSON.stringify(body.doc ?? {}),
+			attachments: (body.attachments ?? [])
+				.filter((a) => a.r2_key && a.filename)
+				.slice(0, 30),
 		} as never,
 		body.identity_id,
 	);

@@ -9,9 +9,12 @@
 import { DatabaseServer } from '@delightstack/database/worker';
 import type { WebsocketServer } from '@delightstack/websocket/worker';
 import { tables, type Thread, type Message, type Settings } from '../../src/lib/schema';
-import { ingestBatch, type NormalizedMessage } from './ingest';
+import { ingestBatch, maintainContacts, type NormalizedMessage } from './ingest';
 import { applyThreadActionLocal } from './actions';
 import { runTriageJob } from './triage';
+import { parseEmail } from '../../src/lib/mail/mime';
+import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
+import { messagePrefix, writeBodies, writeAttachments } from './body-store';
 
 export interface MailboxEnv {
 	MAILBOX: DurableObjectNamespace;
@@ -316,6 +319,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			references?: string[];
 			thread_id?: string;
 			draft_doc?: string;
+			attachments?: Array<{ r2_key: string; filename: string; mime_type: string; size?: number }>;
 		},
 		identity_id: string,
 	): Promise<{ message_id: string }> {
@@ -387,8 +391,28 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			is_outbound: true,
 			folder: 'sent',
 			draft_doc: payload.draft_doc,
+			attachment_count: payload.attachments?.length ?? 0,
 			send_status: 'queued',
 		} as never) as Message;
+
+		// Attachment rows for the sent copy (bytes already uploaded to R2).
+		for (const att of payload.attachments ?? []) {
+			this.create('attachment', {
+				message_id: msg.id,
+				filename: att.filename,
+				mime_type: att.mime_type,
+				size_bytes: att.size ?? 0,
+				r2_key: att.r2_key,
+			} as never);
+		}
+
+		// Recording recipients as known correspondents here (not just when the sent
+		// copy syncs back) covers cf_domain/imap accounts that have no sync-back.
+		maintainContacts(this as never, {
+			is_outbound: true,
+			to: payload.to,
+			cc: payload.cc,
+		} as NormalizedMessage);
 
 		this.create('outbox', {
 			message_id: msg.id,
@@ -419,6 +443,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			this.update('message', row.message_id, { send_status: 'sending' } as never);
 			this.broadcastMail({ event: 'send:status', message_id: row.message_id, status: 'sending' });
 
+			const attachments = this.exec(
+				`SELECT filename, mime_type, r2_key FROM attachment WHERE message_id = ?`,
+				row.message_id,
+			) as Array<{ filename: string; mime_type: string; r2_key: string }>;
+
 			const stub = this.#menv.SYNC.get(
 				this.#menv.SYNC.idFromName(identity.account_id),
 			) as unknown as { enqueueSendJob(payload: unknown): Promise<void> };
@@ -434,6 +463,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 					subject: msg.subject,
 					in_reply_to: msg.in_reply_to,
 					references: msg.references,
+					attachments,
 					gmail_thread_id: (msg.provider_ids as { gmail_thread_id?: string } | undefined)
 						?.gmail_thread_id,
 				});
@@ -750,9 +780,76 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				return this.#sendPush(_payload as { title?: string; body?: string; thread_id?: string });
 			case 'digest':
 				return this.#sendDigest();
+			case 'replay_r2':
+				return this.replayInboundEmail(
+					(_payload as { raw_key?: string }).raw_key ?? '',
+					(_payload as { to?: string }).to ?? '',
+				);
 			default:
 				console.warn(`[MailboxServer] unknown job type: ${type}`);
 		}
+	}
+
+	/**
+	 * Re-ingest an inbound message from its captured R2 raw (§5.2, R8). Enqueued by
+	 * the email() handler when the first ingest attempt throws after R2 capture, so
+	 * a transient DO hiccup never silently loses mail.
+	 */
+	async replayInboundEmail(raw_key: string, to: string): Promise<void> {
+		if (!raw_key || !to) return;
+		const obj = await this.#menv.R2.get(raw_key);
+		if (!obj) return; // already cleaned up / expired
+		const rawBytes = new Uint8Array(await obj.arrayBuffer());
+		const domain = to.split('@')[1]?.toLowerCase() ?? '';
+		const { account_id } = await this.ensureCfDomainAccount(domain);
+		await this.ensureIdentity(account_id, to.toLowerCase());
+
+		const parsed = await parseEmail(rawBytes);
+		const html = parsed.html ? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' }) : '';
+		const prefix = await messagePrefix(this.#orgName, parsed.rfc822_message_id);
+		const body_keys = await writeBodies(this.#menv.R2, prefix, {
+			raw: rawBytes,
+			html: html || undefined,
+			text: parsed.text || undefined,
+		});
+		const attachments = await writeAttachments(
+			this.#menv.R2,
+			prefix,
+			parsed.attachments.map((a) => ({
+				filename: a.filename,
+				mime_type: a.mime_type,
+				content: a.content,
+				content_id: a.content_id,
+				size_bytes: a.size_bytes,
+			})),
+		);
+		await this.ingestMessages([
+			{
+				rfc822_message_id: parsed.rfc822_message_id,
+				account_id,
+				identity_email: to.toLowerCase(),
+				in_reply_to: parsed.in_reply_to,
+				references: parsed.references,
+				from: parsed.from,
+				to: parsed.to,
+				cc: parsed.cc,
+				bcc: parsed.bcc,
+				reply_to: parsed.reply_to,
+				subject: parsed.subject,
+				snippet: parsed.snippet,
+				text_excerpt: parsed.text_excerpt,
+				body_keys,
+				date: parsed.date,
+				is_read: false,
+				is_outbound: false,
+				folder: 'inbox',
+				headers_subset: parsed.headers_subset as Record<string, unknown>,
+				attachments,
+				attachment_count: parsed.attachments.length,
+				size_bytes: parsed.size_bytes,
+			},
+		]);
+		await this.#menv.KV.delete(`pending-email:${raw_key}`).catch(() => {});
 	}
 
 	/** Schedule the recurring weekly digest once (idempotent). */

@@ -38,6 +38,13 @@ export interface NormalizedMessage {
 	is_outbound?: boolean;
 	folder?: string;
 	headers_subset?: Record<string, unknown>;
+	attachments?: Array<{
+		filename: string;
+		mime_type: string;
+		size_bytes: number;
+		content_id?: string;
+		r2_key: string;
+	}>;
 	attachment_count?: number;
 	size_bytes?: number;
 }
@@ -167,9 +174,26 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 			});
 
 			updateThreadCounters(db, thread_id, msg, participants);
+
+			// Attachment rows (bytes already in R2) for the reading-pane chips.
+			for (const att of msg.attachments ?? []) {
+				db.create('attachment', {
+					message_id: created.id,
+					filename: att.filename,
+					mime_type: att.mime_type,
+					size_bytes: att.size_bytes,
+					content_id: att.content_id,
+					r2_key: att.r2_key,
+				});
+			}
 			return { message_id: created.id as string, thread_id };
 		};
 		const { message_id, thread_id } = run();
+
+		// Contact autocomplete + the known-correspondent guardrail depend on this
+		// running (§7.2) — without it the contact table stays empty and the guard
+		// never fires. Inbound records the sender; outbound records recipients.
+		maintainContacts(db, msg);
 
 		result.ingested++;
 		result.new_messages.push({
@@ -270,6 +294,49 @@ function updateThreadCounters(
 		subject_normalized: normalizeSubject(msg.subject),
 		gmail_thread_ids: gmailIds.length ? gmailIds : undefined,
 	});
+}
+
+/**
+ * Maintain the contact table on every ingested message. Sending to someone marks
+ * them a known correspondent (§7.2 "never auto-trash known correspondents").
+ */
+export function maintainContacts(db: DbLike, msg: NormalizedMessage): void {
+	const now = Date.now();
+	if (msg.is_outbound) {
+		for (const a of [...(msg.to ?? []), ...(msg.cc ?? [])]) upsertContact(db, a, true, now);
+	} else if (msg.from) {
+		upsertContact(db, msg.from, false, now);
+	}
+}
+
+function upsertContact(db: DbLike, a: Address, sent: boolean, now: number): void {
+	const email = (a.email ?? '').toLowerCase();
+	if (!email) return;
+	const rows = db.exec(
+		`SELECT id, send_count, receive_count FROM contact WHERE email = ? LIMIT 1`,
+		email,
+	) as Array<{ id: string; send_count?: number; receive_count?: number }>;
+	if (rows.length) {
+		const r = rows[0];
+		const send_count = (r.send_count ?? 0) + (sent ? 1 : 0);
+		const receive_count = (r.receive_count ?? 0) + (sent ? 0 : 1);
+		db.update('contact', r.id, {
+			send_count,
+			receive_count,
+			last_interacted_at: now,
+			is_known_correspondent: send_count > 0,
+			...(a.name ? { name: a.name } : {}),
+		});
+	} else {
+		db.create('contact', {
+			email,
+			name: a.name,
+			send_count: sent ? 1 : 0,
+			receive_count: sent ? 0 : 1,
+			last_interacted_at: now,
+			is_known_correspondent: sent,
+		});
+	}
 }
 
 function collectParticipants(msg: NormalizedMessage): Address[] {

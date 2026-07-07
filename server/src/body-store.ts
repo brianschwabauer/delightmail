@@ -62,6 +62,49 @@ export async function writeBodies(
 	return keys;
 }
 
+export interface StoredAttachment {
+	filename: string;
+	mime_type: string;
+	size_bytes: number;
+	content_id?: string;
+	r2_key: string;
+}
+
+/**
+ * Write attachment bytes to R2 under the message's org-prefixed prefix
+ * (`{org}/msg/{hash}/att/{i}`), stable on re-delivery. Returns the metadata rows
+ * ingest turns into `attachment` records.
+ */
+export async function writeAttachments(
+	r2: R2Bucket,
+	prefix: string,
+	attachments: Array<{
+		filename: string;
+		mime_type: string;
+		content: ArrayBuffer | Uint8Array | string;
+		content_id?: string;
+		size_bytes: number;
+	}>,
+): Promise<StoredAttachment[]> {
+	const out: StoredAttachment[] = [];
+	const ops: Promise<unknown>[] = [];
+	attachments.forEach((a, i) => {
+		const r2_key = `${prefix}/att/${i}`;
+		ops.push(
+			r2.put(r2_key, a.content as ArrayBuffer, { httpMetadata: { contentType: a.mime_type } }),
+		);
+		out.push({
+			filename: a.filename,
+			mime_type: a.mime_type,
+			size_bytes: a.size_bytes,
+			content_id: a.content_id,
+			r2_key,
+		});
+	});
+	await Promise.all(ops);
+	return out;
+}
+
 /** Read a stored body, KV-cached (7d) on the hot path (§4.3). */
 export async function readBody(
 	r2: R2Bucket,

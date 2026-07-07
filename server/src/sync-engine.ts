@@ -107,6 +107,7 @@ interface SendPayload {
 	subject?: string;
 	in_reply_to?: string;
 	references?: string[];
+	attachments?: Array<{ filename: string; mime_type: string; r2_key: string }>;
 	gmail_thread_id?: string;
 }
 
@@ -464,6 +465,17 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			: null;
 		const html = htmlObj ? await htmlObj.text() : '';
 		const text = textObj ? await textObj.text() : '';
+		// Pull each attachment's bytes from R2 and base64-encode for the MIME build.
+		const attachments = [];
+		for (const att of payload.attachments ?? []) {
+			const obj = await this.env.R2.get(att.r2_key);
+			if (!obj) continue;
+			attachments.push({
+				filename: att.filename,
+				mime_type: att.mime_type,
+				base64: bytesToBase64(new Uint8Array(await obj.arrayBuffer())),
+			});
+		}
 		const built = buildMimeMessage({
 			from: payload.from ?? { email: state.account_email },
 			to: payload.to ?? [],
@@ -475,6 +487,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			in_reply_to: payload.in_reply_to,
 			references: payload.references,
 			message_id: payload.rfc822_message_id,
+			attachments,
 		});
 
 		const fromEmail = payload.from?.email ?? state.account_email ?? '';
@@ -814,6 +827,16 @@ function safeParse(json: string | null): unknown {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Standard base64 of arbitrary bytes (chunked so large files don't overflow). */
+function bytesToBase64(bytes: Uint8Array): string {
+	let bin = '';
+	const CHUNK = 0x8000;
+	for (let i = 0; i < bytes.length; i += CHUNK) {
+		bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+	}
+	return btoa(bin);
 }
 
 /** base64url encode a raw MIME string for Gmail's messages.send. */

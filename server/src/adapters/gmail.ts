@@ -5,7 +5,7 @@
  */
 import { parseEmail } from '../../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../../src/lib/mail/sanitize';
-import { messagePrefix, writeBodies } from '../body-store';
+import { messagePrefix, writeBodies, writeAttachments } from '../body-store';
 import type { NormalizedMessage } from '../ingest';
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -208,6 +208,19 @@ export async function gmailToNormalized(
 		html: html || undefined,
 		text: parsed.text || undefined,
 	});
+	// format=raw carries attachment bytes inline, so store them here. (The >2MB
+	// lazy-fetch optimization from §5.1 is a follow-up; correctness first.)
+	const attachments = await writeAttachments(
+		ctx.r2,
+		prefix,
+		parsed.attachments.map((a) => ({
+			filename: a.filename,
+			mime_type: a.mime_type,
+			content: a.content,
+			content_id: a.content_id,
+			size_bytes: a.size_bytes,
+		})),
+	);
 
 	return {
 		rfc822_message_id: parsed.rfc822_message_id,
@@ -231,6 +244,7 @@ export async function gmailToNormalized(
 		is_outbound: state.is_outbound,
 		folder: state.folder,
 		headers_subset: parsed.headers_subset as Record<string, unknown>,
+		attachments,
 		attachment_count: parsed.attachments.length,
 		size_bytes: parsed.size_bytes,
 	};
