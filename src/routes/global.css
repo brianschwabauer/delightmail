@@ -67,3 +67,22 @@ body {
 	outline-offset: 1px;
 	border-radius: var(--radius-sm);
 }
+
+/* Text fields, textareas and the rich-text editor focus WITHOUT the extra ring —
+   the caret (or the field's own border) is indication enough. This overrides both
+   the delightstack base layer's universal `*:focus-visible` box-shadow AND our
+   outline rule above (same specificity, later source order). Buttons, links and
+   list rows keep their focus ring for keyboard navigation. */
+:where(
+	input:not([type='checkbox']):not([type='radio']):not([type='range']),
+	textarea,
+	[contenteditable]
+):focus,
+:where(
+	input:not([type='checkbox']):not([type='radio']):not([type='range']),
+	textarea,
+	[contenteditable]
+):focus-visible {
+	outline: none;
+	box-shadow: none;
+}

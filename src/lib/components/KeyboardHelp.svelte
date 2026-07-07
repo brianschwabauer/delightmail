@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import { Input } from '@delightstack/components';
 	import type { Keyboard, Binding } from '$lib/keyboard/keyboard.svelte';
 
 	interface Props {
@@ -9,6 +11,12 @@
 	const { kb, open, onClose }: Props = $props();
 
 	let filter = $state('');
+	let headerEl = $state<HTMLElement>();
+	// Land the caret in the filter as the sheet opens (delightstack <Input> has no
+	// autofocus prop, so focus its inner field once it's in the DOM).
+	$effect(() => {
+		if (open) void tick().then(() => headerEl?.querySelector('input')?.focus());
+	});
 
 	const groups = $derived.by(() => {
 		const bindings = kb.activeBindings().filter((b) => {
@@ -38,10 +46,9 @@
 		onclick={onClose}
 		onkeydown={(e) => e.key === 'Escape' && onClose()}>
 		<div class="sheet" role="dialog" aria-label="Keyboard shortcuts" onclick={(e) => e.stopPropagation()}>
-			<header>
+			<header bind:this={headerEl}>
 				<h2>Keyboard shortcuts</h2>
-				<!-- svelte-ignore a11y_autofocus -->
-				<input placeholder="Filter…" bind:value={filter} autofocus />
+				<Input placeholder="Filter…" bind:value={filter} dense class="kbd-filter" />
 			</header>
 			<div class="groups">
 				{#each groups as [group, bindings] (group)}
@@ -97,19 +104,9 @@
 		margin: 0;
 		flex: 1;
 	}
-	header input {
-		padding: 6px 12px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		background: var(--color-bg-2);
-		color: inherit;
-		font: inherit;
-		font-size: var(--font-size-0);
-	}
-	header input:focus {
-		outline: none;
-		border-color: var(--color-primary);
-		box-shadow: 0 0 0 3px var(--dm-accent-soft);
+	header :global(.kbd-filter) {
+		width: 220px;
+		max-width: 50%;
 	}
 	.groups {
 		overflow-y: auto;
