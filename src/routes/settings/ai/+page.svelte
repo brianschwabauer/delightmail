@@ -1,13 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Button, toast } from '@delightstack/components';
+	import { Button, ButtonGroup, Toggle, Input, toast } from '@delightstack/components';
 	import { DEFAULT_TRIAGE_PROMPT } from '$lib/mail/triage';
+
+	type Mode = 'label_only' | 'quarantine' | 'full_auto';
+	const MODES: Array<[Mode, string]> = [
+		['label_only', 'Label only'],
+		['quarantine', 'Quarantine'],
+		['full_auto', 'Full auto'],
+	];
 
 	const { data } = $props();
 	const { db } = $derived(data);
 
 	let enabled = $state(false);
-	let mode = $state<'label_only' | 'quarantine' | 'full_auto'>('quarantine');
+	let mode = $state<Mode>('quarantine');
 	let prompt = $state('');
 	let saving = $state(false);
 	let testing = $state(false);
@@ -74,18 +81,17 @@
 	never act on urgent mail, confidence floor) are enforced in code.
 </p>
 
-<label class="toggle">
-	<input type="checkbox" bind:checked={enabled} />
-	Enable AI triage
-</label>
+<div class="toggle-row">
+	<Toggle bind:checked={enabled} label="Enable AI triage" />
+</div>
 
 <section>
 	<h3>Mode</h3>
-	<div class="segmented">
-		{#each [['label_only', 'Label only'], ['quarantine', 'Quarantine'], ['full_auto', 'Full auto']] as [v, label] (v)}
-			<button class:active={mode === v} onclick={() => (mode = v as typeof mode)}>{label}</button>
+	<ButtonGroup>
+		{#each MODES as [v, label] (v)}
+			<Button active={mode === v} onclick={() => (mode = v)}>{label}</Button>
 		{/each}
-	</div>
+	</ButtonGroup>
 	<p class="muted small">
 		Quarantine (recommended) moves filtered mail to the reviewable “AI Filtered” folder — it never
 		actually trashes anything.
@@ -95,7 +101,7 @@
 <section>
 	<h3>Your policy</h3>
 	<p class="muted small">Your own words about what you care about. The JSON contract + safety rules are added around this automatically.</p>
-	<textarea bind:value={prompt} rows="10"></textarea>
+	<Input type="textarea" bind:value={prompt} rows={10} auto_resize />
 </section>
 
 <div class="actions">
@@ -134,12 +140,7 @@
 	h3 { font-size: var(--font-size-1); margin: var(--space-4) 0 var(--space-2); }
 	.muted { color: var(--color-text-disabled); }
 	.small { font-size: var(--font-size-0); }
-	.toggle { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-4) 0; }
-	.segmented { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
-	.segmented button { padding: 6px 14px; border: none; background: var(--color-bg-2); color: inherit; cursor: pointer; border-right: 1px solid var(--color-border); }
-	.segmented button:last-child { border-right: none; }
-	.segmented button.active { background: var(--color-primary); color: white; }
-	textarea { width: 100%; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-2); color: inherit; padding: var(--space-3); font: inherit; font-size: var(--font-size-0); resize: vertical; }
+	.toggle-row { margin: var(--space-4) 0; }
 	.actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
 	.preview .result { padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); }
 	.subj { font-weight: 600; font-size: var(--font-size-0); }

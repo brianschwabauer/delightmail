@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Button, toast } from '@delightstack/components';
+	import { Button, Input, Select, toast } from '@delightstack/components';
+	import type { SelectOption } from '@delightstack/components';
 	import type { SenderRule } from '$lib/schema';
 
 	const { data } = $props();
@@ -16,11 +17,17 @@
 	let adding = $state(false);
 	let busy = $state<string | null>(null);
 
-	const MATCH_LABEL: Record<MatchType, string> = {
-		from_domain: 'Sender domain',
-		from_address: 'Sender address',
-		list_id: 'List-Id',
-	};
+	const MATCH_OPTIONS: SelectOption[] = [
+		{ value: 'from_domain', label: 'Sender domain' },
+		{ value: 'from_address', label: 'Sender address' },
+		{ value: 'list_id', label: 'List-Id' },
+	];
+	const ACTION_OPTIONS: SelectOption[] = [
+		{ value: 'inbox', label: 'Keep in Inbox' },
+		{ value: 'archive', label: 'Archive' },
+		{ value: 'spam', label: 'Spam' },
+		{ value: 'trash', label: 'Trash' },
+	];
 
 	function describe(r: SenderRule): string {
 		const m = r.matcher as { from_domain?: string; from_address?: string; list_id?: string };
@@ -71,20 +78,19 @@
 </p>
 
 <form class="add" onsubmit={(e) => { e.preventDefault(); addRule(); }}>
-	<select bind:value={matchType} aria-label="Match type">
-		<option value="from_domain">Sender domain</option>
-		<option value="from_address">Sender address</option>
-		<option value="list_id">List-Id</option>
-	</select>
-	<input
-		bind:value
-		placeholder={matchType === 'from_domain' ? 'example.com' : matchType === 'from_address' ? 'news@example.com' : 'list.example.com'} />
-	<select bind:value={action} aria-label="Action">
-		<option value="inbox">Keep in Inbox</option>
-		<option value="archive">Archive</option>
-		<option value="spam">Spam</option>
-		<option value="trash">Trash</option>
-	</select>
+	<Select
+		value={matchType}
+		options={MATCH_OPTIONS}
+		onchange={({ value: v }) => (matchType = v as MatchType)} />
+	<div class="grow">
+		<Input
+			bind:value
+			placeholder={matchType === 'from_domain' ? 'example.com' : matchType === 'from_address' ? 'news@example.com' : 'list.example.com'} />
+	</div>
+	<Select
+		value={action}
+		options={ACTION_OPTIONS}
+		onchange={({ value: v }) => (action = v as RuleAction)} />
 	<Button dense disabled={adding} onclick={addRule}>{adding ? '…' : 'Add rule'}</Button>
 </form>
 
@@ -102,9 +108,9 @@
 						{#if r.source === 'ai_confirmed'} · from AI{/if}
 					</small>
 				</div>
-				<button class="del" disabled={busy === String(r.id)} onclick={() => remove(r as SenderRule)}>
+				<Button dense outline error disabled={busy === String(r.id)} onclick={() => remove(r as SenderRule)}>
 					{busy === String(r.id) ? '…' : 'Delete'}
-				</button>
+				</Button>
 			</li>
 		{/each}
 	</ul>
@@ -118,21 +124,12 @@
 		margin: var(--space-4) 0; padding: var(--space-3); background: var(--color-bg-2);
 		border: 1px solid var(--color-border); border-radius: var(--radius-md);
 	}
-	.add select, .add input {
-		padding: 5px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
-		background: var(--color-bg-1); color: inherit; font: inherit;
-	}
-	.add input { flex: 1; min-width: 160px; }
+	.add .grow { flex: 1; min-width: 160px; }
 	.list { list-style: none; padding: 0; margin: var(--space-4) 0; }
 	.list li {
 		display: flex; align-items: center; justify-content: space-between;
 		padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border);
 	}
 	.info { display: flex; flex-direction: column; }
-	.del {
-		background: none; border: 1px solid var(--color-border); border-radius: var(--radius-md);
-		padding: 3px 10px; color: var(--color-text-disabled); cursor: pointer; font: inherit;
-		font-size: var(--font-size-00, 0.75rem);
-	}
 	.empty { padding: var(--space-5) 0; }
 </style>

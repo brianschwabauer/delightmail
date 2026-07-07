@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Button, toast } from '@delightstack/components';
+	import { Button, Input, toast } from '@delightstack/components';
 
 	const { data } = $props();
 	const { db } = $derived(data);
@@ -75,16 +75,19 @@
 		<div class="edit-row">
 			<span class="desc">{o.desc}</span>
 			<span class="def">default <kbd>{o.def}</kbd></span>
-			<input
-				class="key-input"
-				value={currentKey(o.def)}
-				aria-label="Key for {o.desc}"
-				oninput={(e) => setKey(o.def, (e.target as HTMLInputElement).value)} />
+			<div class="key-input">
+				<Input
+					size="0"
+					value={currentKey(o.def)}
+					maxlength={12}
+					tooltip="Key for {o.desc}"
+					oninput={({ value }) => setKey(o.def, String(value ?? ''))} />
+			</div>
 		</div>
 	{/each}
 	<div class="actions">
 		<Button disabled={saving} onclick={save}>{saving ? 'Saving…' : 'Save shortcuts'}</Button>
-		<button class="reset" onclick={reset}>Reset to defaults</button>
+		<Button transparent onclick={reset}>Reset to defaults</Button>
 	</div>
 </section>
 
@@ -99,13 +102,9 @@
 	}
 	.desc { flex: 1; }
 	.def { color: var(--color-text-disabled); font-size: var(--font-size-00, 0.75rem); }
-	.key-input {
-		width: 80px; text-align: center; font-family: var(--font-mono, monospace);
-		padding: 4px 6px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
-		background: var(--color-bg-1); color: inherit;
-	}
+	.key-input { width: 96px; }
+	.key-input :global(input) { text-align: center; font-family: var(--font-mono, monospace); }
 	.actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); }
-	.reset { background: none; border: none; color: var(--color-text-disabled); cursor: pointer; font: inherit; }
 	kbd {
 		font-family: var(--font-mono, monospace); font-size: 0.8em;
 		background: var(--color-bg-2); border: 1px solid var(--color-border);

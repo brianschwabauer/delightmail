@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Button, toast } from '@delightstack/components';
+	import { Button, ButtonGroup, toast } from '@delightstack/components';
 	import { applyTheme, applyDensity, currentTheme, currentDensity, type Theme, type Density } from '$lib/theme';
 	import { enablePush, isPushSupported } from '$lib/push-client';
 
@@ -57,20 +57,20 @@
 
 <section>
 	<h3>Theme</h3>
-	<div class="segmented">
+	<ButtonGroup>
 		{#each ['system', 'light', 'dark'] as const as t (t)}
-			<button class:active={theme === t} onclick={() => setTheme(t)}>{t}</button>
+			<Button active={theme === t} onclick={() => setTheme(t)} class="cap">{t}</Button>
 		{/each}
-	</div>
+	</ButtonGroup>
 </section>
 
 <section>
 	<h3>Density</h3>
-	<div class="segmented">
+	<ButtonGroup>
 		{#each ['comfortable', 'compact'] as const as d (d)}
-			<button class:active={density === d} onclick={() => setDensity(d)}>{d}</button>
+			<Button active={density === d} onclick={() => setDensity(d)} class="cap">{d}</Button>
 		{/each}
-	</div>
+	</ButtonGroup>
 	<p class="muted">Compact fits more conversations per screen.</p>
 </section>
 
@@ -94,33 +94,8 @@
 		font-size: var(--font-size-1);
 		margin: var(--space-4) 0 var(--space-2);
 	}
-	.segmented {
-		display: inline-flex;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		overflow: hidden;
-	}
-	.segmented button {
-		padding: 7px 18px;
-		border: none;
-		background: var(--color-bg-2);
-		color: var(--color-text-muted, inherit);
-		cursor: pointer;
+	:global(.cap) {
 		text-transform: capitalize;
-		font: inherit;
-		font-size: var(--font-size-0);
-		border-right: 1px solid var(--color-border);
-	}
-	.segmented button:hover {
-		background: var(--color-bg-3);
-	}
-	.segmented button:last-child {
-		border-right: none;
-	}
-	.segmented button.active {
-		background: var(--dm-accent-soft);
-		color: var(--color-text);
-		font-weight: var(--font-weight-semibold, 600);
 	}
 	.muted {
 		color: var(--color-text-disabled);
