@@ -6,10 +6,14 @@
  *
  * The notification only carries a new historyId — a hint. SyncEngine then runs
  * an incremental history.list from its stored cursor, so missed/duplicated
- * pushes are harmless. Full history sync dispatch lands in P1.
+ * pushes are harmless.
  */
 import type { Env } from './index';
 import { verifyGoogleOidc } from './google-oidc';
+
+interface SyncEngineStub {
+	onPushHint(): Promise<void>;
+}
 
 export async function handleGmailWebhook(request: Request, env: Env): Promise<Response> {
 	const auth = request.headers.get('authorization') ?? '';
@@ -44,9 +48,21 @@ export async function handleGmailWebhook(request: Request, env: Env): Promise<Re
 		return new Response('OK (no address)', { status: 200 });
 	}
 
-	// Route to the SyncEngine for this account. account_id is the DO name; we
-	// address by the gmail address (SyncEngine keyed by account_id === address
-	// hash in P1). For now, ack — history sync dispatch lands in P1.
-	console.log(`[gmail-webhook] verified push for ${emailAddress} — history sync pending (P1)`);
+	// Route to the owning SyncEngine (keyed by account_id). The address→account_id
+	// map is written to KV when the Gmail account is connected (see accounts.ts).
+	const account_id = await env.KV.get(`gmail-route:${emailAddress.toLowerCase()}`);
+	if (!account_id) {
+		// Unknown address (account removed / not connected here) — ack so Pub/Sub
+		// stops retrying; a stale watch will expire on its own.
+		console.warn(`[gmail-webhook] no account mapping for ${emailAddress}`);
+		return new Response('OK (no account)', { status: 200 });
+	}
+	try {
+		const stub = env.SYNC.get(env.SYNC.idFromName(account_id)) as unknown as SyncEngineStub;
+		await stub.onPushHint();
+	} catch (err) {
+		// Push is only a hint; the polling fallback / next watch will catch up.
+		console.error('[gmail-webhook] onPushHint dispatch failed:', err);
+	}
 	return new Response('OK', { status: 200 });
 }

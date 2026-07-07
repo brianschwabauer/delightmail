@@ -186,7 +186,7 @@ export async function parseEmail(
 			: (raw as ArrayBuffer | Uint8Array).byteLength;
 
 	return {
-		rfc822_message_id: email.messageId || syntheticMessageId(email, receivedAt),
+		rfc822_message_id: email.messageId || (await syntheticMessageId(email, receivedAt)),
 		in_reply_to: email.inReplyTo,
 		references: parseReferences(email.references),
 		from: normalizeAddress(email.from),
@@ -206,8 +206,13 @@ export async function parseEmail(
 	};
 }
 
-/** Deterministic fallback id for the rare message with no Message-ID (§5.4). */
-function syntheticMessageId(email: Email, receivedAt: number): string {
+/**
+ * Deterministic fallback id for the rare message with no Message-ID (§5.4).
+ * SHA-256 of Date+From+Subject+To+body-prefix (per the plan) — a 32-bit hash
+ * collides at ~50% by ~65k such messages (birthday bound), silently dropping the
+ * colliding email as a duplicate; a 128-bit digest makes that negligible.
+ */
+async function syntheticMessageId(email: Email, receivedAt: number): Promise<string> {
 	const basis = [
 		email.date ?? receivedAt,
 		email.from && 'address' in email.from ? email.from.address : '',
@@ -217,7 +222,10 @@ function syntheticMessageId(email: Email, receivedAt: number): string {
 			.join(','),
 		(email.text ?? '').slice(0, 64),
 	].join('|');
-	let hash = 0;
-	for (let i = 0; i < basis.length; i++) hash = (Math.imul(31, hash) + basis.charCodeAt(i)) | 0;
-	return `<synthetic-${(hash >>> 0).toString(16)}@delightmail.local>`;
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(basis));
+	const hex = [...new Uint8Array(digest)]
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')
+		.slice(0, 32);
+	return `<synthetic-${hex}@delightmail.local>`;
 }

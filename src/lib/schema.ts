@@ -149,7 +149,10 @@ export const messageTable = Database.table('message', (s) => ({
 		.foreignKey({ type: 'string', table: 'account', column: 'id' })
 		.onDelete('CASCADE'),
 	identity_email: s.string().optional(),
-	rfc822_message_id: s.string().indexable().unique(),
+	// Indexed for idempotency lookups but NOT globally unique: the same message
+	// delivered to two connected accounts is two rows (dedupe is per-account by
+	// design, §5.4) — ingest scopes the idempotency check by account_id.
+	rfc822_message_id: s.string().indexable(),
 	in_reply_to: s.string().optional(),
 	references: s.array(s.string()).optional(),
 	provider_ids: s
@@ -370,10 +373,13 @@ export const settingsTable = Database.table('settings', (s) => ({
 	push_mode: s
 		.enum([
 			{ value: 'off', label: 'Off' },
+			{ value: 'mentions', label: 'Directed at me' },
 			{ value: 'important', label: 'Important only' },
 			{ value: 'all', label: 'All new mail' },
 		])
 		.default('important'),
+	// Local-time window during which pushes are suppressed, "HH:MM-HH:MM" (§10.4).
+	quiet_hours: s.string().optional(),
 }));
 
 // ---------------------------------------------------------------------------

@@ -71,14 +71,25 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 	const result: IngestResult = { ingested: 0, skipped: 0, new_messages: [] };
 
 	for (const msg of batch) {
-		// Idempotency: rfc822_message_id is a unique column.
+		// Idempotency is PER-ACCOUNT (§5.4): the same message delivered to two
+		// connected accounts stays two rows. Scoping the check by account_id is
+		// what keeps the Gmail→DelightMail migration overlap from collapsing.
 		const existing = db.exec(
-			`SELECT id, thread_id FROM message WHERE rfc822_message_id = ? LIMIT 1`,
+			`SELECT id, thread_id FROM message
+			 WHERE rfc822_message_id = ? AND account_id = ? LIMIT 1`,
 			msg.rfc822_message_id,
-		);
+			msg.account_id,
+		) as Array<{ id: string; thread_id: string }>;
 		if (existing.length) {
 			result.skipped++;
-			// Update provider ids / flags on re-delivery (cheap reconcile).
+			// Cheap reconcile: backfill provider ids the first delivery lacked.
+			if (msg.provider_ids && Object.keys(msg.provider_ids).length) {
+				try {
+					db.update('message', existing[0].id, { provider_ids: msg.provider_ids });
+				} catch {
+					/* best-effort */
+				}
+			}
 			continue;
 		}
 
@@ -99,61 +110,70 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 		);
 
 		const folder = (msg.folder ?? (msg.is_outbound ? 'sent' : 'inbox')) as string;
-		let thread_id = decision.thread_id;
 
-		if (!thread_id) {
-			const thread = db.create('thread', {
-				subject: msg.subject ?? '(no subject)',
-				subject_normalized: decision.subject_normalized,
-				snippet: msg.snippet ?? msg.text_excerpt?.slice(0, 120),
-				participants,
-				participant_text: participantText(participants),
-				account_ids: [msg.account_id],
-				message_count: 0,
-				unread_count: 0,
-				starred: false,
-				has_attachments: (msg.attachment_count ?? 0) > 0,
+		// Thread create + message insert + counter update must land together (§5.4).
+		// DatabaseServer.transaction is a *declarative batch* API and can't express
+		// "create thread → reference its new id → update its counters", so we rely on
+		// the DO's single-threaded, synchronous execution: this block runs to
+		// completion with no interleaving, which is the atomicity guarantee we need.
+		const run = (): { message_id: string; thread_id: string } => {
+			let thread_id = decision.thread_id;
+			if (!thread_id) {
+				const thread = db.create('thread', {
+					subject: msg.subject ?? '(no subject)',
+					subject_normalized: decision.subject_normalized,
+					snippet: msg.snippet ?? msg.text_excerpt?.slice(0, 120),
+					participants,
+					participant_text: participantText(participants),
+					account_ids: [msg.account_id],
+					message_count: 0,
+					unread_count: 0,
+					starred: msg.is_starred ?? false,
+					has_attachments: (msg.attachment_count ?? 0) > 0,
+					folder,
+					last_message_at: msg.date,
+					gmail_thread_ids: msg.gmail_thread_id
+						? [{ account_id: msg.account_id, thread_id: msg.gmail_thread_id }]
+						: undefined,
+				});
+				thread_id = thread.id as string;
+			}
+
+			const created = db.create('message', {
+				thread_id,
+				account_id: msg.account_id,
+				identity_email: msg.identity_email,
+				rfc822_message_id: msg.rfc822_message_id,
+				in_reply_to: msg.in_reply_to,
+				references: msg.references,
+				provider_ids: msg.provider_ids,
+				from: msg.from,
+				from_text: msg.from ? addressText(msg.from) : undefined,
+				to: msg.to,
+				cc: msg.cc,
+				bcc: msg.bcc,
+				reply_to: msg.reply_to,
+				subject: msg.subject,
+				text_excerpt: msg.text_excerpt?.slice(0, 8192),
+				body_keys: msg.body_keys,
+				date: msg.date,
+				is_read: msg.is_read ?? !!msg.is_outbound,
+				is_starred: msg.is_starred ?? false,
+				is_outbound: msg.is_outbound ?? false,
 				folder,
-				last_message_at: msg.date,
-				gmail_thread_ids: msg.gmail_thread_id
-					? [{ account_id: msg.account_id, thread_id: msg.gmail_thread_id }]
-					: undefined,
+				headers_subset: msg.headers_subset,
+				attachment_count: msg.attachment_count ?? 0,
+				size_bytes: msg.size_bytes ?? 0,
 			});
-			thread_id = thread.id as string;
-		}
 
-		const created = db.create('message', {
-			thread_id,
-			account_id: msg.account_id,
-			identity_email: msg.identity_email,
-			rfc822_message_id: msg.rfc822_message_id,
-			in_reply_to: msg.in_reply_to,
-			references: msg.references,
-			provider_ids: msg.provider_ids,
-			from: msg.from,
-			from_text: msg.from ? addressText(msg.from) : undefined,
-			to: msg.to,
-			cc: msg.cc,
-			bcc: msg.bcc,
-			reply_to: msg.reply_to,
-			subject: msg.subject,
-			text_excerpt: msg.text_excerpt?.slice(0, 8192),
-			body_keys: msg.body_keys,
-			date: msg.date,
-			is_read: msg.is_read ?? !!msg.is_outbound,
-			is_starred: msg.is_starred ?? false,
-			is_outbound: msg.is_outbound ?? false,
-			folder,
-			headers_subset: msg.headers_subset,
-			attachment_count: msg.attachment_count ?? 0,
-			size_bytes: msg.size_bytes ?? 0,
-		});
-
-		updateThreadCounters(db, thread_id, msg, participants);
+			updateThreadCounters(db, thread_id, msg, participants);
+			return { message_id: created.id as string, thread_id };
+		};
+		const { message_id, thread_id } = run();
 
 		result.ingested++;
 		result.new_messages.push({
-			id: created.id as string,
+			id: message_id,
 			thread_id,
 			folder,
 			from: msg.from,
@@ -216,6 +236,7 @@ function updateThreadCounters(
 		folder?: string;
 		last_message_at?: number;
 		has_attachments?: boolean;
+		starred?: boolean;
 		gmail_thread_ids?: Array<{ account_id: string; thread_id: string }>;
 	};
 
@@ -243,6 +264,7 @@ function updateThreadCounters(
 		folder: nextFolder,
 		last_message_at: Math.max(thread.last_message_at ?? 0, msg.date),
 		snippet: msg.snippet ?? msg.text_excerpt?.slice(0, 120),
+		starred: thread.starred || (msg.is_starred ?? false),
 		has_attachments: thread.has_attachments || (msg.attachment_count ?? 0) > 0,
 		subject: msg.subject ?? undefined,
 		subject_normalized: normalizeSubject(msg.subject),

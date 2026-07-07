@@ -14,8 +14,10 @@ function fakeDb() {
 
 	const db: DbLike = {
 		exec(sql, ...bindings) {
-			if (/FROM message WHERE rfc822_message_id = \? LIMIT 1/.test(sql)) {
-				const m = Object.values(messages).find((r) => r.rfc822_message_id === bindings[0]);
+			if (/FROM message\s+WHERE rfc822_message_id = \? AND account_id = \? LIMIT 1/.test(sql)) {
+				const m = Object.values(messages).find(
+					(r) => r.rfc822_message_id === bindings[0] && r.account_id === bindings[1],
+				);
 				return m ? [{ id: m.id, thread_id: m.thread_id }] : [];
 			}
 			if (/json_extract\(json, '\$\.provider_ids\.gmail_thread_id'\)/.test(sql)) {
@@ -87,6 +89,25 @@ describe('ingestBatch', () => {
 		expect(r1.ingested).toBe(1);
 		expect(r2.ingested).toBe(0);
 		expect(r2.skipped).toBe(1);
+	});
+
+	it('keeps the same message delivered to two accounts as two rows (per-account dedupe)', () => {
+		const { db, messages } = fakeDb();
+		const r1 = ingestBatch(db, [msg({ rfc822_message_id: '<shared@x>', account_id: 'acc-1' })]);
+		const r2 = ingestBatch(db, [msg({ rfc822_message_id: '<shared@x>', account_id: 'acc-2' })]);
+		expect(r1.ingested).toBe(1);
+		expect(r2.ingested).toBe(1);
+		expect(Object.keys(messages)).toHaveLength(2);
+	});
+
+	it('backfills provider ids on re-delivery of an already-ingested message', () => {
+		const { db, messages } = fakeDb();
+		ingestBatch(db, [msg({ rfc822_message_id: '<pid@x>', account_id: 'acc-1' })]);
+		ingestBatch(db, [
+			msg({ rfc822_message_id: '<pid@x>', account_id: 'acc-1', provider_ids: { gmail_id: 'G9' } }),
+		]);
+		const m = Object.values(messages).find((r) => r.rfc822_message_id === '<pid@x>');
+		expect((m?.provider_ids as { gmail_id?: string })?.gmail_id).toBe('G9');
 	});
 
 	it('threads a reply into the parent via In-Reply-To', () => {

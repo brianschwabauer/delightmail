@@ -68,13 +68,22 @@ interface SyncState {
 	gmail_history_id?: string;
 	gmail_watch_expiry?: number;
 	backfill_cursor?: string;
+	backfill_ingested?: number;
+	backfill_total?: number;
 	access_token?: string;
 	access_token_expiry?: number;
 }
 
-const MAX_ATTEMPTS = 5;
+// Exponential backoff ladder (§5.4): 30s, 1m, 2m, 4m, 8m, 16m, then give up.
+const MAX_ATTEMPTS = 7;
 const JOB_TIME_BUDGET_MS = 25_000;
-const RAW_BATCH = 20; // throttle messages.get to ~20/s (§5.1)
+const RAW_BATCH = 20; // messages.get chunk size
+// ~20 msg/s throttle (Gmail per-user quota is 250 units/s; messages.get = 5
+// units, §5.1). Pause this long after each RAW_BATCH so backfill can't outrun it.
+const RAW_BATCH_PAUSE_MS = 1_000;
+function retryBackoffMs(attempts: number): number {
+	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
+}
 
 interface MailboxStub {
 	ingestMessages(batch: unknown[]): Promise<{ ingested: number; skipped: number }>;
@@ -184,7 +193,12 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		await this.#rearm();
 	}
 	async resync(): Promise<void> {
-		this.#saveState({ backfill_cursor: undefined, gmail_history_id: undefined });
+		this.#saveState({
+			backfill_cursor: undefined,
+			gmail_history_id: undefined,
+			backfill_ingested: 0,
+			backfill_total: undefined,
+		});
 		await this.scheduleJob('backfill_page', { page_token: null }, 0);
 	}
 	async destroyAccount(): Promise<void> {
@@ -275,16 +289,14 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			} catch (err) {
 				const attempts = job.attempts + 1;
 				const message = err instanceof Error ? err.message : String(err);
-				const retryable = err instanceof RetryableError || attempts < MAX_ATTEMPTS;
-				if (!retryable || attempts >= MAX_ATTEMPTS) {
+				if (attempts >= MAX_ATTEMPTS) {
 					this.#sql.exec(`UPDATE job SET status = 'failed', last_error = ? WHERE id = ?`, message, job.id);
 					await this.#reportError(message);
 				} else {
-					const backoff = Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 					this.#sql.exec(
 						`UPDATE job SET attempts = ?, run_at = ?, last_error = ? WHERE id = ?`,
 						attempts,
-						Date.now() + backoff,
+						Date.now() + retryBackoffMs(attempts),
 						message,
 						job.id,
 					);
@@ -336,17 +348,34 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		const list = await gmail.listMessageIds(payload.page_token ?? undefined);
 		const ids = (list.messages ?? []).map((m) => m.id);
 
+		// Record the total estimate on the first page so progress is real, not 50/100.
+		let total = state.backfill_total;
+		if (total == null && list.resultSizeEstimate != null) {
+			total = list.resultSizeEstimate;
+			this.#saveState({ backfill_total: total });
+		}
+
+		let ingestedSoFar = state.backfill_ingested ?? 0;
 		for (let i = 0; i < ids.length; i += RAW_BATCH) {
 			const slice = ids.slice(i, i + RAW_BATCH);
 			const batch = await this.#fetchAndNormalize(gmail, slice);
 			if (batch.length) await this.#mailbox().ingestMessages(batch);
+			ingestedSoFar += slice.length;
+			// Throttle to ~20 msg/s so a large backfill can't blow the Gmail quota.
+			if (i + RAW_BATCH < ids.length) await sleep(RAW_BATCH_PAUSE_MS);
 		}
+		this.#saveState({ backfill_cursor: list.nextPageToken, backfill_ingested: ingestedSoFar });
 
-		this.#saveState({ backfill_cursor: list.nextPageToken });
-		this.#emitProgress('backfill', list.nextPageToken ? 50 : 100);
+		const percent =
+			total && total > 0 && list.nextPageToken
+				? Math.min(99, Math.round((ingestedSoFar / total) * 100))
+				: list.nextPageToken
+					? 50
+					: 100;
+		this.#emitProgress('backfill', percent);
 
 		if (list.nextPageToken) {
-			await this.scheduleJob('backfill_page', { page_token: list.nextPageToken }, 1000);
+			await this.scheduleJob('backfill_page', { page_token: list.nextPageToken }, RAW_BATCH_PAUSE_MS);
 		} else {
 			await this.#setAccountStatus('live');
 			// Kick an immediate history sync to catch anything since backfill start.
@@ -456,8 +485,18 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				const rawB64Url = base64UrlEncode(built.raw);
 				const sent = await gmail.send(rawB64Url, payload.gmail_thread_id);
 				result = { ok: true, provider_ids: { gmail_id: sent.id, gmail_thread_id: sent.threadId } };
+			} else if (state.kind === 'imap') {
+				// IMAP identity → the account's OWN SMTP submission creds, not the
+				// deployer's global relay (§6). (APPEND to \Sent is gated on the R1
+				// spike; until then the local folder='sent' copy is the record.)
+				const creds = (await this.#decryptCreds()) as {
+					smtp?: { host: string; port: number; user?: string; pass?: string };
+				} | null;
+				if (!creds?.smtp?.host) throw new Error('No SMTP credentials for this IMAP account');
+				await this.#sendViaSmtp(built.raw, fromEmail, payload, creds.smtp);
+				result = { ok: true };
 			} else {
-				// cf_domain: Cloudflare Email Service, else SMTP relay (§6). imap → smtp (P7).
+				// cf_domain: Cloudflare Email Service, else the global SMTP relay (§6).
 				await this.#sendViaEmailServiceOrSmtp(built.raw, fromEmail, payload);
 				result = { ok: true };
 			}
@@ -468,19 +507,19 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		if (!result.ok) throw new Error(result.error); // let the job retry with backoff
 	}
 
-	/** Send a raw MIME message via Cloudflare Email Service, else an SMTP relay. */
+	#recipients(payload: SendPayload): string[] {
+		return [...(payload.to ?? []), ...(payload.cc ?? []), ...(payload.bcc ?? [])]
+			.map((a) => a.email)
+			.filter((e): e is string => !!e);
+	}
+
+	/** Send a raw MIME message via Cloudflare Email Service, else the global relay. */
 	async #sendViaEmailServiceOrSmtp(
 		raw: string,
 		fromEmail: string,
 		payload: SendPayload,
 	): Promise<void> {
-		const recipients = [
-			...(payload.to ?? []),
-			...(payload.cc ?? []),
-			...(payload.bcc ?? []),
-		]
-			.map((a) => a.email)
-			.filter((e): e is string => !!e);
+		const recipients = this.#recipients(payload);
 		if (!recipients.length) throw new Error('No recipients');
 
 		// 1. Cloudflare Email Service (env.EMAIL binding).
@@ -496,32 +535,46 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			}
 		}
 
-		// 2. SMTP relay fallback.
+		// 2. Global SMTP relay fallback.
 		if (this.env.SMTP_RELAY_HOST) {
-			const mod: unknown = await import(/* @vite-ignore */ 'worker-mailer').catch(() => null);
-			const WorkerMailer = (mod as { WorkerMailer?: { connect(o: unknown): Promise<{ send(m: unknown): Promise<void>; close(): Promise<void> }> } })
-				?.WorkerMailer;
-			if (!WorkerMailer) throw new Error('worker-mailer unavailable for SMTP relay');
-			const port = Number(this.env.SMTP_RELAY_PORT ?? 587);
-			const mailer = await WorkerMailer.connect({
+			await this.#sendViaSmtp(raw, fromEmail, payload, {
 				host: this.env.SMTP_RELAY_HOST,
-				port,
-				secure: port === 465,
-				startTls: port !== 465,
-				authType: 'plain',
-				credentials:
-					this.env.SMTP_RELAY_USER && this.env.SMTP_RELAY_PASS
-						? { username: this.env.SMTP_RELAY_USER, password: this.env.SMTP_RELAY_PASS }
-						: undefined,
+				port: Number(this.env.SMTP_RELAY_PORT ?? 587),
+				user: this.env.SMTP_RELAY_USER,
+				pass: this.env.SMTP_RELAY_PASS,
 			});
-			await mailer.send({ from: fromEmail, to: recipients, raw });
-			await mailer.close();
 			return;
 		}
 
 		throw new Error(
 			'No outbound transport for this domain. Onboard it to Cloudflare Email Service or set SMTP_RELAY_* env.',
 		);
+	}
+
+	/** Send a raw MIME message over an explicit SMTP endpoint (worker-mailer). */
+	async #sendViaSmtp(
+		raw: string,
+		fromEmail: string,
+		payload: SendPayload,
+		cfg: { host: string; port: number; user?: string; pass?: string },
+	): Promise<void> {
+		const recipients = this.#recipients(payload);
+		if (!recipients.length) throw new Error('No recipients');
+		const mod: unknown = await import(/* @vite-ignore */ 'worker-mailer').catch(() => null);
+		const WorkerMailer = (mod as { WorkerMailer?: { connect(o: unknown): Promise<{ send(m: unknown): Promise<void>; close(): Promise<void> }> } })
+			?.WorkerMailer;
+		if (!WorkerMailer) throw new Error('worker-mailer unavailable for SMTP send');
+		const port = cfg.port || 587;
+		const mailer = await WorkerMailer.connect({
+			host: cfg.host,
+			port,
+			secure: port === 465,
+			startTls: port !== 465,
+			authType: 'plain',
+			credentials: cfg.user && cfg.pass ? { username: cfg.user, password: cfg.pass } : undefined,
+		});
+		await mailer.send({ from: fromEmail, to: recipients, raw });
+		await mailer.close();
 	}
 
 	// -------------------------------------------------------------------------
@@ -628,6 +681,20 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	}
 
 	async #providerAction(payload: ProviderActionPayload): Promise<void> {
+		const state = this.#state();
+		// Two-way write-back is implemented for Gmail; IMAP STORE/MOVE is gated on
+		// the R1 spike (§5.3). Non-gmail accounts must not call #gmail() (no token) —
+		// the local action already applied; provider echo lands when IMAP ships.
+		if (state.kind !== 'gmail') {
+			console.log(`[SyncEngine] provider_action ${payload.op} skipped (kind=${state.kind}, R1)`);
+			return;
+		}
+		// Label create/map and free-form moves aren't mapped to Gmail yet; skip
+		// rather than throw so the job doesn't retry forever on an unmapped op.
+		if (payload.op === 'move' || payload.op === 'label') {
+			console.log(`[SyncEngine] provider_action ${payload.op} not yet mapped to Gmail labels`);
+			return;
+		}
 		const gmail = await this.#gmail();
 		const gmailIds = payload.gmail_ids ?? [];
 		for (const id of gmailIds) {
@@ -743,6 +810,10 @@ function safeParse(json: string | null): unknown {
 	} catch {
 		return {};
 	}
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** base64url encode a raw MIME string for Gmail's messages.send. */
