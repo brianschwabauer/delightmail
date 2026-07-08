@@ -140,20 +140,22 @@
 {:else if draftMsg}
 	<article class="thread">
 		<header class="thread-head">
-			<div class="subject-row">
-				<span class="draft-tag">Draft</span>
-				<h1 class="subject">{draftMsg.subject || '(no subject)'}</h1>
-			</div>
-			<div class="toolbar">
-				<Button size="0" accent onclick={() => onEditDraft?.()}>
-					<Icon name="pencil" size={15} /> Continue editing
-				</Button>
-				{#if onAct}
-					<span class="tb-gap"></span>
-					<Button size="0" transparent onclick={() => onAct('trash')}>
-						<Icon name="trash" size={15} /> Discard
+			<div class="head-col">
+				<div class="subject-row">
+					<span class="draft-tag">Draft</span>
+					<h1 class="subject">{draftMsg.subject || '(no subject)'}</h1>
+				</div>
+				<div class="toolbar">
+					<Button size="0" accent onclick={() => onEditDraft?.()}>
+						<Icon name="pencil" size={15} /> Continue editing
 					</Button>
-				{/if}
+					{#if onAct}
+						<span class="tb-gap"></span>
+						<Button size="0" transparent onclick={() => onAct('trash')}>
+							<Icon name="trash" size={15} /> Discard
+						</Button>
+					{/if}
+				</div>
 			</div>
 		</header>
 		<section class="message draft-preview">
@@ -172,28 +174,30 @@
 {:else}
 	<article class="thread">
 		<header class="thread-head">
-			<div class="subject-row">
-				{#if starred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
-				<h1 class="subject">{subject}</h1>
-			</div>
-			{#if onReply || onAct}
-				<div class="toolbar">
-					{#if onReply}
-						<Button size="0" transparent onclick={() => onReply('reply')}><Icon name="reply" size={15} /> Reply</Button>
-						<Button size="0" transparent onclick={() => onReply('reply_all')}><Icon name="reply-all" size={15} /> Reply all</Button>
-						<Button size="0" transparent onclick={() => onReply('forward')}><Icon name="forward" size={15} /> Forward</Button>
-					{/if}
-					{#if onAct}
-						<span class="tb-gap"></span>
-						{#if folder === 'archive'}
-							<Button size="0" transparent onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={15} /> Unarchive</Button>
-						{:else}
-							<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
-						{/if}
-						<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
-					{/if}
+			<div class="head-col">
+				<div class="subject-row">
+					{#if starred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
+					<h1 class="subject">{subject}</h1>
 				</div>
-			{/if}
+				{#if onReply || onAct}
+					<div class="toolbar">
+						{#if onReply}
+							<Button size="0" transparent onclick={() => onReply('reply')}><Icon name="reply" size={15} /> Reply</Button>
+							<Button size="0" transparent onclick={() => onReply('reply_all')}><Icon name="reply-all" size={15} /> Reply all</Button>
+							<Button size="0" transparent onclick={() => onReply('forward')}><Icon name="forward" size={15} /> Forward</Button>
+						{/if}
+						{#if onAct}
+							<span class="tb-gap"></span>
+							{#if folder === 'archive'}
+								<Button size="0" transparent onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={15} /> Unarchive</Button>
+							{:else}
+								<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+							{/if}
+							<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
+						{/if}
+					</div>
+				{/if}
+			</div>
 		</header>
 
 		{#each docs as m (m.id)}
@@ -207,10 +211,12 @@
 					<span class="date">{fmt(m.date)}</span>
 				</button>
 				{#if isExpanded(String(m.id))}
-					<MessageBody
-						messageId={String(m.id)}
-						excerpt={m.text_excerpt ?? ''}
-						hasHtml={!!m.body_keys?.html} />
+					<div class="body-surface">
+						<MessageBody
+							messageId={String(m.id)}
+							excerpt={m.text_excerpt ?? ''}
+							hasHtml={!!m.body_keys?.html} />
+					</div>
 				{:else}
 					<button class="snippet" onclick={() => toggle(String(m.id))}>{m.text_excerpt?.slice(0, 160) ?? ''}</button>
 				{/if}
@@ -255,8 +261,17 @@
 		top: 0;
 		z-index: 1;
 		background: var(--color-bg-1);
-		padding: var(--space-4) var(--space-5) var(--space-3);
+		padding: var(--space-4) 0 var(--space-3);
 		border-bottom: 1px solid var(--color-border);
+	}
+	/* The header bar stays full-bleed (background + divider span the pane), but its
+	   content rides the same centered column as the message bodies below — so the
+	   subject and actions line up with the reading column instead of hugging the
+	   pane's left edge. Keep this max-width in sync with .message / .draft-preview. */
+	.head-col {
+		max-width: 76ch;
+		margin: 0 auto;
+		padding: 0 var(--space-5);
 	}
 	.subject-row {
 		display: flex;
@@ -352,6 +367,18 @@
 	.message + .message {
 		border-top: 1px solid var(--dm-hairline);
 		padding-top: var(--space-3);
+	}
+	/* The message body sits on a contained "sheet" so HTML email (rendered on its
+	   own white iframe background) reads as an intentional card instead of a slab
+	   bleeding edge-to-edge — which is especially jarring in dark mode. overflow
+	   clips the iframe's corners to the radius; the border carries the edge. */
+	.body-surface {
+		margin-top: var(--space-3);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		overflow: hidden;
+		background: var(--color-bg-0);
+		box-shadow: 0 1px 2px color-mix(in oklab, black 6%, transparent);
 	}
 	.msg-head {
 		position: relative;
