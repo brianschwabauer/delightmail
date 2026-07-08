@@ -243,8 +243,15 @@
 	.check {
 		position: absolute;
 		inset: 0;
+		/* The Checkbox's hit-target (indicator + 20px padding) is BIGGER than the
+		   avatar box it overlays, in both axes. `place-items` centers it within its
+		   grid track; `place-content` then centers that oversized track within the
+		   box, so the check lands dead-center on the avatar. (Flex mis-centers here:
+		   the checkbox flex-shrinks to the box width and its rigid inner indicator
+		   overflows to one side. Grid items don't shrink, so this holds.) */
 		display: grid;
 		place-items: center;
+		place-content: center;
 		opacity: 0;
 		pointer-events: none;
 		transition: opacity var(--duration-fast, 120ms) ease;
