@@ -83,6 +83,10 @@
 	/** Rows that fit the list viewport (set by ThreadList) — drives PageUp/Down. */
 	let listRows = $state(12);
 	let openId = $state<string | null>(null);
+	/** Set when a deep-link (?t=) opened a thread before the list loaded — once the
+	 *  docs arrive we snap the cursor onto it so the instant preview header agrees
+	 *  with the thread the reader is showing. */
+	let deepLinkPending = $state(false);
 	/** The messages of the open thread, mirrored up from the reading pane so reply/
 	 *  forward act on data already loaded (no extra round-trip that could hang). */
 	let openMessages = $state<Message[]>([]);
@@ -95,7 +99,22 @@
 		// Deep-link: /mail/[view]?t=<thread_id> opens a thread (push notificationclick
 		// lands here, §10.4). Selection lives in the query so list scroll never resets.
 		const t = new URLSearchParams(location.search).get('t');
-		if (t) openId = t;
+		if (t) {
+			openId = t;
+			deepLinkPending = true;
+		}
+	});
+
+	// Snap the cursor onto a deep-linked thread once the list is available, so the
+	// instant preview header (driven by the cursor) matches the opened thread.
+	$effect(() => {
+		if (!deepLinkPending || !docs.length) return;
+		const id = openId;
+		untrack(() => {
+			const i = docs.findIndex((d) => String(d.id) === id);
+			if (i >= 0) cursor = i;
+			deepLinkPending = false;
+		});
 	});
 
 	// Mirror the open thread into the URL (?t=) without a navigation, so reload and
@@ -128,6 +147,30 @@
 	function clamp(i: number): number {
 		return Math.min(docs.length - 1, Math.max(0, i));
 	}
+
+	// --- preview commit (yazi-style two-tier preview) ---
+	// The thread under the cursor (`previewThread`) drives an INSTANT header/snippet
+	// in the reader on every move — that repaint is free (in-memory list data). The
+	// heavier work (the message query + the body iframe's network fetch, both keyed
+	// on `openId`) is deferred until the cursor SETTLES, so holding ↑/↓ flies through
+	// previews without touching the network. Explicit opens commit immediately.
+	const previewThread = $derived(docs[cursor] ?? null);
+	/** How long the cursor must rest on a row before its body loads. Short enough to
+	 *  feel instant when you land, long enough that a fast scroll loads nothing. */
+	const PREVIEW_SETTLE_MS = 120;
+	let commitTimer: ReturnType<typeof setTimeout> | null = null;
+	function clearCommit() {
+		if (commitTimer) {
+			clearTimeout(commitTimer);
+			commitTimer = null;
+		}
+	}
+	/** Open a thread NOW (explicit: Enter/→/click/next-thread) — cancels any pending
+	 *  settle so the deferred load can't overwrite the deliberate choice. */
+	function commit(id: string | null) {
+		clearCommit();
+		openId = id;
+	}
 	/** Show the cursor thread in the reading pane as a live preview, without
 	 *  stealing focus (yazi-style: moving the cursor previews the "child"). The
 	 *  reader only marks-read once it's actually focused, so previewing is free.
@@ -135,7 +178,14 @@
 	function previewCursor() {
 		if (!docs.length) return;
 		const t = docs[cursor];
-		if (t) openId = String(t.id);
+		if (!t) return;
+		// The instant header already tracks `previewThread`; only defer the body load.
+		const id = String(t.id);
+		clearCommit();
+		commitTimer = setTimeout(() => {
+			commitTimer = null;
+			openId = id;
+		}, PREVIEW_SETTLE_MS);
 	}
 	/** Plain page move / next-thread step — clamps at the ends (no wrap). */
 	function move(delta: number) {
@@ -267,15 +317,17 @@
 			openCursor();
 			return;
 		}
-		if (!openId) openCursor();
+		// Commit the cursor thread NOW (even if a preview settle is still pending) so
+		// → always opens exactly what's under the cursor, with no settle-delay flash.
+		openCursor();
 		if (openId) focus.set('reading');
 	}
 
 	/** Advance the cursor AND the open thread — next/prev without leaving the reader. */
 	function stepThread(delta: number) {
-		move(delta);
+		move(delta); // moves the cursor + schedules a settle-preview…
 		const t = docs[cursor];
-		if (t) openId = String(t.id);
+		if (t) commit(String(t.id)); // …but keep-reading opens it immediately.
 	}
 	function openCursor() {
 		// Enter (and l/→) confirm a pending delete first — "D then Enter" is fast.
@@ -291,7 +343,7 @@
 			void openDraft(t);
 			return;
 		}
-		openId = String(t.id);
+		commit(String(t.id));
 	}
 	async function openDraft(t: Thread) {
 		// Prefer the draft message the reader already loaded (the Drafts preview
@@ -491,8 +543,15 @@
 		clearSelection();
 		// Auto-advance past a removed cursor thread.
 		if (isOut) {
-			if (openId && ts.some((t) => String(t.id) === openId)) openId = null;
+			const removedOpen = !!openId && ts.some((t) => String(t.id) === openId);
 			cursor = Math.min(cursor, Math.max(0, docs.length - 1));
+			// If the thread being read was archived/trashed, slide the reader onto the
+			// thread now under the cursor (previewed instantly, body settles in) rather
+			// than dropping to an empty pane.
+			if (removedOpen) {
+				commit(null);
+				previewCursor();
+			}
 		}
 	}
 
@@ -610,6 +669,7 @@
 		return () => {
 			off();
 			kb.popContext('list');
+			clearCommit();
 		};
 	});
 </script>
@@ -713,7 +773,8 @@
 	<ReadingPane
 		{db}
 		threadId={openId}
-		folder={(openThread?.folder as string | undefined) ?? null}
+		{previewThread}
+		folder={((previewThread?.folder ?? openThread?.folder) as string | undefined) ?? null}
 		markReadActive={focus.is('reading')}
 		onDocs={(m) => (openMessages = m)}
 		onReply={reply}

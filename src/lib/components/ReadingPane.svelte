@@ -4,7 +4,7 @@
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
-	import type { Message } from '$lib/schema';
+	import type { Message, Thread } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
 	import { docToText } from '$lib/mail/compose';
 	import MessageBody from './MessageBody.svelte';
@@ -12,6 +12,11 @@
 	interface Props {
 		db: MailDatabaseClient;
 		threadId: string | null;
+		/** The thread under the list cursor, from the already-loaded list docs. Drives
+		 *  an INSTANT header/snippet on every cursor move (yazi-style): the reader
+		 *  repaints from in-memory data immediately, while the heavier message query +
+		 *  body iframe (keyed on `threadId`) only fire once the cursor settles. */
+		previewThread?: Thread | null;
 		/** The open thread's folder — drives the Archive ↔ Unarchive toggle. */
 		folder?: string | null;
 		/** Whether the reader currently owns focus (i.e. the thread was actually
@@ -29,6 +34,7 @@
 	const {
 		db,
 		threadId,
+		previewThread = null,
 		folder = null,
 		markReadActive = true,
 		onDocs,
@@ -54,6 +60,33 @@
 	const subject = $derived(docs[0]?.subject || '(no subject)');
 	const starred = $derived(docs.some((m) => m.is_starred));
 
+	// --- instant preview gating (yazi-style) ---
+	// `showMessages` = the loaded messages belong to the thread under the cursor, so
+	// the real thread can render. Until then (fast scroll / still loading) the reader
+	// keeps the SAME shell — subject, sender row, toolbar — and only the body swaps to
+	// a shimmer skeleton, so holding ↑/↓ never shifts the layout, only its text.
+	const loadedThreadId = $derived(docs.length ? String(docs[0].thread_id) : null);
+	const ready = $derived(!!threadId && loadedThreadId === String(threadId));
+	const showMessages = $derived(
+		ready && (!previewThread || String(previewThread.id) === String(threadId)),
+	);
+	const headSubject = $derived(
+		showMessages ? subject : previewThread?.subject || '(no subject)',
+	);
+	const headStarred = $derived(showMessages ? starred : !!previewThread?.starred);
+	// Sender/date for the skeleton's message head — real data we already hold from the
+	// list doc, so only the body content is unknown (and shimmers in).
+	const previewFrom = $derived(
+		previewThread?.participant_text ||
+			(previewThread?.participants ?? [])
+				.map((p) => p.name || p.email)
+				.filter(Boolean)
+				.join(', ') ||
+			previewThread?.subject ||
+			'(unknown)',
+	);
+	const previewDate = $derived(previewThread?.last_message_at ?? 0);
+
 	// A standalone draft thread (every message is a draft) gets a read-only preview
 	// instead of the normal reader; Enter/→ resumes it in the compose overlay.
 	const draftMsg = $derived(docs.length > 0 && docs.every((m) => m.is_draft) ? docs[0] : null);
@@ -65,6 +98,12 @@
 			return '';
 		}
 	});
+	// Draft-ness is known from the thread's folder BEFORE its messages load, so the
+	// draft shell (Continue editing / Discard) shows immediately too — no toolbar flip
+	// between the skeleton and the loaded reader.
+	const isDraft = $derived(
+		showMessages ? !!draftMsg : previewThread?.folder === 'drafts',
+	);
 	function addrList(list: Message['to']): string {
 		return (list ?? []).map((a) => a.name || a.email).filter(Boolean).join(', ');
 	}
@@ -131,19 +170,28 @@
 	}
 </script>
 
-{#if !threadId}
+<!-- Shimmer stand-in for content that hasn't loaded yet (the body). Keeps the
+     reader's layout identical between the instant preview and the settled reader —
+     only these lines swap for the real body, so holding ↑/↓ never shifts the chrome. -->
+{#snippet shimmer(widths: string[])}
+	<div class="sk" aria-hidden="true">
+		{#each widths as w}<div class="sk-line" style:width={w}></div>{/each}
+	</div>
+{/snippet}
+
+{#if !threadId && !previewThread}
 	<div class="placeholder">
 		<div class="ph-mark" aria-hidden="true"><Icon name="mail" size={44} stroke={1.5} /></div>
 		<p class="ph-title">No conversation open</p>
 		<p class="ph-sub">Pick a message with <kbd>↵</kbd> or <kbd>→</kbd>. Move with <kbd>j</kbd>&nbsp;<kbd>k</kbd>.</p>
 	</div>
-{:else if draftMsg}
-	<article class="thread">
+{:else if isDraft}
+	<article class="thread" aria-busy={!showMessages}>
 		<header class="thread-head">
 			<div class="head-col">
 				<div class="subject-row">
 					<span class="draft-tag">Draft</span>
-					<h1 class="subject">{draftMsg.subject || '(no subject)'}</h1>
+					<h1 class="subject">{headSubject}</h1>
 				</div>
 				<div class="toolbar">
 					<Button size="0" accent onclick={() => onEditDraft?.()}>
@@ -159,25 +207,33 @@
 			</div>
 		</header>
 		<section class="message draft-preview">
-			<dl class="draft-fields">
-				<div><dt>To</dt><dd>{addrList(draftMsg.to) || '—'}</dd></div>
-				{#if draftMsg.cc?.length}<div><dt>Cc</dt><dd>{addrList(draftMsg.cc)}</dd></div>{/if}
-			</dl>
-			{#if draftBody}
-				<p class="draft-body">{draftBody}</p>
+			{#if showMessages && draftMsg}
+				<dl class="draft-fields">
+					<div><dt>To</dt><dd>{addrList(draftMsg.to) || '—'}</dd></div>
+					{#if draftMsg.cc?.length}<div><dt>Cc</dt><dd>{addrList(draftMsg.cc)}</dd></div>{/if}
+				</dl>
+				{#if draftBody}
+					<p class="draft-body">{draftBody}</p>
+				{:else}
+					<p class="draft-empty">This draft is empty.</p>
+				{/if}
+				<p class="draft-hint">Press <kbd>↵</kbd> or <kbd>→</kbd> to keep writing.</p>
 			{:else}
-				<p class="draft-empty">This draft is empty.</p>
+				<!-- Same fields shell; the body content shimmers in. -->
+				<dl class="draft-fields">
+					<div><dt>To</dt><dd>{previewFrom}</dd></div>
+				</dl>
+				{@render shimmer(['100%', '94%', '70%'])}
 			{/if}
-			<p class="draft-hint">Press <kbd>↵</kbd> or <kbd>→</kbd> to keep writing.</p>
 		</section>
 	</article>
 {:else}
-	<article class="thread">
+	<article class="thread" aria-busy={!showMessages}>
 		<header class="thread-head">
 			<div class="head-col">
 				<div class="subject-row">
-					{#if starred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
-					<h1 class="subject">{subject}</h1>
+					{#if headStarred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
+					<h1 class="subject">{headSubject}</h1>
 				</div>
 				{#if onReply || onAct}
 					<div class="toolbar">
@@ -200,28 +256,46 @@
 			</div>
 		</header>
 
-		{#each docs as m (m.id)}
-			<section class="message" class:collapsed={!isExpanded(String(m.id))}>
-				<button class="msg-head" onclick={() => toggle(String(m.id))} {@attach ripple({ opacity: 0.08 })}>
-					<Avatar name={who(m)} size="2" />
+		{#if showMessages}
+			{#each docs as m (m.id)}
+				<section class="message" class:collapsed={!isExpanded(String(m.id))}>
+					<button class="msg-head" onclick={() => toggle(String(m.id))} {@attach ripple({ opacity: 0.08 })}>
+						<Avatar name={who(m)} size="2" />
+						<span class="meta">
+							<span class="from">{who(m)}</span>
+							<span class="to">to {recipients(m)}</span>
+						</span>
+						<span class="date">{fmt(m.date)}</span>
+					</button>
+					{#if isExpanded(String(m.id))}
+						<div class="body-surface">
+							<MessageBody
+								messageId={String(m.id)}
+								excerpt={m.text_excerpt ?? ''}
+								hasHtml={!!m.body_keys?.html} />
+						</div>
+					{:else}
+						<button class="snippet" onclick={() => toggle(String(m.id))}>{m.text_excerpt?.slice(0, 160) ?? ''}</button>
+					{/if}
+				</section>
+			{/each}
+		{:else}
+			<!-- Skeleton: the SAME message shell (avatar, sender, date, framed body) as
+			     the loaded reader, with the sender/date real and only the body shimmering. -->
+			<section class="message">
+				<div class="msg-head static">
+					<Avatar name={previewFrom} size="2" />
 					<span class="meta">
-						<span class="from">{who(m)}</span>
-						<span class="to">to {recipients(m)}</span>
+						<span class="from">{previewFrom}</span>
+						<span class="to"><span class="sk-line inline" style:width="120px"></span></span>
 					</span>
-					<span class="date">{fmt(m.date)}</span>
-				</button>
-				{#if isExpanded(String(m.id))}
-					<div class="body-surface">
-						<MessageBody
-							messageId={String(m.id)}
-							excerpt={m.text_excerpt ?? ''}
-							hasHtml={!!m.body_keys?.html} />
-					</div>
-				{:else}
-					<button class="snippet" onclick={() => toggle(String(m.id))}>{m.text_excerpt?.slice(0, 160) ?? ''}</button>
-				{/if}
+					<span class="date">{fmt(previewDate)}</span>
+				</div>
+				<div class="body-surface skeleton">
+					{@render shimmer(['100%', '97%', '92%', '99%', '68%', '100%', '85%', '54%'])}
+				</div>
 			</section>
-		{/each}
+		{/if}
 	</article>
 {/if}
 
@@ -345,6 +419,61 @@
 		letter-spacing: -0.01em;
 		margin: 0;
 		line-height: 1.25;
+	}
+	/* --- Skeleton (cursor still moving / body not loaded yet) --- */
+	/* A non-interactive message head, styled exactly like the real one so the layout
+	   doesn't shift when the messages load. */
+	.msg-head.static {
+		cursor: default;
+	}
+	/* The framed body sheet is reused verbatim (same border/radius/shadow); only its
+	   inner content swaps from shimmer lines to the iframe, so the card never jumps. */
+	.body-surface.skeleton {
+		background: var(--color-bg-1);
+		min-height: 180px;
+	}
+	.sk {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+		padding: var(--space-4) var(--space-4);
+	}
+	.sk-line {
+		height: 0.72em;
+		border-radius: var(--radius-sm, 4px);
+		background: var(--color-bg-3, var(--color-bg-2));
+		position: relative;
+		overflow: hidden;
+	}
+	.sk-line.inline {
+		display: inline-block;
+		height: 0.7em;
+		vertical-align: middle;
+	}
+	/* The travelling highlight. Disabled under reduced-motion (the bars still read as
+	   placeholders, just static). */
+	.sk-line::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		transform: translateX(-100%);
+		background: linear-gradient(
+			90deg,
+			transparent,
+			color-mix(in oklab, var(--color-text) 9%, transparent),
+			transparent
+		);
+		animation: sk-shimmer 1.4s ease-in-out infinite;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sk-line::after {
+			animation: none;
+		}
+	}
+	@keyframes sk-shimmer {
+		100% {
+			transform: translateX(100%);
+		}
 	}
 	.toolbar {
 		display: flex;
