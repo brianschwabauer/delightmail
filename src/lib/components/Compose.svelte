@@ -11,7 +11,7 @@
 	const EditorView = EditorComponents.Editor as unknown as import('svelte').Component<{
 		editor: EditorClass;
 	}>;
-	import { Button, Modal, toast } from '@delightstack/components';
+	import { Button, Expand, Modal, toast } from '@delightstack/components';
 	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
@@ -358,6 +358,59 @@
 	}
 </script>
 
+<!-- One recipient row (To / Cc / Bcc). `isTo` renders the always-present To row
+     with its Cc/Bcc convenience toggles; Cc and Bcc reuse this inside <Expand>. -->
+{#snippet recipientRow(f: 'to' | 'cc' | 'bcc', label: string, chips: Address[], isTo: boolean)}
+	<div class="row">
+		<label for={f}>{label}</label>
+		<div class="chips">
+			{#each chips as a, i (i)}
+				<span class="chip">{a.name || a.email}<button aria-label="Remove" onclick={() => removeChip(f, i)}><Icon name="x" size={13} /></button></span>
+			{/each}
+			<div class="ac-wrap">
+				<input
+					id={f}
+					value={fieldValue(f)}
+					placeholder={f === 'to' ? 'recipient@example.com' : ''}
+					oninput={(e) => setField(f, (e.target as HTMLInputElement).value)}
+					onfocus={() => (acField = f)}
+					onblur={() => setTimeout(() => { if (acField === f) acField = null; }, 150)}
+					onkeydown={(e) => {
+						// Enter / comma commit the typed address and keep the caret in the
+						// field. Tab ALSO commits any typed address but must NOT be
+						// preventDefault-ed — the browser's default Tab has to move focus
+						// to the next field so the whole form is keyboard-navigable.
+						if (e.key === 'Enter' || e.key === ',') {
+							e.preventDefault();
+							commitChip(f);
+						} else if (e.key === 'Tab' && fieldValue(f).trim()) {
+							commitChip(f);
+						}
+					}} />
+				{#if acField === f && suggestions.length}
+					<ul class="ac-menu">
+						{#each suggestions as c (c.email)}
+							<li>
+								<button onmousedown={(e) => { e.preventDefault(); pickSuggestion(f, c); }}>
+									{#if c.name}<strong>{c.name}</strong>{/if}<span class="ac-email">{c.email}</span>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+		</div>
+		{#if isTo}
+			<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
+			     the Tab sequence so Tab flows To → Subject → body directly. -->
+			<span class="toggles">
+				{#if !showCc}<Button size="0" transparent tabindex={-1} onclick={() => (showCc = true)}>Cc</Button>{/if}
+				{#if !showBcc}<Button size="0" transparent tabindex={-1} onclick={() => (showBcc = true)}>Bcc</Button>{/if}
+			</span>
+		{/if}
+	</div>
+{/snippet}
+
 <!-- `.compose-host` scopes the no-animation CSS override to this modal only, so
      the dialog and its backdrop appear instantly (snappy) instead of animating. -->
 <div class="compose-host">
@@ -378,58 +431,11 @@
 					</Button>
 				</div>
 
-				{#each [{ f: 'to', label: 'To', chips: to, input: toInput, show: true }, { f: 'cc', label: 'Cc', chips: cc, input: ccInput, show: showCc }, { f: 'bcc', label: 'Bcc', chips: bcc, input: bccInput, show: showBcc }] as row (row.f)}
-					{#if row.show}
-						<div class="row">
-							<label for={row.f}>{row.label}</label>
-							<div class="chips">
-								{#each row.chips as a, i (i)}
-									<span class="chip">{a.name || a.email}<button aria-label="Remove" onclick={() => removeChip(row.f as 'to' | 'cc' | 'bcc', i)}><Icon name="x" size={13} /></button></span>
-								{/each}
-								<div class="ac-wrap">
-									<input
-										id={row.f}
-										value={fieldValue(row.f as 'to' | 'cc' | 'bcc')}
-										placeholder={row.f === 'to' ? 'recipient@example.com' : ''}
-										oninput={(e) => setField(row.f as 'to' | 'cc' | 'bcc', (e.target as HTMLInputElement).value)}
-										onfocus={() => (acField = row.f as 'to' | 'cc' | 'bcc')}
-										onblur={() => setTimeout(() => { if (acField === row.f) acField = null; }, 150)}
-										onkeydown={(e) => {
-											// Enter / comma commit the typed address and keep the caret in the
-											// field. Tab ALSO commits any typed address but must NOT be
-											// preventDefault-ed — the browser's default Tab has to move focus
-											// to the next field so the whole form is keyboard-navigable.
-											if (e.key === 'Enter' || e.key === ',') {
-												e.preventDefault();
-												commitChip(row.f as 'to' | 'cc' | 'bcc');
-											} else if (e.key === 'Tab' && fieldValue(row.f as 'to' | 'cc' | 'bcc').trim()) {
-												commitChip(row.f as 'to' | 'cc' | 'bcc');
-											}
-										}} />
-									{#if acField === row.f && suggestions.length}
-										<ul class="ac-menu">
-											{#each suggestions as c (c.email)}
-												<li>
-													<button onmousedown={(e) => { e.preventDefault(); pickSuggestion(row.f as 'to' | 'cc' | 'bcc', c); }}>
-														{#if c.name}<strong>{c.name}</strong>{/if}<span class="ac-email">{c.email}</span>
-													</button>
-												</li>
-											{/each}
-										</ul>
-									{/if}
-								</div>
-							</div>
-							{#if row.f === 'to'}
-								<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
-								     the Tab sequence so Tab flows To → Subject → body directly. -->
-								<span class="toggles">
-									{#if !showCc}<Button size="0" transparent tabindex={-1} onclick={() => (showCc = true)}>Cc</Button>{/if}
-									{#if !showBcc}<Button size="0" transparent tabindex={-1} onclick={() => (showBcc = true)}>Bcc</Button>{/if}
-								</span>
-							{/if}
-						</div>
-					{/if}
-				{/each}
+				<!-- To is always visible; Cc/Bcc slide open (delightstack <Expand>) when
+				     toggled instead of snapping in. -->
+				{@render recipientRow('to', 'To', to, true)}
+				<Expand show={showCc}>{@render recipientRow('cc', 'Cc', cc, false)}</Expand>
+				<Expand show={showBcc}>{@render recipientRow('bcc', 'Bcc', bcc, false)}</Expand>
 
 				<div class="row">
 					<label for="subject">Subject</label>
