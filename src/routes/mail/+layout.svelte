@@ -22,7 +22,7 @@
 	const view = $derived(page.params.view ?? 'inbox');
 
 	const kb = provideKeyboard();
-	const actions = provideActions();
+	const actions = provideActions(data.db);
 	const scope = provideScope();
 	const focus = provideFocus();
 	let helpOpen = $state(false);
