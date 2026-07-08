@@ -66,18 +66,24 @@
 	});
 
 	// --- keyboard folder navigation (yazi's leftmost / "parent" column) ---
+	// Arrowing through the rail opens each folder as it lands, so the highlighted
+	// folder IS the open folder — the ListItem `active` state is the only cue, and
+	// there's no separate focus outline to reconcile. Moves loop past either end.
 	let hi = $state(0);
-	// Entering the folders pane starts the highlight on the current folder.
+	// Keep the cursor synced to whatever folder is actually open (route changes,
+	// entering the pane, `g i`, a click, …).
 	$effect(() => {
-		if (focus.is('folders')) {
-			untrack(() => {
-				const i = FOLDERS.findIndex((f) => f.id === view);
-				hi = i >= 0 ? i : 0;
-			});
-		}
+		const i = FOLDERS.findIndex((f) => f.id === view);
+		if (i >= 0) untrack(() => (hi = i));
 	});
 	function moveHi(delta: number) {
-		hi = Math.min(FOLDERS.length - 1, Math.max(0, hi + delta));
+		const n = FOLDERS.length;
+		hi = (((hi + delta) % n) + n) % n; // wrap past the first/last folder
+		void goto(`/mail/${FOLDERS[hi].id}`);
+	}
+	function jumpHi(index: number) {
+		hi = Math.min(FOLDERS.length - 1, Math.max(0, index));
+		void goto(`/mail/${FOLDERS[hi].id}`);
 	}
 	function openFolder(id: string) {
 		void goto(`/mail/${id}`);
@@ -92,8 +98,8 @@
 			{ keys: 'k', description: 'Previous folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => moveHi(-1) },
 			{ keys: 'ArrowDown', description: 'Next folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => moveHi(1) },
 			{ keys: 'ArrowUp', description: 'Previous folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => moveHi(-1) },
-			{ keys: 'Home', description: 'First folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => (hi = 0) },
-			{ keys: 'End', description: 'Last folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => (hi = FOLDERS.length - 1) },
+			{ keys: 'Home', description: 'First folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => jumpHi(0) },
+			{ keys: 'End', description: 'Last folder', group: 'Folders', context: 'folders', when: inFolders, handler: () => jumpHi(FOLDERS.length - 1) },
 			{ keys: 'l', description: 'Open folder → list', group: 'Folders', context: 'folders', when: inFolders, handler: () => openFolder(FOLDERS[hi].id) },
 			{ keys: 'ArrowRight', description: 'Open folder → list', group: 'Folders', context: 'folders', when: inFolders, handler: () => openFolder(FOLDERS[hi].id) },
 			{ keys: 'Enter', description: 'Open folder → list', group: 'Folders', context: 'folders', when: inFolders, handler: () => openFolder(FOLDERS[hi].id) },
@@ -113,11 +119,10 @@
 	<div class="brand"><span class="brand-mark"></span>Mail</div>
 
 	<List type="button" dense class="rail-list">
-		{#each FOLDERS as f, i (f.id)}
+		{#each FOLDERS as f (f.id)}
 			<ListItem
 				href="/mail/{f.id}"
 				active={view === f.id}
-				class={focus.is('folders') && i === hi ? 'khl' : ''}
 				onclick={() => focus.set('list')}>
 				<span class="glyph"><Icon name={f.icon} size={17} /></span>
 				<span class="label">{f.label}</span>
@@ -211,16 +216,12 @@
 		justify-content: flex-start;
 		text-align: left;
 	}
+	/* Active row: lean on delightstack's own ListItem `active` highlight (a soft
+	   neutral fill); we only add a little weight so the open folder reads clearly.
+	   No competing background of our own (that was the "two backgrounds" look). */
 	:global(.rail-list .list-item.active > a),
 	:global(.rail-list .list-item.active > button) {
-		background: var(--dm-accent-soft);
-		color: var(--color-text-active, var(--color-text));
 		font-weight: var(--font-weight-semibold, 600);
-	}
-	/* Keyboard highlight ring when the folders pane owns focus. */
-	:global(.rail-list .list-item.khl > a),
-	:global(.rail-list .list-item.khl > button) {
-		box-shadow: inset 0 0 0 1px var(--dm-focus-ring);
 	}
 	:global(.rail-list .list-item.quiet) {
 		color: var(--color-text-disabled);

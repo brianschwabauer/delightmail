@@ -69,8 +69,9 @@
 		border-radius: var(--radius-md);
 		color: var(--color-text-muted, var(--color-text));
 	}
+	/* Active row uses delightstack's built-in ListItem `active` highlight; we only
+	   un-mute the text + add weight (no separate background of our own). */
 	:global(.settings-nav .list-item.active > a) {
-		background: var(--dm-accent-soft);
 		color: var(--color-text);
 		font-weight: var(--font-weight-semibold, 600);
 	}
