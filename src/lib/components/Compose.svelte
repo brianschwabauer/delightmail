@@ -479,6 +479,24 @@
 	:global(.compose-host .modal-bg) {
 		animation: none !important;
 	}
+
+	/* The editor's block menus — the slash "/" menu, the "+" add-block menu, the
+	   selection toolbar and the per-block settings popover — portal themselves to
+	   <body> (to escape the editor's overflow) with a hardcoded low z-index (40–60).
+	   Out there they share the root stacking context with this modal's panel, which
+	   sits at --layer-modal + 1 (401), so the menus open *behind* the dialog and are
+	   invisible. Lift them onto delightstack's --layer-popover (500) — the layer
+	   meant to sit above modals. Scoped to direct <body> children so it only touches
+	   the portalled editor menus, never same-named elements nested in the app (e.g.
+	   the settings page's own `.settings`); !important beats the editor's own
+	   Svelte-scoped `.slash-menu` rule, which has higher specificity. */
+	:global(body > .slash-menu),
+	:global(body > .menu-wrap),
+	:global(body > .floating),
+	:global(body > .settings),
+	:global(body > .mobile-bar) {
+		z-index: var(--layer-popover, 500) !important;
+	}
 	.compose {
 		display: flex;
 		flex-direction: column;
