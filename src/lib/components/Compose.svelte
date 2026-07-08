@@ -332,15 +332,29 @@
 		}
 	}
 
+	// Ctrl/Cmd+Enter sends. The rich-text editor binds Mod-Enter to "insert a line"
+	// on its own contenteditable, so a bubble-phase handler would run only AFTER
+	// the newline is already in. Catch it in the CAPTURE phase — before the editor
+	// (a descendant) ever sees the key — and stop propagation so the message sends
+	// without a stray blank line. Handled here, not in onKeydown, for that reason.
+	function onKeydownCapture(e: KeyboardEvent): void {
+		if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+			e.preventDefault();
+			e.stopPropagation();
+			void send();
+		}
+	}
+
 	function onKeydown(e: KeyboardEvent): void {
 		const mod = e.ctrlKey || e.metaKey;
-		if (mod && e.key === 'Enter') { e.preventDefault(); void send(); }
-		else if (mod && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); fileInput?.click(); }
+		if (mod && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); fileInput?.click(); }
 		else if (mod && e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); showCc = true; }
 		else if (mod && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); showBcc = true; }
 		else if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); cycleIdentity(); }
 		// Escape is deliberately NOT handled here — the Modal owns it, so pressing
 		// Escape closes only the compose dialog, never the mail behind it.
+		// Ctrl/Cmd+Enter (send) lives in onKeydownCapture so the editor can't
+		// insert a newline before we act.
 	}
 </script>
 
@@ -352,6 +366,7 @@
 		<div
 			class="compose"
 			bind:this={overlayEl}
+			onkeydowncapture={onKeydownCapture}
 			onkeydown={onKeydown}
 			ondragover={(e) => e.preventDefault()}
 			ondrop={onDrop}>
