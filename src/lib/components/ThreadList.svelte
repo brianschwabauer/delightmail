@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Avatar } from '@delightstack/components';
+	import { Avatar, Checkbox } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
 	import type { Thread } from '$lib/schema';
@@ -128,18 +128,19 @@
 					{@attach ripple({ opacity: 0.07 })}>
 					<div class="lead">
 						<span class="av"><Avatar name={sender(t)} size={density === 'compact' ? '0' : '1'} /></span>
-						<button
-							class="check"
-							class:on={isSel}
-							aria-label={isSel ? 'Deselect' : 'Select'}
-							aria-pressed={isSel}
-							onclick={(e) => {
-								e.stopPropagation();
-								onCursor(index);
-								onToggleSelect?.(index);
-							}}>
-							<span class="tick" aria-hidden="true"><Icon name="check" size={13} stroke={3} /></span>
-						</button>
+						<!-- Selection uses the real delightstack Checkbox (its own check/uncheck
+						     animation). Wrapping span stops the click from opening the thread. -->
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<span class="check" onclick={(e) => e.stopPropagation()}>
+							<Checkbox
+								checked={isSel}
+								size={density === 'compact' ? '0' : '1'}
+								onchange={() => {
+									onCursor(index);
+									onToggleSelect?.(index);
+								}} />
+						</span>
 					</div>
 					<div class="body">
 						<div class="line1">
@@ -197,8 +198,23 @@
 		cursor: pointer;
 		overflow: hidden;
 	}
-	.row:hover {
-		background: var(--color-bg-2);
+	/* Hover "trail": the tint snaps in instantly on hover and fades back out when
+	   the pointer leaves (matching delightstack's List rows), so sweeping the
+	   list leaves a soft, decaying trail of where you've been. Kept as an overlay
+	   above the cursor/selected backgrounds and below the row content. */
+	.row::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: var(--color-text);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 300ms var(--ease-out, ease);
+		z-index: 1;
+	}
+	.row:hover::before {
+		opacity: 0.06;
+		transition-duration: 0ms;
 	}
 	.row.cursor {
 		background: var(--dm-cursor-bg);
@@ -211,9 +227,11 @@
 		background: color-mix(in oklab, var(--dm-selection-bg), var(--dm-cursor-bg));
 	}
 
-	/* Leading control: avatar by default, a selection tick on hover / when picked. */
+	/* Leading control: the avatar by default; on hover / when selected it swaps to
+	   the delightstack Checkbox (which owns the check/uncheck animation). */
 	.lead {
 		position: relative;
+		z-index: 2;
 		flex-shrink: 0;
 		display: grid;
 		place-items: center;
@@ -227,38 +245,23 @@
 		inset: 0;
 		display: grid;
 		place-items: center;
-		border: none;
-		background: none;
-		padding: 0;
-		cursor: pointer;
 		opacity: 0;
-	}
-	.tick {
-		display: grid;
-		place-items: center;
-		width: 22px;
-		height: 22px;
-		border-radius: 50%;
-		border: 1.5px solid var(--color-border);
-		color: transparent;
-		font-size: 0.7rem;
-		background: var(--color-bg-1);
+		pointer-events: none;
+		transition: opacity var(--duration-fast, 120ms) ease;
 	}
 	.row:hover .check,
 	.row.selected .check {
 		opacity: 1;
+		pointer-events: auto;
 	}
 	.row:hover .av,
 	.row.selected .av {
 		opacity: 0;
 	}
-	.row.selected .tick {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		color: white;
-	}
 
 	.body {
+		position: relative;
+		z-index: 2;
 		flex: 1;
 		min-width: 0;
 		display: flex;
