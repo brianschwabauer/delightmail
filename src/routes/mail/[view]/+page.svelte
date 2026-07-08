@@ -131,16 +131,39 @@
 	/** Show the cursor thread in the reading pane as a live preview, without
 	 *  stealing focus (yazi-style: moving the cursor previews the "child"). The
 	 *  reader only marks-read once it's actually focused, so previewing is free.
-	 *  Drafts resume in the compose overlay, so they aren't previewed here. */
+	 *  Drafts preview too (a read-only summary); Enter/→ resumes them in compose. */
 	function previewCursor() {
-		if (!docs.length || view === 'drafts') return;
+		if (!docs.length) return;
 		const t = docs[cursor];
 		if (t) openId = String(t.id);
 	}
+	/** Plain page move / next-thread step — clamps at the ends (no wrap). */
 	function move(delta: number) {
 		if (!docs.length) return;
 		cursor = clamp(cursor + delta);
 		anchor = null; // a plain move re-anchors the next Shift-range
+		previewCursor();
+	}
+	/** Line move (j/k/↑/↓): wraps past the first/last row so you can loop around. */
+	function moveLine(dir: -1 | 1) {
+		if (!docs.length) return;
+		const n = docs.length;
+		cursor = (((cursor + dir) % n) + n) % n;
+		anchor = null;
+		previewCursor();
+	}
+	/** Jump move (Ctrl+↑/↓, ×5): clamps to the edge from the middle, but once
+	 *  already AT the edge it wraps to the far end and keeps jumping from there —
+	 *  so it only loops at the boundary, never mid-list. */
+	function moveJump(dir: -1 | 1) {
+		if (!docs.length) return;
+		const n = docs.length;
+		const last = n - 1;
+		const STEP = 5;
+		const atEdge = dir < 0 ? cursor === 0 : cursor === last;
+		const target = atEdge ? (dir < 0 ? last : 0) + dir * (STEP - 1) : cursor + dir * STEP;
+		cursor = clamp(target);
+		anchor = null;
 		previewCursor();
 	}
 	function cursorTo(i: number) {
@@ -206,9 +229,15 @@
 			return;
 		}
 		if (!focus.is('list')) return;
-		const delta = dir * (kind === 'line' ? 1 : kind === 'jump' ? 5 : pageStep());
-		if (extend) extendTo(cursor + delta);
-		else move(delta);
+		if (extend) {
+			// A growing selection doesn't wrap — extend clamps to the ends.
+			const delta = dir * (kind === 'line' ? 1 : kind === 'jump' ? 5 : pageStep());
+			extendTo(cursor + delta);
+			return;
+		}
+		if (kind === 'line') moveLine(dir);
+		else if (kind === 'jump') moveJump(dir);
+		else move(dir * pageStep()); // page: clamp, never wrap
 	}
 	function navEdge(where: 'top' | 'bottom', extend: boolean) {
 		if (focus.is('reading')) {
@@ -265,7 +294,12 @@
 		openId = String(t.id);
 	}
 	async function openDraft(t: Thread) {
-		const m = await latestMessage(String(t.id));
+		// Prefer the draft message the reader already loaded (the Drafts preview
+		// mirrors it up via openMessages). The fallback `latestMessage` orders by
+		// `date`, which the server-side search rejects — so relying on it alone
+		// would silently fail to resume the draft.
+		const loaded = openMessages.find((mm) => String(mm.thread_id) === String(t.id)) ?? null;
+		const m = loaded ?? (await latestMessage(String(t.id)));
 		if (!m) return;
 		let bodyDoc: unknown;
 		try {
@@ -437,6 +471,18 @@
 		return (targets()[0]?.unread_count ?? 0) > 0 ? 'read' : 'unread';
 	}
 
+	/** The thread currently shown in the reader (for the Archive/Unarchive toggle). */
+	const openThread = $derived(docs.find((d) => String(d.id) === openId) ?? null);
+
+	// `a` toggles: archive from anywhere, but un-archive (back to inbox) when the
+	// target already lives in the archive — so the same key does the sensible
+	// thing in the Archive folder (§6 mirrors the reader's Archive/Unarchive button).
+	function toggleArchive() {
+		const t = targets()[0];
+		if (t && (t.folder as string) === 'archive') void act('move', { folder: 'inbox' });
+		else void act('archive');
+	}
+
 	async function act(action: ThreadActionName, opts: { folder?: string } = {}) {
 		const ts = targets();
 		if (!ts.length) return;
@@ -537,7 +583,7 @@
 			{ keys: 'J', description: 'Next thread / select down', group: 'Select', context: 'list', when: listOrReading, handler: () => (focus.is('reading') ? stepThread(1) : selectAndMove(1)) },
 			{ keys: 'K', description: 'Prev thread / select up', group: 'Select', context: 'list', when: listOrReading, handler: () => (focus.is('reading') ? stepThread(-1) : selectAndMove(-1)) },
 			// Actions — operate on the selection (or cursor) from any pane.
-			{ keys: 'a', description: 'Archive', group: 'Actions', context: 'list', handler: () => act('archive') },
+			{ keys: 'a', description: 'Archive / Unarchive', group: 'Actions', context: 'list', handler: toggleArchive },
 			{ keys: 'd', description: 'Trash', group: 'Actions', context: 'list', handler: () => act('trash') },
 			{ keys: 'D', description: 'Delete forever', group: 'Actions', context: 'list', handler: askDelete },
 			{ keys: 's', description: 'Toggle star', group: 'Actions', context: 'list', handler: () => act(starTarget()) },
@@ -667,10 +713,12 @@
 	<ReadingPane
 		{db}
 		threadId={openId}
+		folder={(openThread?.folder as string | undefined) ?? null}
 		markReadActive={focus.is('reading')}
 		onDocs={(m) => (openMessages = m)}
 		onReply={reply}
-		onAct={act} />
+		onAct={act}
+		onEditDraft={() => openThread && void openDraft(openThread)} />
 </div>
 
 <style>

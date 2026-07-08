@@ -6,11 +6,14 @@
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Message } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
+	import { docToText } from '$lib/mail/compose';
 	import MessageBody from './MessageBody.svelte';
 
 	interface Props {
 		db: MailDatabaseClient;
 		threadId: string | null;
+		/** The open thread's folder — drives the Archive ↔ Unarchive toggle. */
+		folder?: string | null;
 		/** Whether the reader currently owns focus (i.e. the thread was actually
 		 *  opened, not just previewed by moving the list cursor). Marking-read is
 		 *  gated on this so scrolling the list with j/k never silently reads mail. */
@@ -19,9 +22,20 @@
 		 *  forward from data already in hand — no extra round-trip that could hang. */
 		onDocs?: (messages: Message[]) => void;
 		onReply?: (kind: 'reply' | 'reply_all' | 'forward') => void;
-		onAct?: (action: ThreadActionName) => void;
+		onAct?: (action: ThreadActionName, opts?: { folder?: string }) => void;
+		/** Resume the previewed draft in the compose overlay (Drafts folder). */
+		onEditDraft?: () => void;
 	}
-	const { db, threadId, markReadActive = true, onDocs, onReply, onAct }: Props = $props();
+	const {
+		db,
+		threadId,
+		folder = null,
+		markReadActive = true,
+		onDocs,
+		onReply,
+		onAct,
+		onEditDraft,
+	}: Props = $props();
 
 	// Reactive query function — the search re-queries when the open thread changes.
 	const messages = db.search('message', () => ({
@@ -39,6 +53,21 @@
 	const latestId = $derived(docs.length ? docs[docs.length - 1].id : null);
 	const subject = $derived(docs[0]?.subject || '(no subject)');
 	const starred = $derived(docs.some((m) => m.is_starred));
+
+	// A standalone draft thread (every message is a draft) gets a read-only preview
+	// instead of the normal reader; Enter/→ resumes it in the compose overlay.
+	const draftMsg = $derived(docs.length > 0 && docs.every((m) => m.is_draft) ? docs[0] : null);
+	const draftBody = $derived.by(() => {
+		if (!draftMsg?.draft_doc) return '';
+		try {
+			return docToText(JSON.parse(draftMsg.draft_doc)).trim();
+		} catch {
+			return '';
+		}
+	});
+	function addrList(list: Message['to']): string {
+		return (list ?? []).map((a) => a.name || a.email).filter(Boolean).join(', ');
+	}
 
 	// Expansion: latest message open by default, plus explicit user toggles.
 	// Reset the overrides when the open thread changes (untracked to avoid loops).
@@ -108,6 +137,38 @@
 		<p class="ph-title">No conversation open</p>
 		<p class="ph-sub">Pick a message with <kbd>↵</kbd> or <kbd>→</kbd>. Move with <kbd>j</kbd>&nbsp;<kbd>k</kbd>.</p>
 	</div>
+{:else if draftMsg}
+	<article class="thread">
+		<header class="thread-head">
+			<div class="subject-row">
+				<span class="draft-tag">Draft</span>
+				<h1 class="subject">{draftMsg.subject || '(no subject)'}</h1>
+			</div>
+			<div class="toolbar">
+				<Button size="0" accent onclick={() => onEditDraft?.()}>
+					<Icon name="pencil" size={15} /> Continue editing
+				</Button>
+				{#if onAct}
+					<span class="tb-gap"></span>
+					<Button size="0" transparent onclick={() => onAct('trash')}>
+						<Icon name="trash" size={15} /> Discard
+					</Button>
+				{/if}
+			</div>
+		</header>
+		<section class="message draft-preview">
+			<dl class="draft-fields">
+				<div><dt>To</dt><dd>{addrList(draftMsg.to) || '—'}</dd></div>
+				{#if draftMsg.cc?.length}<div><dt>Cc</dt><dd>{addrList(draftMsg.cc)}</dd></div>{/if}
+			</dl>
+			{#if draftBody}
+				<p class="draft-body">{draftBody}</p>
+			{:else}
+				<p class="draft-empty">This draft is empty.</p>
+			{/if}
+			<p class="draft-hint">Press <kbd>↵</kbd> or <kbd>→</kbd> to keep writing.</p>
+		</section>
+	</article>
 {:else}
 	<article class="thread">
 		<header class="thread-head">
@@ -124,7 +185,11 @@
 					{/if}
 					{#if onAct}
 						<span class="tb-gap"></span>
-						<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+						{#if folder === 'archive'}
+							<Button size="0" transparent onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={15} /> Unarchive</Button>
+						{:else}
+							<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+						{/if}
 						<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
 					{/if}
 				</div>
@@ -202,6 +267,62 @@
 		display: inline-flex;
 		align-items: center;
 		color: var(--color-warning);
+	}
+	/* --- Draft preview --- */
+	.draft-tag {
+		align-self: center;
+		font-size: var(--font-size-00);
+		font-weight: var(--font-weight-semibold, 600);
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--color-primary);
+		background: var(--dm-accent-soft);
+		padding: 2px var(--space-2);
+		border-radius: var(--radius-cap, 99px);
+	}
+	.draft-preview {
+		max-width: 76ch;
+		margin: var(--space-4) auto;
+		padding: 0 var(--space-5);
+	}
+	.draft-fields {
+		margin: 0 0 var(--space-4);
+		padding: 0 0 var(--space-3);
+		border-bottom: 1px solid var(--dm-hairline);
+	}
+	.draft-fields > div {
+		display: flex;
+		gap: var(--space-2);
+		font-size: var(--font-size-0);
+		padding: 2px 0;
+	}
+	.draft-fields dt {
+		width: 40px;
+		flex-shrink: 0;
+		color: var(--color-text-disabled);
+	}
+	.draft-fields dd {
+		margin: 0;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.draft-body {
+		margin: 0;
+		white-space: pre-wrap;
+		line-height: 1.6;
+		color: var(--color-text);
+	}
+	.draft-empty {
+		margin: 0;
+		color: var(--color-text-disabled);
+		font-style: italic;
+	}
+	.draft-hint {
+		margin: var(--space-5) 0 0;
+		font-size: var(--font-size-00);
+		color: var(--color-text-disabled);
 	}
 	.subject {
 		font-size: var(--font-size-3);
