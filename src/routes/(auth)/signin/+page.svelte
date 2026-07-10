@@ -8,7 +8,7 @@
 	let email = $state('');
 	let code = $state('');
 	let stage = $state<'email' | 'code'>('email');
-	let error = $state('');
+	let error = $state(data.error ?? '');
 	let notice = $state('');
 	let busy = $state(false);
 	let passkeySupported = $state(false);

@@ -15,6 +15,7 @@ const SHELL_CACHE = `dm-shell-${version}`;
 // previous version's cached private bodies (bounds staleness, avoids serving an
 // old deploy's content). Also fully cleared on sign-out via the message handler.
 const BODY_CACHE = `dm-bodies-${version}`;
+const PAGE_CACHE = `dm-pages-${version}`;
 const SHELL_ASSETS = [...build, ...files];
 
 sw.addEventListener('install', (event) => {
@@ -30,7 +31,9 @@ sw.addEventListener('activate', (event) => {
 	event.waitUntil(
 		(async () => {
 			for (const key of await caches.keys()) {
-				if (key !== SHELL_CACHE && key !== BODY_CACHE) await caches.delete(key);
+				if (key !== SHELL_CACHE && key !== BODY_CACHE && key !== PAGE_CACHE) {
+					await caches.delete(key);
+				}
 			}
 			await sw.clients.claim();
 		})(),
@@ -58,17 +61,32 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// Navigations → stale-while-revalidate (§10.4): serve the cached shell instantly
+	// Navigations → stale-while-revalidate (§10.4): serve the cached page instantly
 	// so cold PWA start is fast, and refresh it in the background. The real data
 	// still comes from the DatabaseClient's IndexedDB mirror after boot.
+	//
+	// Cache per pathname, never under a single shared key. A SvelteKit SSR document
+	// is only valid for the URL it was rendered for: at hydration the client
+	// re-derives the route and its params from `location.href`, but replays the
+	// `node_ids` baked into the document. Serving /mail/inbox's HTML at `/` therefore
+	// runs mail/[view]'s load() with `params` = {} and throws. Search params don't
+	// change the route, so they're excluded from the key to bound the cache.
 	if (req.mode === 'navigate') {
 		event.respondWith(
 			(async () => {
-				const cache = await caches.open(SHELL_CACHE);
-				const cached = (await cache.match('/')) ?? (await cache.match(req));
-				const network = fetch(req)
+				const cache = await caches.open(PAGE_CACHE);
+				const key = new Request(url.origin + url.pathname);
+				const cached = await cache.match(key);
+				// `redirect: 'manual'` keeps the SW from swallowing the auth redirects:
+				// the opaqueredirect is handed back to the browser, which follows it and
+				// updates the address bar. Letting fetch() follow would paint /signin's
+				// HTML under the requested URL — the same URL/document mismatch again.
+				const network = fetch(new Request(req, { redirect: 'manual' }))
 					.then((res) => {
-						if (res.ok) void cache.put('/', res.clone());
+						if (res.ok && !res.redirected) void cache.put(key, res.clone());
+						// Auth state changed (e.g. signed out) — this page now redirects,
+						// so drop the stale copy instead of serving it again next time.
+						else if (res.type === 'opaqueredirect') void cache.delete(key);
 						return res;
 					})
 					.catch(() => null);
@@ -78,8 +96,10 @@ sw.addEventListener('fetch', (event) => {
 				}
 				return (
 					(await network) ??
-					(await cache.match(SHELL_ASSETS[0])) ??
-					new Response('Offline', { status: 503 })
+					new Response('Offline', {
+						status: 503,
+						headers: { 'content-type': 'text/plain' },
+					})
 				);
 			})(),
 		);
@@ -105,8 +125,7 @@ sw.addEventListener('message', (event) => {
 
 async function clearPrivateCaches(): Promise<void> {
 	await caches.delete(BODY_CACHE);
-	const shell = await caches.open(SHELL_CACHE);
-	await shell.delete('/');
+	await caches.delete(PAGE_CACHE);
 }
 
 // --- Web push (§10.4) ---

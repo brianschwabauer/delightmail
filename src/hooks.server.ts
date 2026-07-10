@@ -77,6 +77,61 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 };
 
 // ---------------------------------------------------------------------------
+// 0b. Email links — the two auth routes a user reaches by clicking a link in an
+//     email. createAuthHandle answers both with `{ jwt, decoded_jwt, redirect }`
+//     JSON plus a Set-Cookie, which is right for the AuthClient's fetch() but
+//     dumps raw JSON in the face of anyone arriving by navigation. Rewrite the
+//     JSON into a real redirect, carrying the session cookie across.
+// ---------------------------------------------------------------------------
+const EMAIL_LINK_ROUTES = new Set([
+	'/api/auth/signin/email/verify', // magic-link sign-in
+	'/api/auth/email/verify/confirm', // address verification after signup
+]);
+
+/** Never let `?redirect=` bounce the user off-origin. */
+function safeRedirect(target: unknown): string {
+	if (typeof target !== 'string') return '/';
+	if (!target.startsWith('/') || target.startsWith('//')) return '/';
+	return target;
+}
+
+const emailLinkHandle: Handle = async ({ event, resolve }) => {
+	const navigated =
+		event.request.method === 'GET' &&
+		EMAIL_LINK_ROUTES.has(event.url.pathname) &&
+		(event.request.headers.get('accept') ?? '').includes('text/html');
+	if (!navigated) return resolve(event);
+
+	const response = await resolve(event);
+	const body = (await response.clone().json().catch(() => ({}))) as {
+		redirect?: string;
+		message?: string;
+	};
+
+	// Carry Set-Cookie over by hand: `new Headers(res.headers)` is not guaranteed
+	// to preserve multiple set-cookie entries, and the session cookie is the whole
+	// point of the round trip.
+	const headers = new Headers({ 'cache-control': 'no-store' });
+	for (const cookie of response.headers.getSetCookie()) headers.append('set-cookie', cookie);
+
+	if (response.ok) {
+		headers.set('location', safeRedirect(body.redirect));
+		return new Response(null, { status: 303, headers });
+	}
+
+	// Send them back to sign in with the reason rather than a JSON error blob. Only
+	// a 4xx carries a message meant for the user (expired or already-used link); a
+	// 5xx is an infrastructure failure whose text has no business in the URL bar.
+	const client_error = response.status >= 400 && response.status < 500;
+	const reason =
+		client_error && typeof body.message === 'string' && body.message.length <= 200
+			? body.message
+			: 'That sign-in link is no longer valid. Request a new one.';
+	headers.set('location', `/signin?error=${encodeURIComponent(reason)}`);
+	return new Response(null, { status: 303, headers });
+};
+
+// ---------------------------------------------------------------------------
 // 1. Auth — magic link + passkeys + sessions + /api/auth/*
 // ---------------------------------------------------------------------------
 const authHandle = createAuthHandle({
@@ -231,6 +286,7 @@ const mailHandle = createMailHandle();
 export const handle = sequence(
 	...((dev ? [createDevHandle()] : []) as unknown as Handle[]),
 	signupGateHandle,
+	emailLinkHandle,
 	authHandle as unknown as Handle,
 	appHandle,
 	websocketHandle as unknown as Handle,
