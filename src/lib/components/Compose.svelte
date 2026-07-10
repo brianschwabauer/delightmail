@@ -11,10 +11,12 @@
 	const EditorView = EditorComponents.Editor as unknown as import('svelte').Component<{
 		editor: EditorClass;
 	}>;
-	import { Button, Expand, Modal, toast } from '@delightstack/components';
+	import { Avatar, Button, Expand, Input, Modal, toast } from '@delightstack/components';
+	import type { InputOption } from '@delightstack/components';
 	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
+	import { contactAvatarUrl } from '$lib/mail/avatar';
 	import { mergeSignatureDoc, docToText } from '$lib/mail/compose';
 	import { DraftAutosaver } from '$lib/mail/draft-autosave';
 
@@ -59,34 +61,30 @@
 	const identities = db.search('identity', { limit: 50 });
 
 	let identityId = $state(init.identity_id ?? '');
-	let toInput = $state('');
-	let ccInput = $state('');
-	let bccInput = $state('');
 	let showCc = $state((init.cc?.length ?? 0) > 0);
 	let showBcc = $state((init.bcc?.length ?? 0) > 0);
-	let to = $state<Address[]>(init.to ?? []);
-	let cc = $state<Address[]>(init.cc ?? []);
-	let bcc = $state<Address[]>(init.bcc ?? []);
+	// Recipients are held as the delightstack <Input multiple> value: a string[]
+	// of chips. Each chip is the email address (a picked contact stores its email;
+	// a typed "Name <email>" is kept verbatim) — both round-trip back to an
+	// Address via parseAddress. Display names for picked/known contacts live in
+	// `nameByEmail` so the sent message still carries them (chips show the email).
+	let to = $state<string[]>(initChips(init.to));
+	let cc = $state<string[]>(initChips(init.cc));
+	let bcc = $state<string[]>(initChips(init.bcc));
 	let subject = $state(init.subject ?? '');
 	let sending = $state(false);
 	let attachments = $state<Attachment[]>([]);
 	let fileInput = $state<HTMLInputElement>();
 	let overlayEl = $state<HTMLElement>();
 
-	// --- contact autocomplete (local Orama index, §10.3) ---
-	let acField = $state<'to' | 'cc' | 'bcc' | null>(null);
-	const acQuery = $derived(
-		acField === 'to' ? toInput : acField === 'cc' ? ccInput : acField === 'bcc' ? bccInput : '',
-	);
-	const contactSearch = db.search('contact', () => ({ term: acQuery.trim(), limit: 6 }));
-	const suggestions = $derived.by(() => {
-		if (acQuery.trim().length < 1) return [];
-		const chosen = new Set([...to, ...cc, ...bcc].map((a) => (a.email ?? '').toLowerCase()));
-		return (contactSearch.docs as Array<{ email?: string; name?: string; send_count?: number }>)
-			.filter((c) => c.email && !chosen.has(c.email.toLowerCase()))
-			.sort((a, b) => (b.send_count ?? 0) - (a.send_count ?? 0))
-			.slice(0, 6);
-	});
+	// email → display name, so a chip (which shows only the email) can still be
+	// reconstituted into a named Address at send time. Primed from any incoming
+	// draft and topped up as autocomplete options stream in. Plain map (a lookup
+	// cache, not reactive UI state).
+	const nameByEmail = new Map<string, string>();
+	for (const a of [...(init.to ?? []), ...(init.cc ?? []), ...(init.bcc ?? [])]) {
+		if (a.email && a.name) nameByEmail.set(a.email.toLowerCase(), a.name);
+	}
 
 	const editor = new EditorClass({
 		placeholder: 'Write your message…',
@@ -100,14 +98,11 @@
 	);
 
 	// The Send button is enabled only when the message can actually go out: at
-	// least one recipient (a committed chip OR a still-typed valid address), a
-	// sending identity, and no attachment mid-upload. (`parseAddress` is a hoisted
-	// function declaration, so referencing it here before its definition is fine.)
+	// least one committed recipient chip, a sending identity, and no attachment
+	// mid-upload. (A half-typed address must be committed — Enter/Tab/comma, or
+	// picking a suggestion — before it counts, which is standard chip behavior.)
 	const canSend = $derived(
-		!sending &&
-			!!fromIdentity &&
-			(to.length > 0 || parseAddress(toInput) !== null) &&
-			!attachments.some((a) => a.uploading),
+		!sending && !!fromIdentity && to.length > 0 && !attachments.some((a) => a.uploading),
 	);
 
 	// --- draft autosave (§6): every 3s of idle, persist to a draft row. The saver
@@ -134,8 +129,8 @@
 					body: JSON.stringify({
 						draft_id: id,
 						identity_id: fromIdentity.id,
-						to,
-						cc: showCc ? cc : [],
+						to: toAddresses(to),
+						cc: showCc ? toAddresses(cc) : [],
 						subject,
 						doc: editor.doc,
 					}),
@@ -158,8 +153,7 @@
 		// opens — and, because focus is now inside the overlay, Esc reaches the
 		// overlay's own handler (fixing "n then Esc doesn't close it").
 		void tick().then(() => {
-			const first = overlayEl?.querySelector<HTMLInputElement>('.chips input');
-			first?.focus();
+			overlayEl?.querySelector<HTMLInputElement>('#to')?.focus();
 		});
 		const timer = setInterval(() => {
 			if (sent || sending || !fromIdentity) return;
@@ -192,35 +186,53 @@
 		if (/^[^@\s]+@[^@\s]+$/.test(trimmed)) return { email: trimmed };
 		return null;
 	}
-	function fieldValue(field: 'to' | 'cc' | 'bcc'): string {
-		return field === 'to' ? toInput : field === 'cc' ? ccInput : bccInput;
+	// Address[] (from init/draft) → chip strings for <Input multiple>. We store the
+	// bare email as the chip and stash the name in `nameByEmail` for send time.
+	function initChips(list?: Address[]): string[] {
+		return (list ?? []).map((a) => a.email).filter((e): e is string => !!e);
 	}
-	function setField(field: 'to' | 'cc' | 'bcc', v: string): void {
-		if (field === 'to') toInput = v;
-		else if (field === 'cc') ccInput = v;
-		else bccInput = v;
-	}
-	function addAddress(field: 'to' | 'cc' | 'bcc', addr: Address): void {
-		if (field === 'to') to = [...to, addr];
-		else if (field === 'cc') cc = [...cc, addr];
-		else bcc = [...bcc, addr];
-	}
-	function commitChip(field: 'to' | 'cc' | 'bcc'): void {
-		const addr = parseAddress(fieldValue(field));
-		if (addr) {
-			addAddress(field, addr);
-			setField(field, '');
+	// Chip strings → deduped, named Address[] for the draft/send payloads.
+	function toAddresses(chips: string[]): Address[] {
+		const out: Address[] = [];
+		const seen = new Set<string>();
+		for (const chip of chips) {
+			const a = parseAddress(chip);
+			if (!a?.email) continue;
+			const key = a.email.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push({ email: a.email, name: a.name ?? nameByEmail.get(key) });
 		}
+		return out;
 	}
-	function pickSuggestion(field: 'to' | 'cc' | 'bcc', c: { email?: string; name?: string }): void {
-		if (!c.email) return;
-		addAddress(field, { name: c.name || undefined, email: c.email });
-		setField(field, '');
-	}
-	function removeChip(field: 'to' | 'cc' | 'bcc', i: number): void {
-		if (field === 'to') to = to.filter((_, idx) => idx !== i);
-		else if (field === 'cc') cc = cc.filter((_, idx) => idx !== i);
-		else bcc = bcc.filter((_, idx) => idx !== i);
+
+	// <Input onfilter> — one-shot contact search feeding the autocomplete panel.
+	// Ranks known correspondents first (send_count), drops anyone already added
+	// across To/Cc/Bcc, and records each name so the chip's email can be re-named
+	// at send. label === the email so the picked chip is the address itself. An
+	// empty query (e.g. the panel refreshing right after a pick) lists the most
+	// frequent contacts so adding several recipients stays a keyboard flow.
+	async function contactOptions(query: string): Promise<InputOption[]> {
+		const term = query.trim();
+		const chosen = new Set(
+			[...to, ...cc, ...bcc].map((c) => (parseAddress(c)?.email ?? c).toLowerCase()),
+		);
+		const res = await db.list(
+			'contact',
+			term
+				? { term, limit: 8 }
+				: { limit: 8, order: [{ key: 'send_count', direction: 'DESC' }] },
+		);
+		return (res.hits ?? [])
+			.map((h) => h.document as { email?: string; name?: string; send_count?: number })
+			.filter((c) => c.email && !chosen.has(c.email.toLowerCase()))
+			.sort((a, b) => (b.send_count ?? 0) - (a.send_count ?? 0))
+			.slice(0, 6)
+			.map((c) => {
+				const email = c.email!.toLowerCase();
+				if (c.name) nameByEmail.set(email, c.name);
+				return { value: email, label: email, description: c.name };
+			});
 	}
 
 	function cycleIdentity(): void {
@@ -287,10 +299,10 @@
 	}
 
 	async function send(): Promise<void> {
-		commitChip('to');
-		commitChip('cc');
-		commitChip('bcc');
-		if (!to.length) { toast('Add at least one recipient.'); return; }
+		const toList = toAddresses(to);
+		const ccList = showCc ? toAddresses(cc) : [];
+		const bccList = showBcc ? toAddresses(bcc) : [];
+		if (!toList.length) { toast('Add at least one recipient.'); return; }
 		if (!fromIdentity) { toast('No identity to send from. Connect an account first.'); return; }
 		if (attachments.some((a) => a.uploading)) { toast('Wait for attachments to finish uploading.'); return; }
 		sending = true;
@@ -302,9 +314,9 @@
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
 					identity_id: fromIdentity.id,
-					to,
-					cc: showCc ? cc : [],
-					bcc: showBcc ? bcc : [],
+					to: toList,
+					cc: ccList,
+					bcc: bccList,
 					subject,
 					doc,
 					in_reply_to: init.in_reply_to,
@@ -360,55 +372,17 @@
 
 <!-- One recipient row (To / Cc / Bcc). `isTo` renders the always-present To row
      with its Cc/Bcc convenience toggles; Cc and Bcc reuse this inside <Expand>. -->
-{#snippet recipientRow(f: 'to' | 'cc' | 'bcc', label: string, chips: Address[], isTo: boolean)}
-	<div class="row">
-		<label for={f}>{label}</label>
-		<div class="chips">
-			{#each chips as a, i (i)}
-				<span class="chip">{a.name || a.email}<button aria-label="Remove" onclick={() => removeChip(f, i)}><Icon name="x" size={13} /></button></span>
-			{/each}
-			<div class="ac-wrap">
-				<input
-					id={f}
-					value={fieldValue(f)}
-					placeholder={f === 'to' ? 'recipient@example.com' : ''}
-					oninput={(e) => setField(f, (e.target as HTMLInputElement).value)}
-					onfocus={() => (acField = f)}
-					onblur={() => setTimeout(() => { if (acField === f) acField = null; }, 150)}
-					onkeydown={(e) => {
-						// Enter / comma commit the typed address and keep the caret in the
-						// field. Tab ALSO commits any typed address but must NOT be
-						// preventDefault-ed — the browser's default Tab has to move focus
-						// to the next field so the whole form is keyboard-navigable.
-						if (e.key === 'Enter' || e.key === ',') {
-							e.preventDefault();
-							commitChip(f);
-						} else if (e.key === 'Tab' && fieldValue(f).trim()) {
-							commitChip(f);
-						}
-					}} />
-				{#if acField === f && suggestions.length}
-					<ul class="ac-menu">
-						{#each suggestions as c (c.email)}
-							<li>
-								<button onmousedown={(e) => { e.preventDefault(); pickSuggestion(f, c); }}>
-									{#if c.name}<strong>{c.name}</strong>{/if}<span class="ac-email">{c.email}</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
-		</div>
-		{#if isTo}
-			<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
-			     the Tab sequence so Tab flows To → Subject → body directly. -->
-			<span class="toggles">
-				{#if !showCc}<Button size="0" transparent tabindex={-1} onclick={() => (showCc = true)}>Cc</Button>{/if}
-				{#if !showBcc}<Button size="0" transparent tabindex={-1} onclick={() => (showBcc = true)}>Bcc</Button>{/if}
-			</span>
-		{/if}
-	</div>
+<!-- A suggestion row inside <Input>'s autocomplete panel: avatar + name + the
+     email (which is also the chip value once picked). `opt.label` is the email,
+     `opt.description` the display name. -->
+{#snippet contactOption(opt: InputOption)}
+	<span class="ac-opt">
+		<Avatar name={opt.description || opt.label} src={contactAvatarUrl(opt.label)} size="0" />
+		<span class="ac-text">
+			{#if opt.description}<span class="ac-name">{opt.description}</span>{/if}
+			<span class="ac-email">{opt.label}</span>
+		</span>
+	</span>
 {/snippet}
 
 <!-- `.compose-host` scopes the no-animation CSS override to this modal only, so
@@ -432,10 +406,44 @@
 				</div>
 
 				<!-- To is always visible; Cc/Bcc slide open (delightstack <Expand>) when
-				     toggled instead of snapping in. -->
-				{@render recipientRow('to', 'To', to, true)}
-				<Expand show={showCc}>{@render recipientRow('cc', 'Cc', cc, false)}</Expand>
-				<Expand show={showBcc}>{@render recipientRow('bcc', 'Bcc', bcc, false)}</Expand>
+				     toggled instead of snapping in. Each is a delightstack <Input> in
+				     chips + autocomplete mode: it owns chip add/remove, the suggestion
+				     panel, and keyboard nav; `contactOptions` feeds it and `contactOption`
+				     renders each row with an avatar. -->
+				<div class="row">
+					<label for="to">To</label>
+					<div class="field">
+						<Input
+							id="to"
+							multiple
+							bind:value={to}
+							onfilter={contactOptions}
+							option={contactOption}
+							placeholder="recipient@example.com" />
+					</div>
+					<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
+					     the Tab sequence so Tab flows To → Subject → body directly. -->
+					<span class="toggles">
+						{#if !showCc}<Button size="0" transparent tabindex={-1} onclick={() => (showCc = true)}>Cc</Button>{/if}
+						{#if !showBcc}<Button size="0" transparent tabindex={-1} onclick={() => (showBcc = true)}>Bcc</Button>{/if}
+					</span>
+				</div>
+				<Expand show={showCc}>
+					<div class="row">
+						<label for="cc">Cc</label>
+						<div class="field">
+							<Input id="cc" multiple bind:value={cc} onfilter={contactOptions} option={contactOption} />
+						</div>
+					</div>
+				</Expand>
+				<Expand show={showBcc}>
+					<div class="row">
+						<label for="bcc">Bcc</label>
+						<div class="field">
+							<Input id="bcc" multiple bind:value={bcc} onfilter={contactOptions} option={contactOption} />
+						</div>
+					</div>
+				</Expand>
 
 				<div class="row">
 					<label for="subject">Subject</label>
@@ -531,30 +539,24 @@
 		padding: var(--space-2) 0;
 	}
 	.row label, .row .rowlabel { width: 48px; color: var(--color-text-disabled); font-size: var(--font-size-00); flex-shrink: 0; }
-	.chips { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; align-items: center; }
-	.chip {
-		display: inline-flex; align-items: center; gap: 4px;
-		background: var(--dm-accent-soft); color: var(--color-text);
-		border-radius: var(--radius-cap, 99px); padding: 2px 4px 2px 10px; font-size: var(--font-size-00);
+	/* The recipient <Input> owns its own chips, suggestion panel, and field chrome
+	   (drawn from the design tokens); it just needs to fill the row. Its border
+	   replaces the row hairline, so recipient rows drop theirs to avoid doubling. */
+	.field { flex: 1; min-width: 0; }
+	.row:has(.field) { border-bottom: none; }
+	.subject {
+		width: 100%; border: none; background: transparent; color: inherit; outline: none;
+		padding: 4px 0; font: inherit; font-size: var(--font-size-1);
 	}
-	.chip button { display: inline-flex; align-items: center; background: none; border: none; padding: 0; color: var(--color-text-disabled); cursor: pointer; line-height: 1; }
-	.chip button:hover { color: var(--color-error); }
-	.ac-wrap { position: relative; flex: 1; min-width: 140px; }
-	.chips input, .subject {
-		width: 100%; border: none; background: transparent; color: inherit; outline: none; padding: 4px 0; font: inherit;
+	/* A suggestion row rendered into <Input>'s panel via the `option` snippet. */
+	.ac-opt { display: flex; align-items: center; gap: 8px; min-width: 0; }
+	.ac-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+	.ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.ac-email { color: var(--color-text-disabled); font-size: var(--font-size-00); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	/* Favicon treatment (neutral backdrop + contain) for avatars in the panel. */
+	.ac-opt :global(.avatar img) {
+		background: var(--color-bg-3); object-fit: contain; padding: 2px; box-sizing: border-box;
 	}
-	.subject { font-size: var(--font-size-1); }
-	.ac-menu {
-		position: absolute; top: 100%; left: 0; z-index: 5; margin: 4px 0 0; padding: 4px; list-style: none;
-		min-width: 240px; background: var(--color-bg-1); border: 1px solid var(--color-border);
-		border-radius: var(--radius-md); box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.3));
-	}
-	.ac-menu button {
-		display: flex; gap: 6px; width: 100%; text-align: left; background: none; border: none; color: inherit;
-		cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); font-size: var(--font-size-0);
-	}
-	.ac-menu button:hover { background: var(--color-bg-3); }
-	.ac-email { color: var(--color-text-disabled); }
 	.toggles { display: flex; gap: 4px; }
 	.body { flex: 1; padding: var(--space-4) 0 var(--space-2); min-height: 220px; }
 	.signature { margin-top: var(--space-4); color: var(--color-text-disabled); }

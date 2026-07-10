@@ -26,6 +26,19 @@ const SUBJECTS = [
 	'Your package is on the way',
 ];
 
+// People you'd actually email — they seed the To/Cc/Bcc autocomplete so it has
+// something to suggest locally. `sent > 0` marks them known correspondents, so
+// they rank above the inbound-only senders (the panel sorts by send_count). A
+// deliberate mix of personal (gmail/outlook → Gravatar/initials) and company
+// (→ favicon) addresses so avatars in the suggestion rows are visible too.
+const PEOPLE: Array<[name: string, email: string, sent: number, received: number]> = [
+	['Alex Rivera', 'alex.rivera@gmail.com', 12, 9],
+	['Priya Patel', 'priya@acme.co', 8, 6],
+	['Jordan Lee', 'jordan.lee@gmail.com', 5, 4],
+	['Sam Okafor', 'sam@nimbus.io', 3, 5],
+	['Taylor Kim', 'taylor.kim@outlook.com', 2, 1],
+];
+
 export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 	const db = event.locals.db;
 	if (!db) return new Response('No mailbox', { status: 400 });
@@ -67,5 +80,28 @@ export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 	});
 
 	const result = await db.ingestMessages(batch);
-	return Response.json({ account_id: account.id, ...result });
+
+	// Seed the contact table too. In the live app this is maintained by ingest
+	// (server/src/ingest.ts → maintainContacts); the dev seed writes messages
+	// directly and so never touches it, which is why autocomplete looked empty
+	// locally. Frequent correspondents first, then the inbound-only senders so
+	// replies/forwards autocomplete as well.
+	const contacts = [
+		...PEOPLE.map(([name, email, sent, received]) => ({ name, email, sent, received })),
+		...SENDERS.map(([name, email]) => ({ name, email, sent: 0, received: 5 })),
+	];
+	await Promise.all(
+		contacts.map((c, i) =>
+			db.create('contact', {
+				email: c.email.toLowerCase(),
+				name: c.name,
+				send_count: c.sent,
+				receive_count: c.received,
+				last_interacted_at: now - i * 3_600_000,
+				is_known_correspondent: c.sent > 0,
+			}),
+		),
+	);
+
+	return Response.json({ account_id: account.id, contacts: contacts.length, ...result });
 }

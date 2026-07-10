@@ -15,14 +15,14 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(@sveltejs/kit@2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6))(svelte@5.56.4)
       '@delightstack/components':
-        specifier: ^1.0.0
-        version: 1.0.0(@delightstack/styles@1.0.0)(svelte@5.56.4)
+        specifier: ^1.0.1
+        version: 1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4)
       '@delightstack/database':
         specifier: ^1.0.0
         version: 1.0.0(svelte@5.56.4)
       '@delightstack/editor':
         specifier: ^1.0.0
-        version: 1.0.0(@delightstack/components@1.0.0(@delightstack/styles@1.0.0)(svelte@5.56.4))(svelte@5.56.4)
+        version: 1.0.0(@delightstack/components@1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4))(svelte@5.56.4)
       '@delightstack/images':
         specifier: ^1.0.0
         version: 1.0.0(svelte@5.56.4)
@@ -185,8 +185,8 @@ packages:
       svelte:
         optional: true
 
-  '@delightstack/components@1.0.0':
-    resolution: {integrity: sha512-JNG1OMZk1GD2Zw8ubHcvHGeLTuLUFJ5a0oYMl9ODukytiLyCe21SbbCw35EE8iML7yrZV7h3ZEPu8Ioza84EHA==}
+  '@delightstack/components@1.0.1':
+    resolution: {integrity: sha512-/5lSrZIJH5zdafqoZ83quqnJnNJN/lpFNRUT6i5qlas/Cu61evYmv/71znQq3X79A2IvOq8geSc7tsXvdJbc9Q==}
     hasBin: true
     peerDependencies:
       '@delightstack/styles': 1.0.0
@@ -1618,7 +1618,7 @@ snapshots:
       '@sveltejs/kit': 2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6)
       svelte: 5.56.4
 
-  '@delightstack/components@1.0.0(@delightstack/styles@1.0.0)(svelte@5.56.4)':
+  '@delightstack/components@1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4)':
     dependencies:
       '@delightstack/styles': 1.0.0
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
@@ -1636,9 +1636,9 @@ snapshots:
     optionalDependencies:
       svelte: 5.56.4
 
-  '@delightstack/editor@1.0.0(@delightstack/components@1.0.0(@delightstack/styles@1.0.0)(svelte@5.56.4))(svelte@5.56.4)':
+  '@delightstack/editor@1.0.0(@delightstack/components@1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4))(svelte@5.56.4)':
     dependencies:
-      '@delightstack/components': 1.0.0(@delightstack/styles@1.0.0)(svelte@5.56.4)
+      '@delightstack/components': 1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4)
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
       prosemirror-commands: 1.7.1
       prosemirror-gapcursor: 1.4.1

@@ -4,17 +4,17 @@ allowBuilds:
   sharp: false
   workerd: true
 minimumReleaseAgeExclude:
-  - '@delightstack/ai@1.0.0'
-  - '@delightstack/auth@1.0.0'
-  - '@delightstack/components@1.0.0'
-  - '@delightstack/database@1.0.0'
-  - '@delightstack/editor@1.0.0'
-  - '@delightstack/images@1.0.0'
-  - '@delightstack/rate-limiter@1.0.0'
-  - '@delightstack/styles@1.0.0'
-  - '@delightstack/utilities@1.0.0'
-  - '@delightstack/websocket@1.0.0'
+  - "@delightstack/ai"
+  - "@delightstack/auth"
+  - "@delightstack/components"
+  - "@delightstack/database"
+  - "@delightstack/editor"
+  - "@delightstack/images"
+  - "@delightstack/rate-limiter"
+  - "@delightstack/styles"
+  - "@delightstack/utilities"
+  - "@delightstack/websocket"
 onlyBuiltDependencies:
   - esbuild
   - workerd
-  - '@sveltejs/kit'
+  - "@sveltejs/kit"

@@ -32,7 +32,7 @@
 	"dependencies": {
 		"@delightstack/ai": "^1.0.0",
 		"@delightstack/auth": "^1.0.0",
-		"@delightstack/components": "^1.0.0",
+		"@delightstack/components": "^1.0.1",
 		"@delightstack/database": "^1.0.0",
 		"@delightstack/editor": "^1.0.0",
 		"@delightstack/images": "^1.0.0",
@@ -46,7 +46,7 @@
 		"postal-mime": "^2.4.3",
 		"rehype-parse": "^9.0.1",
 		"unified": "^11.0.5",
-		"zod": "^4.3.6",
-		"worker-mailer": "^1.0.4"
+		"worker-mailer": "^1.0.4",
+		"zod": "^4.3.6"
 	}
 }

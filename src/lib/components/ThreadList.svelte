@@ -2,6 +2,7 @@
 	import { Avatar, Checkbox } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
+	import { contactAvatarUrl } from '$lib/mail/avatar';
 	import type { Thread } from '$lib/schema';
 
 	interface Props {
@@ -95,6 +96,11 @@
 	function sender(t: Thread): string {
 		return t.participant_text || t.subject || '(no sender)';
 	}
+	// participants[0] is the message's `from` (ingest pushes it first), so it's
+	// the sender whose favicon/Gravatar we want on the row.
+	function senderAvatar(t: Thread): string | undefined {
+		return contactAvatarUrl(t.participants?.[0]?.email);
+	}
 </script>
 
 <div
@@ -127,7 +133,7 @@
 					}}
 					{@attach ripple({ opacity: 0.07 })}>
 					<div class="lead">
-						<span class="av"><Avatar name={sender(t)} size={density === 'compact' ? '0' : '1'} /></span>
+						<span class="av"><Avatar name={sender(t)} src={senderAvatar(t)} size={density === 'compact' ? '0' : '1'} /></span>
 						<!-- Selection uses the real delightstack Checkbox (its own check/uncheck
 						     animation). Wrapping span stops the click from opening the thread. -->
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -239,6 +245,16 @@
 	.av {
 		display: block;
 		transition: opacity var(--duration-fast, 120ms) ease;
+	}
+	/* Favicons/logos ship as small, often-transparent square glyphs. Give the
+	   avatar image a neutral backdrop and `contain` it with a hair of inset so
+	   the whole mark shows inside the circle instead of being cropped by the
+	   default `cover`. Gravatars are square photos, so they fill it cleanly too. */
+	.av :global(.avatar img) {
+		background: var(--color-bg-3);
+		object-fit: contain;
+		padding: 3px;
+		box-sizing: border-box;
 	}
 	.check {
 		position: absolute;
