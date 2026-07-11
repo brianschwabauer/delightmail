@@ -11,6 +11,7 @@ import { tables } from '$lib/schema';
 import { sendTransactionalEmail } from '$lib/server/email';
 import { createMailHandle } from '$lib/server/mail-handle';
 import { reportEnvOnce } from '$lib/server/env-check';
+import { limitMagicLink, type RateLimiterNamespace } from '$lib/server/rate-limit';
 
 // A valid 64-char hex secret for dev only; production MUST set JWT_KEY_SECRET.
 const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
@@ -72,6 +73,29 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 		return DelightError.forbidden(
 			'This instance is not accepting new sign-ups. Ask the owner for access.',
 		).toResponse();
+	}
+
+	// Rate-limit the (allowed) request so a known address can't be email-bombed via
+	// unlimited magic-link/signup POSTs (§12). Fails open on a limiter outage.
+	const rl = penv?.RATE_LIMITER as unknown as RateLimiterNamespace | undefined;
+	if (rl) {
+		let ip = '';
+		try {
+			ip = event.getClientAddress();
+		} catch {
+			ip = event.request.headers.get('cf-connecting-ip') ?? '';
+		}
+		const { allowed, reset_in_ms } = await limitMagicLink(rl, email, ip);
+		if (!allowed) {
+			const retry = Math.max(1, Math.ceil((reset_in_ms || 60_000) / 1000));
+			return new Response(
+				JSON.stringify({ message: 'Too many sign-in requests. Please try again shortly.' }),
+				{
+					status: 429,
+					headers: { 'content-type': 'application/json', 'retry-after': String(retry) },
+				},
+			);
+		}
 	}
 	return resolve(event);
 };

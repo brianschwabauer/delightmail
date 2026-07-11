@@ -112,7 +112,9 @@ export class GmailClient {
 		if (res.status === 429 || res.status >= 500) {
 			throw new RetryableError(`Gmail ${res.status} on ${path}`);
 		}
-		if (!res.ok) throw new Error(`Gmail ${res.status} on ${path}: ${await res.text()}`);
+		if (!res.ok) {
+			throw new GmailApiError(res.status, `Gmail ${res.status} on ${path}: ${await res.text()}`);
+		}
 		return res.json();
 	}
 
@@ -177,10 +179,52 @@ export class GmailClient {
 			body: JSON.stringify({ raw: rawBase64Url, ...(threadId ? { threadId } : {}) }),
 		});
 	}
+
+	/**
+	 * Find an already-sent message by its RFC822 Message-ID (§6, H2). Used to
+	 * dedup an outbound send on retry: Gmail's messages.send is NOT idempotent, so
+	 * if a prior attempt delivered before we recorded it (a crash in the
+	 * send→record window), we must detect the existing copy instead of re-sending.
+	 */
+	async findSentByRfc822MessageId(
+		messageId: string,
+	): Promise<{ id: string; threadId: string } | null> {
+		const clean = messageId.replace(/[<>]/g, '').trim();
+		if (!clean) return null;
+		const res = await this.listMessageIds(undefined, `rfc822msgid:${clean}`);
+		const first = res.messages?.[0];
+		return first ? { id: first.id, threadId: first.threadId } : null;
+	}
 }
 
 export class RetryableError extends Error {
 	readonly retryable = true;
+}
+
+/** A non-retryable Gmail API HTTP error, carrying the status so callers can tell
+ *  a definitively-gone message (404/410) apart from a transient/auth failure. */
+export class GmailApiError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+		this.name = 'GmailApiError';
+	}
+}
+
+/** True only when a message is DEFINITIVELY gone at Gmail (deleted between the
+ *  list and the fetch) — the one case where skipping it is safe. Everything else
+ *  (401 token expiry, 403 quota, 400, network timeout) is transient and must
+ *  retry rather than advance the sync cursor past un-fetched mail (§5.1, R8). */
+export function isMessageGoneError(err: unknown): boolean {
+	return err instanceof GmailApiError && (err.status === 404 || err.status === 410);
+}
+
+/** True when Gmail rejected the access token (401) — the caller should drop the
+ *  cached token so the retry forces a refresh. */
+export function isAuthError(err: unknown): boolean {
+	return err instanceof GmailApiError && err.status === 401;
 }
 
 /** Map Gmail label ids to DelightMail folder + flags (§5.1). */

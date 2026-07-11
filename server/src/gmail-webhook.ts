@@ -16,6 +16,17 @@ interface SyncEngineStub {
 }
 
 export async function handleGmailWebhook(request: Request, env: Env): Promise<Response> {
+	// Fail CLOSED: without the audience + service-account bindings, OIDC
+	// verification would degrade to "any JWT signed by Google" — obtainable by
+	// any Google/GCP caller — letting an unauthenticated request force syncs and
+	// burn Gmail quota (§12). If push isn't configured with both, refuse to act;
+	// the account falls back to polling. (Set GMAIL_PUSH_AUDIENCE +
+	// GMAIL_PUSH_SA_EMAIL to enable push — see docs/providers/gmail.md.)
+	if (!env.GMAIL_PUSH_AUDIENCE || !env.GMAIL_PUSH_SA_EMAIL) {
+		console.warn('[gmail-webhook] rejected: GMAIL_PUSH_AUDIENCE/SA_EMAIL not configured');
+		return new Response('Push not configured', { status: 403 });
+	}
+
 	const auth = request.headers.get('authorization') ?? '';
 	const token = auth.replace(/^Bearer\s+/i, '');
 	if (!token) return new Response('Missing token', { status: 401 });

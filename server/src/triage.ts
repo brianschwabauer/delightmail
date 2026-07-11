@@ -201,8 +201,14 @@ async function triageOne(
 		}
 		verdict = parsed.verdict;
 	} catch (err) {
+		// A gateway/infra failure (5xx, network, timeout). Do NOT swallow it and
+		// return: the message stays untriaged, so runTriageJob keeps returning
+		// `true` and MailboxServer reschedules triage every 2s — an unbounded spin
+		// that re-bills the AI Gateway forever during an outage. Re-throw so the
+		// job engine applies exponential backoff (30s→16m). The message stays in
+		// the inbox (fail-open) and is retried once the gateway recovers.
 		console.error('[triage] gateway call failed:', err);
-		return; // leave untriaged; a later job retries
+		throw err instanceof Error ? err : new Error(String(err));
 	}
 
 	const guarded = applyGuardrails(verdict, { is_known_correspondent: isKnown });

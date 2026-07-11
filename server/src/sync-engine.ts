@@ -16,6 +16,8 @@ import {
 	gmailLabelsToState,
 	base64UrlToBytes,
 	RetryableError,
+	isMessageGoneError,
+	isAuthError,
 	type GmailMessage,
 } from './adapters/gmail';
 import type { NormalizedMessage } from './ingest';
@@ -149,6 +151,12 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			message_id TEXT NOT NULL, recipient TEXT NOT NULL,
 			PRIMARY KEY (message_id, recipient)
 		)`);
+		// Marks that we are about to hit (or already hit) the provider for a send,
+		// written BEFORE the provider call so a crash in the deliver→record window
+		// is detectable on retry and can be deduped instead of re-sent (§6, H2).
+		this.#sql.exec(`CREATE TABLE IF NOT EXISTS send_attempt (
+			message_id TEXT PRIMARY KEY, at INTEGER NOT NULL
+		)`);
 	}
 
 	#state(): SyncState {
@@ -273,6 +281,12 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		return new GmailClient(await this.#accessToken());
 	}
 
+	/** Drop the cached access token so the next #accessToken() forces a refresh.
+	 *  Called when Gmail rejects the token mid-job (401) so a retry can recover. */
+	#invalidateAccessToken(): void {
+		this.#saveState({ access_token: undefined, access_token_expiry: 0 });
+	}
+
 	// -------------------------------------------------------------------------
 	// Job engine.
 	// -------------------------------------------------------------------------
@@ -318,7 +332,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 						message,
 						job.id,
 					);
-					await this.#reportError(message);
+					await this.#onJobExhausted(job.type as JobType, message);
 				} else {
 					this.#sql.exec(
 						`UPDATE job SET attempts = ?, run_at = ?, last_error = ? WHERE id = ?`,
@@ -499,8 +513,22 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			message_id,
 			JSON.stringify(result),
 		);
-		// Per-recipient progress is redundant once the whole send has completed.
+		// Per-recipient / attempt progress is redundant once the send has completed.
 		this.#sql.exec(`DELETE FROM sent_recipient WHERE message_id = ?`, message_id);
+		this.#sql.exec(`DELETE FROM send_attempt WHERE message_id = ?`, message_id);
+	}
+	/** Whether a prior run already reached the provider-send stage for this message. */
+	#sendAttempted(message_id: string): boolean {
+		return !!this.#sql
+			.exec(`SELECT 1 FROM send_attempt WHERE message_id = ?`, message_id)
+			.toArray()[0];
+	}
+	#markSendAttempt(message_id: string): void {
+		this.#sql.exec(
+			`INSERT OR IGNORE INTO send_attempt (message_id, at) VALUES (?, ?)`,
+			message_id,
+			Date.now(),
+		);
 	}
 	#recipientSent(message_id: string, recipient: string): boolean {
 		return !!this.#sql
@@ -558,10 +586,29 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		});
 
 		const fromEmail = payload.from?.email ?? state.account_email ?? '';
+		// A prior run may have already reached the provider (crash in the
+		// send→record window). We mark the attempt BEFORE sending; on a retry this
+		// lets the Gmail path dedup by Message-ID instead of delivering twice (H2).
+		const retrying = this.#sendAttempted(payload.message_id);
+		this.#markSendAttempt(payload.message_id);
 		let result: SendResult;
 		try {
 			if (state.kind === 'gmail') {
 				const gmail = await this.#gmail();
+				// Retry after a possible mid-send crash: Gmail's send isn't idempotent,
+				// so check whether the exact message already landed before re-sending.
+				if (retrying) {
+					const existing = await gmail.findSentByRfc822MessageId(payload.rfc822_message_id);
+					if (existing) {
+						result = {
+							ok: true,
+							provider_ids: { gmail_id: existing.id, gmail_thread_id: existing.threadId },
+						};
+						this.#recordSendResult(payload.message_id, result);
+						await this.#mailbox().markSendResult(payload.message_id, result);
+						return;
+					}
+				}
 				const rawB64Url = base64UrlEncode(built.raw);
 				const sent = await gmail.send(rawB64Url, payload.gmail_thread_id);
 				result = { ok: true, provider_ids: { gmail_id: sent.id, gmail_thread_id: sent.threadId } };
@@ -883,9 +930,19 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				msg = await gmail.getRaw(id);
 			} catch (err) {
 				if (err instanceof RetryableError) throw err;
-				// Message no longer retrievable at Gmail (e.g. 404 — deleted between
-				// the list and this fetch). Nothing to capture; safe to skip.
-				console.error(`[SyncEngine] getRaw ${id} failed, skipping:`, err);
+				// ONLY a message that is definitively gone at Gmail (404/410 — deleted
+				// between the list and this fetch) is safe to skip. Every other failure
+				// (401 token expiry, 403 quota, 400, network timeout) is transient: a
+				// bare `continue` here would drop the message AND let the caller advance
+				// the history cursor past it → permanent silent mail loss. Re-throw so
+				// the whole page retries with the cursor un-advanced (§5.1, R8).
+				if (!isMessageGoneError(err)) {
+					// A rejected token won't fix itself on retry unless we clear the
+					// cached access token so the next attempt refreshes it.
+					if (isAuthError(err)) this.#invalidateAccessToken();
+					throw err;
+				}
+				console.error(`[SyncEngine] getRaw ${id}: message gone at Gmail, skipping:`, err);
 				continue;
 			}
 			try {
@@ -984,6 +1041,28 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				/* ignore */
 			}
 		}
+	}
+
+	/**
+	 * A job exhausted its retry ladder. Most jobs → surface the account error. But a
+	 * `backfill_page` that gives up must NOT freeze the mailbox in 'backfilling'
+	 * with no live cutover forever (one poison page would otherwise stall both the
+	 * import AND all new mail). If we already captured the starting historyId,
+	 * resume incremental sync so new mail keeps flowing; the older messages from
+	 * the failed page are incomplete until a manual resync() re-runs the import.
+	 */
+	async #onJobExhausted(type: JobType, message: string): Promise<void> {
+		if (type === 'backfill_page' && this.#state().gmail_history_id) {
+			await this.#setStatus(
+				'live',
+				'Backfill incomplete — some older mail may be missing. Resync to retry.',
+			);
+			await this.scheduleJob('history_sync', {}, 5_000);
+			if (this.env.GMAIL_PUBSUB_TOPIC) await this.scheduleJob('renew_watch', {}, 5_000);
+			console.error(`[SyncEngine] backfill gave up, resuming live sync: ${message}`);
+			return;
+		}
+		await this.#reportError(message);
 	}
 
 	async fetch(): Promise<Response> {
