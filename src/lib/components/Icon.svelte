@@ -22,6 +22,10 @@
 		| 'reply-all'
 		| 'forward'
 		| 'mail'
+		| 'mail-open'
+		| 'menu'
+		| 'chevron-left'
+		| 'chevron-right'
 		| 'arrow-left';
 
 	const ICONS: Record<IconName, string> = {
@@ -53,6 +57,11 @@
 			'<polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/>',
 		forward: '<polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/>',
 		mail: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+		'mail-open':
+			'<path d="M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 .8-1.6l8-6a2 2 0 0 1 2.4 0l8 6Z"/><path d="m22 10-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 10"/>',
+		menu: '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
+		'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+		'chevron-right': '<path d="m9 18 6-6-6-6"/>',
 		'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
 	};
 </script>

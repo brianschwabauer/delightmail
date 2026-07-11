@@ -593,5 +593,25 @@
 	}
 	@media (max-width: 767px) {
 		.hint { display: none; }
+		/* Compose fills the screen on a phone. The delightstack Modal already
+		   turns into a full-width bottom sheet (title bar stuck at the bottom,
+		   in thumb reach) — we only stretch it to full height so a long email
+		   never composes through a letterbox. The .body carries inline width/
+		   max-height from the width prop, hence the !important. */
+		:global(.compose-host .modal .body) {
+			width: 100vw !important;
+			max-width: 100vw !important;
+			min-height: 100dvh;
+			max-height: 100dvh !important;
+			border-radius: 0 !important;
+			padding-top: env(safe-area-inset-top);
+			padding-bottom: env(safe-area-inset-bottom);
+		}
+		/* iOS zooms any focused input under 16px — recipients, subject, editor. */
+		:global(.compose-host input),
+		.subject,
+		.body {
+			font-size: 16px;
+		}
 	}
 </style>

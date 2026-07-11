@@ -20,7 +20,9 @@
 		<meta name="apple-mobile-web-app-title" content="Mail" />
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<!-- "tap" (not "hover"): hover never fires on touch, so mobile would lose
+	     preloading entirely; on desktop tap-preload still races ahead of the click. -->
+	<body data-sveltekit-preload-data="tap">
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

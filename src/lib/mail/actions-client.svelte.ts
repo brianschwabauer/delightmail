@@ -61,11 +61,10 @@ export class ActionManager {
 		// Snapshot previous state for undo / rollback.
 		const prev = new Map(threads.map((t) => [String(t.id), snapshot(t)]));
 
-		const patch = computeThreadPatch(
-			action,
-			stateOf(threads[0]),
-			{ folder: opts.folder as never, label_id: opts.label_id },
-		);
+		const patch = computeThreadPatch(action, stateOf(threads[0]), {
+			folder: opts.folder as never,
+			label_id: opts.label_id,
+		});
 
 		// A folder MOVE (archive/trash/spam/move) relocates the thread; a hard
 		// delete removes it; everything else is a flag toggle. Read vs unread carry
@@ -95,15 +94,20 @@ export class ActionManager {
 		}
 
 		// Register undo only after the action actually succeeded (§10.2), and show
-		// the undo toast the plan requires where undo is possible.
+		// the undo toast the plan requires where undo is possible. The toast's Undo
+		// button reverses THIS entry (not whatever is on top of the stack) — it's
+		// the only undo affordance on touch, where `z` doesn't exist.
 		if (isUndoable(action)) {
 			const restore = async () => {
 				if (movesFolder) for (const [id, s] of prev) this.#moveLocal([id], s.folder);
 				else this.#clearPatch(ids);
 				await this.#post(ids, inverseAction(action), { folder: prev.get(ids[0])?.folder });
 			};
-			this.#pushUndo({ thread_ids: ids, label: undoLabel(action, ids.length), restore });
-			toast(`${capitalize(undoLabel(action, ids.length))} · press z to undo`);
+			const entry: UndoEntry = { thread_ids: ids, label: undoLabel(action, ids.length), restore };
+			this.#pushUndo(entry);
+			toast(capitalize(undoLabel(action, ids.length)), {
+				action: { label: 'Undo', onclick: () => void this.#undoEntry(entry) },
+			});
 		}
 
 		// Folder moves are already real in the mirror (nothing to clear). Flag
@@ -115,6 +119,18 @@ export class ActionManager {
 	async undo(): Promise<void> {
 		const entry = this.#undoStack.pop();
 		if (!entry) return;
+		await this.#runUndo(entry);
+	}
+
+	/** Undo a specific entry (a toast's Undo button), wherever it sits in the stack. */
+	async #undoEntry(entry: UndoEntry): Promise<void> {
+		const i = this.#undoStack.indexOf(entry);
+		if (i < 0) return; // already undone (z, or a second tap)
+		this.#undoStack.splice(i, 1);
+		await this.#runUndo(entry);
+	}
+
+	async #runUndo(entry: UndoEntry): Promise<void> {
 		try {
 			await entry.restore();
 			toast('Undone');
@@ -169,7 +185,11 @@ export class ActionManager {
 		if (this.#undoStack.length > 20) this.#undoStack.shift();
 	}
 
-	async #post(ids: string[], action: string, opts: { folder?: string; label_id?: string }): Promise<void> {
+	async #post(
+		ids: string[],
+		action: string,
+		opts: { folder?: string; label_id?: string },
+	): Promise<void> {
 		const res = await this.#fetch('/api/threads/actions', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },

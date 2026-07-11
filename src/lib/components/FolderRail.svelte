@@ -13,8 +13,11 @@
 		db: MailDatabaseClient;
 		view: string;
 		auth: AuthClient;
+		/** Called when the user picks anything in the rail — the mobile layout
+		 *  hosts the rail in a drawer and closes it on selection (no-op on desktop). */
+		onNavigate?: () => void;
 	}
-	const { db, view, auth }: Props = $props();
+	const { db, view, auth, onNavigate }: Props = $props();
 
 	const scope = useScope();
 	const focus = useFocus();
@@ -123,7 +126,10 @@
 			<ListItem
 				href="/mail/{f.id}"
 				active={view === f.id}
-				onclick={() => focus.set('list')}>
+				onclick={() => {
+					focus.set('list');
+					onNavigate?.();
+				}}>
 				<span class="glyph"><Icon name={f.icon} size={17} /></span>
 				<span class="label">{f.label}</span>
 				{#if f.id === 'inbox' && unreadCount > 0}
@@ -135,12 +141,22 @@
 
 	<div class="section">Accounts</div>
 	<List type="button" dense class="rail-list">
-		<ListItem active={scope.current === 'all'} onclick={() => scope.set('all')}>
+		<ListItem
+			active={scope.current === 'all'}
+			onclick={() => {
+				scope.set('all');
+				onNavigate?.();
+			}}>
 			<span class="dot all" aria-hidden="true"></span>
 			<span class="label">All accounts</span>
 		</ListItem>
 		{#each scope.accounts as a (a.id)}
-			<ListItem active={scope.current === a.id} onclick={() => scope.set(a.id)}>
+			<ListItem
+				active={scope.current === a.id}
+				onclick={() => {
+					scope.set(a.id);
+					onNavigate?.();
+				}}>
 				<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>
 				<span class="label">{a.label}</span>
 			</ListItem>
@@ -149,7 +165,7 @@
 
 	<div class="spacer"></div>
 	<List type="button" dense class="rail-list">
-		<ListItem href="/settings/accounts" class="quiet">
+		<ListItem href="/settings/accounts" class="quiet" onclick={() => onNavigate?.()}>
 			<span class="glyph"><Icon name="settings" size={17} /></span><span class="label">Settings</span>
 		</ListItem>
 		<ListItem class="quiet" onclick={signOut}>

@@ -16,8 +16,13 @@
 		onToggleSelect?: (index: number) => void;
 		/** Reports how many rows fit the viewport — drives PageUp/PageDown paging. */
 		onRows?: (rows: number) => void;
-		/** Mobile swipe: right = archive, left = trash. */
-		onSwipe?: (index: number, dir: 'archive' | 'trash') => void;
+		/** Mobile swipe: right = archive, left = toggle read/unread. */
+		onSwipe?: (index: number, dir: 'archive' | 'read') => void;
+		/** Mobile long-press on a row — starts/extends a selection. */
+		onLongPress?: (index: number) => void;
+		/** Mobile selection mode (a selection exists): every row shows its checkbox
+		 *  and a plain tap TOGGLES instead of opening; swipes are disabled. */
+		selecting?: boolean;
 	}
 	let {
 		docs,
@@ -30,22 +35,94 @@
 		onToggleSelect,
 		onRows,
 		onSwipe,
+		onLongPress,
+		selecting = false,
 	}: Props = $props();
 
-	// --- touch swipe (mobile) ---
-	let swipeStartX = 0;
-	let swipeIndex = -1;
-	const SWIPE_THRESHOLD = 64;
+	// --- touch gestures (mobile): swipe-to-act + long-press-to-select ---
+	// One gesture at a time. Its axis is decided by the FIRST dominant movement:
+	// vertical hands off to native scrolling (touch-action: pan-y), horizontal
+	// turns into a tracked swipe — the row follows the finger over a colored
+	// underlay and commits at the threshold. A still finger long-presses.
+	const SWIPE_COMMIT = 72; // px of horizontal travel that commits the action
+	const SWIPE_MAX = 112; // px cap — the row resists past the commit point
+	const AXIS_LOCK = 8; // px of travel before the gesture picks an axis
+	const LONG_PRESS_MS = 450;
+	let gesture: {
+		index: number;
+		x0: number;
+		y0: number;
+		axis: 'h' | 'v' | null;
+		longTimer: ReturnType<typeof setTimeout> | null;
+		consumed: boolean; // long-press fired or swipe committed → swallow the tap
+	} | null = null;
+	/** The row being dragged and how far — drives the transform + underlay. */
+	let swipe = $state<{ index: number; dx: number } | null>(null);
+	/** Whether the row is animating back/away (transition on, finger up). */
+	let swipeSettling = $state(false);
+
+	function cancelLongPress() {
+		if (gesture?.longTimer) {
+			clearTimeout(gesture.longTimer);
+			gesture.longTimer = null;
+		}
+	}
 	function onTouchStart(e: TouchEvent, index: number) {
-		swipeStartX = e.touches[0].clientX;
-		swipeIndex = index;
+		const t = e.touches[0];
+		gesture = { index, x0: t.clientX, y0: t.clientY, axis: null, longTimer: null, consumed: false };
+		swipeSettling = false;
+		if (onLongPress && !selecting) {
+			gesture.longTimer = setTimeout(() => {
+				if (!gesture || gesture.axis !== null) return;
+				gesture.consumed = true;
+				navigator.vibrate?.(10);
+				onLongPress(index);
+			}, LONG_PRESS_MS);
+		}
+	}
+	function onTouchMove(e: TouchEvent) {
+		if (!gesture) return;
+		const t = e.touches[0];
+		const dx = t.clientX - gesture.x0;
+		const dy = t.clientY - gesture.y0;
+		if (gesture.axis === null) {
+			if (Math.abs(dx) < AXIS_LOCK && Math.abs(dy) < AXIS_LOCK) return;
+			cancelLongPress();
+			gesture.axis = Math.abs(dx) > Math.abs(dy) * 1.2 && onSwipe && !selecting ? 'h' : 'v';
+		}
+		if (gesture.axis !== 'h') return;
+		// Resist past the commit point: full travel up to the threshold, then 1/3.
+		const abs = Math.abs(dx);
+		const eased = abs <= SWIPE_COMMIT ? abs : SWIPE_COMMIT + (abs - SWIPE_COMMIT) / 3;
+		swipe = { index: gesture.index, dx: Math.sign(dx) * Math.min(eased, SWIPE_MAX) };
 	}
 	function onTouchEnd(e: TouchEvent) {
-		if (swipeIndex < 0 || !onSwipe) return;
-		const dx = e.changedTouches[0].clientX - swipeStartX;
-		if (dx > SWIPE_THRESHOLD) onSwipe(swipeIndex, 'archive');
-		else if (dx < -SWIPE_THRESHOLD) onSwipe(swipeIndex, 'trash');
-		swipeIndex = -1;
+		if (!gesture) return;
+		const g = gesture;
+		gesture = null;
+		cancelLongPress();
+		if (g.consumed) {
+			// Long-press already handled this touch — don't let it also click-open.
+			e.preventDefault();
+			return;
+		}
+		if (g.axis !== 'h' || !swipe) return;
+		e.preventDefault(); // a swipe never opens the row
+		const commit = Math.abs(swipe.dx) >= SWIPE_COMMIT;
+		if (commit) onSwipe?.(g.index, swipe.dx > 0 ? 'archive' : 'read');
+		// Snap back (the archived row also vanishes from docs, so no fly-out needed).
+		swipeSettling = true;
+		swipe = { index: g.index, dx: 0 };
+		setTimeout(() => {
+			swipe = null;
+			swipeSettling = false;
+		}, 200);
+	}
+	function onTouchCancel() {
+		cancelLongPress();
+		gesture = null;
+		swipe = null;
+		swipeSettling = false;
 	}
 
 	const ROW_H = $derived(density === 'compact' ? 48 : 68);
@@ -105,33 +182,52 @@
 
 <div
 	class="viewport"
+	class:selecting
 	bind:this={viewport}
 	bind:clientHeight={height}
 	onscroll={onScroll}
 	role="listbox"
 	tabindex="-1"
-	aria-label="Threads">
+	aria-label="Threads"
+	aria-multiselectable="true">
 	<div class="spacer" style:height="{total * ROW_H}px">
 		<div class="rows" style:transform="translateY({start * ROW_H}px)">
 			{#each slice as t, i (t.id)}
 				{@const index = start + i}
 				{@const isSel = selected.has(String(t.id))}
+				{@const dx = swipe?.index === index ? swipe.dx : 0}
 				<div
 					class="row"
 					class:unread={t.unread_count > 0}
 					class:cursor={index === cursor}
 					class:selected={isSel}
 					class:compact={density === 'compact'}
+					class:swiping={dx !== 0}
+					class:settling={swipeSettling && swipe?.index === index}
 					style:height="{ROW_H}px"
 					role="option"
 					aria-selected={index === cursor}
 					ontouchstart={(e) => onTouchStart(e, index)}
+					ontouchmove={onTouchMove}
 					ontouchend={onTouchEnd}
+					ontouchcancel={onTouchCancel}
 					onclick={() => {
 						onCursor(index);
-						onOpen(index);
+						// In mobile selection mode a tap toggles membership; it never opens.
+						if (selecting && onToggleSelect) onToggleSelect(index);
+						else onOpen(index);
 					}}
 					{@attach ripple({ opacity: 0.07 })}>
+					{#if dx !== 0}
+						<div
+							class="swipe-under"
+							class:fwd={dx > 0}
+							class:armed={Math.abs(dx) >= 72}
+							aria-hidden="true">
+							<Icon name={dx > 0 ? 'archive' : t.unread_count > 0 ? 'mail-open' : 'mail'} size={20} />
+						</div>
+					{/if}
+					<div class="row-slide" style:transform="translateX({dx}px)">
 					<div class="lead">
 						<span class="av"><Avatar name={sender(t)} src={senderAvatar(t)} size={density === 'compact' ? '0' : '1'} /></span>
 						<!-- Selection uses the real delightstack Checkbox (its own check/uncheck
@@ -164,6 +260,7 @@
 							{#if t.message_count > 1}<span class="count">{t.message_count}</span>{/if}
 						</div>
 					</div>
+					</div>
 				</div>
 			{/each}
 		</div>
@@ -185,6 +282,7 @@
 	.viewport {
 		height: 100%;
 		overflow-y: auto;
+		overscroll-behavior-y: contain;
 		outline: none;
 	}
 	.spacer {
@@ -196,13 +294,60 @@
 	}
 	.row {
 		position: relative;
+		border-bottom: 1px solid var(--dm-hairline);
+		cursor: pointer;
+		overflow: hidden;
+		/* Vertical pans stay native scrolling; horizontal travel is ours (swipe). */
+		touch-action: pan-y;
+	}
+	/* The row's visible content, which follows the finger during a swipe. */
+	.row-slide {
+		position: relative;
+		z-index: 1;
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
 		padding: 0 var(--space-3);
-		border-bottom: 1px solid var(--dm-hairline);
-		cursor: pointer;
-		overflow: hidden;
+		height: 100%;
+	}
+	/* While sliding, the content needs an opaque back so the underlay only shows
+	   in the gap it opens up; when settling (finger up) it animates home. */
+	.row.swiping .row-slide {
+		background: var(--color-bg-1);
+	}
+	.row.settling .row-slide {
+		transition: transform 180ms var(--ease-out, ease);
+	}
+	/* The action revealed beneath a swiped row: archive (→, success-tinted) on the
+	   left edge, read-toggle (←, accent-tinted) on the right. `armed` marks the
+	   commit threshold — the background saturates and the glyph pops. */
+	.swipe-under {
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		padding: 0 var(--space-4);
+		color: var(--color-primary);
+		background: color-mix(in oklab, var(--color-primary) 14%, var(--color-bg-1));
+	}
+	.swipe-under.fwd {
+		justify-content: flex-start;
+		color: var(--color-success, #1a7f4b);
+		background: color-mix(in oklab, var(--color-success, #1a7f4b) 14%, var(--color-bg-1));
+	}
+	.swipe-under :global(svg) {
+		transition: transform 120ms var(--ease-out, ease);
+	}
+	.swipe-under.armed :global(svg) {
+		transform: scale(1.25);
+	}
+	.swipe-under.armed {
+		background: color-mix(in oklab, var(--color-primary) 28%, var(--color-bg-1));
+	}
+	.swipe-under.armed.fwd {
+		background: color-mix(in oklab, var(--color-success, #1a7f4b) 28%, var(--color-bg-1));
 	}
 	/* Hover "trail": the tint snaps in instantly on hover and fades back out when
 	   the pointer leaves (matching delightstack's List rows), so sweeping the
@@ -273,12 +418,14 @@
 		transition: opacity var(--duration-fast, 120ms) ease;
 	}
 	.row:hover .check,
-	.row.selected .check {
+	.row.selected .check,
+	.selecting .check {
 		opacity: 1;
 		pointer-events: auto;
 	}
 	.row:hover .av,
-	.row.selected .av {
+	.row.selected .av,
+	.selecting .av {
 		opacity: 0;
 	}
 

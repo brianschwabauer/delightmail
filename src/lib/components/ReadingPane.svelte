@@ -30,6 +30,8 @@
 		onAct?: (action: ThreadActionName, opts?: { folder?: string }) => void;
 		/** Resume the previewed draft in the compose overlay (Drafts folder). */
 		onEditDraft?: () => void;
+		/** Mobile: the reader is a full-screen push — this closes it (back arrow). */
+		onBack?: () => void;
 	}
 	const {
 		db,
@@ -41,6 +43,7 @@
 		onReply,
 		onAct,
 		onEditDraft,
+		onBack,
 	}: Props = $props();
 
 	// Reactive query function — the search re-queries when the open thread changes.
@@ -190,6 +193,11 @@
 		<header class="thread-head">
 			<div class="head-col">
 				<div class="subject-row">
+					{#if onBack}
+						<button class="backbtn" onclick={onBack} aria-label="Back to list">
+							<Icon name="arrow-left" size={20} />
+						</button>
+					{/if}
 					<span class="draft-tag">Draft</span>
 					<h1 class="subject">{headSubject}</h1>
 				</div>
@@ -232,6 +240,11 @@
 		<header class="thread-head">
 			<div class="head-col">
 				<div class="subject-row">
+					{#if onBack}
+						<button class="backbtn" onclick={onBack} aria-label="Back to list">
+							<Icon name="arrow-left" size={20} />
+						</button>
+					{/if}
 					{#if headStarred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
 					<h1 class="subject">{headSubject}</h1>
 				</div>
@@ -570,5 +583,43 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		padding: 0 5px;
+	}
+	/* Mobile full-screen reader: a back arrow leads the header, the desktop
+	   toolbar row gives way to the page's fixed bottom action bar (the draft
+	   shell keeps its toolbar — "Continue editing" has no bottom-bar stand-in),
+	   and the reading column hugs the narrower screen. */
+	.backbtn {
+		display: none;
+	}
+	@media (max-width: 767px) {
+		.backbtn {
+			display: grid;
+			place-items: center;
+			align-self: center;
+			width: 40px;
+			height: 40px;
+			margin-left: calc(-1 * var(--space-2));
+			border: none;
+			border-radius: var(--radius-md);
+			background: none;
+			color: var(--color-text-muted, var(--color-text-disabled));
+			cursor: pointer;
+			flex-shrink: 0;
+		}
+		.backbtn:active {
+			background: var(--color-bg-3);
+		}
+		article:not(:has(.draft-tag)) .toolbar {
+			display: none;
+		}
+		.head-col,
+		.message,
+		.draft-preview {
+			padding-left: var(--space-3);
+			padding-right: var(--space-3);
+		}
+		.ph-sub {
+			display: none;
+		}
 	}
 </style>

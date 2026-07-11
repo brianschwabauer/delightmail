@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { onMount, setContext } from 'svelte';
+	import { onMount, setContext, untrack } from 'svelte';
 	import { toast } from '@delightstack/components';
+	import Icon from '$lib/components/Icon.svelte';
 	import FolderRail from '$lib/components/FolderRail.svelte';
 	import StatusBar from '$lib/components/StatusBar.svelte';
 	import PasskeyPrompt from '$lib/components/PasskeyPrompt.svelte';
@@ -28,6 +29,19 @@
 	let helpOpen = $state(false);
 	let paletteOpen = $state(false);
 	let composeInit = $state<ComposeInit | null>(null);
+
+	// Mobile: the folder rail lives in a slide-in drawer (opened by the list
+	// header's ☰). On desktop the drawer state is inert — the rail is a fixed column.
+	let drawerOpen = $state(false);
+	setContext('mail:drawer', { open: () => (drawerOpen = true) });
+	// Close on any pick: folder navigation or account-scope change. (The rail's
+	// onNavigate callback can't cover the folder links — delightstack's href
+	// ListItems don't forward onclick — so watch the outcomes instead.)
+	$effect(() => {
+		void view;
+		void scope.current;
+		untrack(() => (drawerOpen = false));
+	});
 
 	// While any modal overlay is up it owns the keyboard: its own focused DOM
 	// handlers run, and the global binding engine is held back so list/global
@@ -82,6 +96,12 @@
 			}
 			// Compose / palette own the keyboard via their own focused handlers.
 			if (paletteOpen || composeInit) return;
+			// The mobile folder drawer closes on Escape before anything beneath it.
+			if (drawerOpen && e.key === 'Escape') {
+				drawerOpen = false;
+				e.preventDefault();
+				return;
+			}
 			kb.handle(e);
 		};
 		window.addEventListener('keydown', onKey);
@@ -122,11 +142,19 @@
 </script>
 
 <div class="app">
-	<FolderRail {db} {view} {auth} />
+	<div class="rail-host" class:open={drawerOpen}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="drawer-backdrop" onclick={() => (drawerOpen = false)}></div>
+		<FolderRail {db} {view} {auth} onNavigate={() => (drawerOpen = false)} />
+	</div>
 	<main class="content">
 		{@render children()}
 	</main>
 </div>
+<button class="fab" onclick={() => openCompose()} aria-label="Compose">
+	<Icon name="pencil" size={22} />
+</button>
 <StatusBar {auth} {ws} />
 <PasskeyPrompt {auth} />
 <ChordHint {kb} />
@@ -142,15 +170,88 @@
 		grid-template-columns: 220px minmax(0, 1fr);
 		height: calc(100dvh - 28px);
 	}
+	/* Desktop: the host is invisible — the rail participates in the grid directly. */
+	.rail-host {
+		display: contents;
+	}
+	.drawer-backdrop {
+		display: none;
+	}
 	.content {
 		min-width: 0;
 		min-height: 0;
 		overflow: hidden;
 		display: flex;
 	}
+	/* Compose FAB — the touch entry point for `n`/`c`. Desktop keeps the keyboard. */
+	.fab {
+		display: none;
+	}
 	@media (max-width: 767px) {
 		.app {
 			grid-template-columns: 1fr;
+			/* The status bar is hidden on mobile — reclaim its 28px. */
+			height: 100dvh;
+		}
+		/* The rail becomes a left drawer: fixed, off-canvas, slid in by .open.
+		   `visibility` keeps it out of the tab order while closed but still lets
+		   the transform transition play both ways. */
+		.rail-host {
+			display: block;
+			position: fixed;
+			inset: 0;
+			z-index: 400;
+			visibility: hidden;
+			transition: visibility 0s 200ms;
+		}
+		.rail-host.open {
+			visibility: visible;
+			transition: visibility 0s;
+		}
+		.drawer-backdrop {
+			display: block;
+			position: absolute;
+			inset: 0;
+			background: color-mix(in oklab, black 40%, transparent);
+			opacity: 0;
+			transition: opacity 200ms var(--ease-out, ease);
+		}
+		.rail-host.open .drawer-backdrop {
+			opacity: 1;
+		}
+		.rail-host :global(.rail) {
+			position: absolute;
+			inset: 0 auto 0 0;
+			width: min(80vw, 300px);
+			border-right: none;
+			box-shadow: var(--shadow-4, 0 8px 32px rgba(0, 0, 0, 0.35));
+			padding-top: calc(var(--space-2) + env(safe-area-inset-top));
+			padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+			padding-left: calc(var(--space-2) + env(safe-area-inset-left));
+			transform: translateX(-100%);
+			transition: transform 200ms var(--ease-out, ease);
+		}
+		.rail-host.open :global(.rail) {
+			transform: translateX(0);
+		}
+		.fab {
+			display: grid;
+			place-items: center;
+			position: fixed;
+			right: calc(var(--space-4) + env(safe-area-inset-right));
+			bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+			z-index: 90;
+			width: 56px;
+			height: 56px;
+			border: none;
+			border-radius: var(--radius-lg, 16px);
+			background: var(--color-primary);
+			color: var(--color-primary-contrast, #fff);
+			box-shadow: var(--shadow-3, 0 4px 16px rgba(0, 0, 0, 0.3));
+			cursor: pointer;
+		}
+		.fab:active {
+			transform: scale(0.94);
 		}
 	}
 </style>

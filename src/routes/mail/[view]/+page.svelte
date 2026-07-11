@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { tick, onMount, untrack, getContext } from 'svelte';
+	import { pushState, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
 	import { Button, Input, toast } from '@delightstack/components';
+	import { isMobile } from '$lib/mobile';
 	import Icon from '$lib/components/Icon.svelte';
 	import { viewToQuery, viewTitle } from '$lib/mail/views';
 	import { currentDensity, type Density } from '$lib/theme';
@@ -16,6 +19,7 @@
 	import type { ThreadActionName } from '$lib/mail/actions';
 
 	const compose = getContext<{ open: (init?: ComposeInit) => void }>('mail:compose');
+	const drawer = getContext<{ open: () => void }>('mail:drawer');
 
 	const { data } = $props();
 	const { db, view } = $derived(data);
@@ -102,6 +106,13 @@
 		if (t) {
 			openId = t;
 			deepLinkPending = true;
+			// Strip ?t= from THIS history entry so the entry under the reader is the
+			// plain list — the mirror effect below re-adds it (mobile as a pushed
+			// shallow entry, desktop in place), and phone-back from a notification
+			// deep-link then lands on the list instead of re-opening the thread.
+			const url = new URL(location.href);
+			url.searchParams.delete('t');
+			history.replaceState(history.state, '', url);
 		}
 	});
 
@@ -117,16 +128,54 @@
 		});
 	});
 
-	// Mirror the open thread into the URL (?t=) without a navigation, so reload and
-	// the notification deep-link stay in sync.
+	// Mirror the open thread into the URL (?t=) so reload and the notification
+	// deep-link stay in sync. On MOBILE, opening additionally pushes a shallow
+	// history entry ({threadOpen}) so the phone's back button / edge-swipe closes
+	// the full-screen reader instead of leaving the app; in-app closes pop that
+	// same entry so stale reader states never pile up in history.
+	let pushedReader = false;
 	$effect(() => {
 		const id = openId;
 		if (typeof history === 'undefined') return;
 		untrack(() => {
+			// Only touch history when something actually changes — the effect's very
+			// first run (openId null, no ?t) happens BEFORE the SvelteKit router
+			// initializes, where pushState/replaceState throw.
 			const url = new URL(location.href);
-			if (id) url.searchParams.set('t', id);
-			else url.searchParams.delete('t');
-			history.replaceState(history.state, '', url);
+			const current = url.searchParams.get('t');
+			if (id) {
+				url.searchParams.set('t', id);
+				if (isMobile.current && !page.state.threadOpen) {
+					pushState(url, { threadOpen: true });
+					pushedReader = true;
+				} else if (current !== id) {
+					// Desktop, or moving thread→thread inside an already-pushed reader.
+					replaceState(url, page.state);
+				}
+			} else if (pushedReader) {
+				// In-app close (back arrow, Escape, archive-from-reader): pop our own
+				// entry. The popstate effect below sees openId already null and no-ops.
+				pushedReader = false;
+				history.back();
+			} else if (current !== null) {
+				url.searchParams.delete('t');
+				replaceState(url, page.state);
+			}
+		});
+	});
+
+	// Phone back button / edge-swipe: SvelteKit pops the shallow entry and
+	// `threadOpen` drops out of page.state — close the reader to match.
+	$effect(() => {
+		const open = !!page.state.threadOpen;
+		untrack(() => {
+			if (open || !pushedReader) return;
+			pushedReader = false;
+			if (openId) {
+				clearCommit();
+				openId = null;
+				focus.set('list');
+			}
 		});
 	});
 
@@ -176,6 +225,9 @@
 	 *  reader only marks-read once it's actually focused, so previewing is free.
 	 *  Drafts preview too (a read-only summary); Enter/→ resumes them in compose. */
 	function previewCursor() {
+		// No preview pane on mobile — the reader is a separate screen, so cursor
+		// moves (taps, checkbox touches, post-action advances) must never open it.
+		if (isMobile.current) return;
 		if (!docs.length) return;
 		const t = docs[cursor];
 		if (!t) return;
@@ -697,13 +749,45 @@
 				</button>
 			</div>
 		{:else}
+			<button class="iconbtn m-only" onclick={() => drawer.open()} aria-label="Folders">
+				<Icon name="menu" size={20} />
+			</button>
 			<h1>{title}</h1>
 			{#if selected.size}
 				<span class="selcount">{selected.size} selected</span>
 			{/if}
+			{#if !data.ws.connected}
+				<span class="offline m-only">Offline</span>
+			{/if}
 			<span class="count">{docs.length}</span>
+			<button class="iconbtn m-only" onclick={startSearch} aria-label="Search">
+				<Icon name="search" size={20} />
+			</button>
 		{/if}
 	</header>
+
+	<!-- Mobile contextual selection bar: long-press starts a selection, taps grow
+	     it, and the batch actions live here (the keyboard's a/d/u/s equivalents). -->
+	{#if selected.size}
+		<div class="selbar" role="toolbar" aria-label="Selection actions">
+			<button class="iconbtn" onclick={clearSelection} aria-label="Clear selection">
+				<Icon name="x" size={20} />
+			</button>
+			<span class="selbar-count">{selected.size} selected</span>
+			<button class="iconbtn" onclick={() => act(readTarget())} aria-label="Toggle read">
+				<Icon name="mail-open" size={20} />
+			</button>
+			<button class="iconbtn" onclick={() => act(starTarget())} aria-label="Toggle star">
+				<Icon name="star" size={20} />
+			</button>
+			<button class="iconbtn" onclick={toggleArchive} aria-label="Archive">
+				<Icon name="archive" size={20} />
+			</button>
+			<button class="iconbtn" onclick={() => act('trash')} aria-label="Trash">
+				<Icon name="trash" size={20} />
+			</button>
+		</div>
+	{/if}
 
 	{#if filtering}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -758,9 +842,16 @@
 				toggleSelect();
 			}}
 			onRows={(n) => (listRows = n)}
+			selecting={isMobile.current && selected.size > 0}
+			onLongPress={(i) => {
+				cursor = i;
+				anchor = null;
+				toggleSelect();
+			}}
 			onSwipe={(i, dir) => {
 				cursor = i;
-				act(dir === 'archive' ? 'archive' : 'trash');
+				anchor = null;
+				void act(dir === 'archive' ? 'archive' : readTarget());
 			}} />
 	</div>
 </section>
@@ -768,6 +859,7 @@
 <div
 	class="reading-pane pane"
 	class:active={focus.is('reading')}
+	class:mobile-open={!!openId}
 	bind:this={readingEl}
 	onmousedowncapture={() => openId && focus.set('reading')}>
 	<ReadingPane
@@ -779,8 +871,39 @@
 		onDocs={(m) => (openMessages = m)}
 		onReply={reply}
 		onAct={act}
+		onBack={() => {
+			commit(null);
+			focus.set('list');
+		}}
 		onEditDraft={() => openThread && void openDraft(openThread)} />
 </div>
+
+<!-- Mobile reader action bar: thumb-reachable stand-ins for r/R/w/a/d and [/]. -->
+{#if openId}
+	<div class="reader-bar" role="toolbar" aria-label="Conversation actions">
+		<button class="iconbtn" onclick={() => stepThread(-1)} aria-label="Previous conversation">
+			<Icon name="chevron-left" size={22} />
+		</button>
+		<button class="iconbtn" onclick={() => reply('reply')} aria-label="Reply">
+			<Icon name="reply" size={22} />
+		</button>
+		<button class="iconbtn" onclick={() => reply('reply_all')} aria-label="Reply all">
+			<Icon name="reply-all" size={22} />
+		</button>
+		<button class="iconbtn" onclick={() => reply('forward')} aria-label="Forward">
+			<Icon name="forward" size={22} />
+		</button>
+		<button class="iconbtn" onclick={toggleArchive} aria-label={openThread?.folder === 'archive' ? 'Unarchive' : 'Archive'}>
+			<Icon name={openThread?.folder === 'archive' ? 'inbox' : 'archive'} size={22} />
+		</button>
+		<button class="iconbtn" onclick={() => act('trash')} aria-label="Trash">
+			<Icon name="trash" size={22} />
+		</button>
+		<button class="iconbtn" onclick={() => stepThread(1)} aria-label="Next conversation">
+			<Icon name="chevron-right" size={22} />
+		</button>
+	</div>
+{/if}
 
 <style>
 	/* --- The pane-focus signature: the active column lifts and grows a top
@@ -912,13 +1035,98 @@
 		flex: 1;
 		min-width: 0;
 		overflow-y: auto;
+		overscroll-behavior-y: contain;
 	}
+
+	/* Shared touch-target icon button (header, selection bar, reader bar). */
+	.iconbtn {
+		display: grid;
+		place-items: center;
+		width: 42px;
+		height: 42px;
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		color: var(--color-text-muted, var(--color-text-disabled));
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.iconbtn:active {
+		background: var(--color-bg-3);
+	}
+	/* Mobile-only chrome: hidden wherever the keyboard is the interface. */
+	.m-only,
+	.selbar,
+	.reader-bar {
+		display: none;
+	}
+	.offline {
+		font-size: var(--font-size-00);
+		font-weight: var(--font-weight-semibold, 600);
+		color: var(--color-warning, #b25d09);
+	}
+
 	@media (max-width: 767px) {
 		.list-pane {
 			width: 100%;
+			border-right: none;
 		}
+		.m-only {
+			display: grid;
+		}
+		span.m-only {
+			display: inline;
+		}
+		.list-head {
+			padding-top: calc(var(--space-2) + env(safe-area-inset-top));
+		}
+		/* Contextual selection bar (long-press → select → batch actions). */
+		.selbar {
+			display: flex;
+			align-items: center;
+			gap: var(--space-1);
+			padding: var(--space-1) var(--space-2);
+			border-bottom: 1px solid var(--color-border);
+			background: var(--dm-accent-soft);
+		}
+		.selbar-count {
+			flex: 1;
+			min-width: 0;
+			font-size: var(--font-size-0);
+			font-weight: var(--font-weight-medium, 500);
+			color: var(--color-primary);
+		}
+		/* The reader is its own screen: fixed over the list, opaque, above the FAB
+		   (z 90) and below the drawer (z 400) / modals (401+). */
 		.reading-pane {
 			display: none;
+		}
+		.reading-pane.mobile-open {
+			display: block;
+			position: fixed;
+			inset: 0;
+			z-index: 120;
+			background: var(--color-bg-1);
+			padding-top: env(safe-area-inset-top);
+			/* Keep the last message clear of the fixed action bar below. */
+			padding-bottom: calc(56px + env(safe-area-inset-bottom));
+		}
+		.reader-bar {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			position: fixed;
+			inset: auto 0 0 0;
+			z-index: 130;
+			height: calc(56px + env(safe-area-inset-bottom));
+			padding: 0 var(--space-2) env(safe-area-inset-bottom);
+			background: var(--color-bg-2);
+			border-top: 1px solid var(--color-border);
+		}
+		/* iOS zooms any focused input under 16px — pin the find bars above it. */
+		.searchbar :global(.findbar-input input),
+		.filterbar :global(.findbar-input input) {
+			font-size: 16px;
 		}
 	}
 </style>

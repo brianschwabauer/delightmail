@@ -25,6 +25,13 @@ declare global {
 
 		interface PageData {}
 
+		interface PageState {
+			/** Set by the mobile reader's shallow-routed history entry: opening a
+			 *  thread pushes `{ threadOpen: true }` so the phone's back button /
+			 *  edge-swipe pops back to the list instead of leaving the app. */
+			threadOpen?: boolean;
+		}
+
 		interface Platform {
 			context: ExecutionContext;
 			env: CloudflareEnv;

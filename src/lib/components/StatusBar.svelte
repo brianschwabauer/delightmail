@@ -83,11 +83,11 @@
 		padding: 0 4px;
 		color: var(--color-text-muted, var(--color-text-disabled));
 	}
+	/* Mobile has no keyboard: the whole bar is shortcut hints + pane focus, so it
+	   goes away entirely and the layout reclaims its 28px (§ mobile). The Live/
+	   Offline signal is worth keeping — it moves into the list header instead. */
 	@media (max-width: 767px) {
-		.hints .hk:not(:first-child):not(:last-child) {
-			display: none;
-		}
-		.pane {
+		.statusbar {
 			display: none;
 		}
 	}
