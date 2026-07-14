@@ -35,6 +35,12 @@
 	// path throws at runtime; deployers using an SMTP relay instead can drop it.
 	"send_email": [{ "name": "EMAIL" }],
 	"services": [{ "binding": "SELF", "service": "delightmail" }],
+	// The canonical origin. Keep this in lockstep with PUBLIC_APP_URL below: magic
+	// links, the Gmail OAuth redirect URI, and the passkey relying-party ID are all
+	// built from PUBLIC_APP_URL, so a hostname the worker doesn't serve breaks
+	// sign-in. Declaring it here (rather than only in the dashboard) means a fresh
+	// `wrangler deploy` re-creates the custom domain and its DNS record.
+	"routes": [{ "pattern": "mail.brianschwabauer.com", "custom_domain": true }],
 	"vars": {
 		"PUBLIC_APP_URL": "https://mail.brianschwabauer.com",
 	},

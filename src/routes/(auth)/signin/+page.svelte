@@ -36,23 +36,16 @@
 		notice = '';
 		busy = true;
 		try {
+			// Covers first contact too: the server creates the account for an unknown
+			// address as a side effect of this request, without issuing a session. The
+			// link and code below are the only ways in — never sign the browser in here.
 			await auth.signIn.emailMagicLink({ email: addr });
 			stage = 'code';
 			notice = `We emailed a sign-in link and code to ${addr}.`;
-		} catch (magicErr) {
-			// First contact (§8): no account yet → create a passwordless account,
-			// which signs the owner in directly. Only allowed emails get this far
-			// (the signup gate rejects others). Subsequent sign-ins use magic
-			// link or passkey.
-			try {
-				await auth.signUp.email({ name: addr.split('@')[0], email: addr });
-				window.location.href = '/mail/inbox';
-			} catch (signupErr) {
-				error =
-					(signupErr as { message?: string })?.message ||
-					(magicErr as { message?: string })?.message ||
-					'Could not sign in. Check the email address and try again.';
-			}
+		} catch (err) {
+			error =
+				(err as { message?: string })?.message ||
+				'Could not send a sign-in link. Check the email address and try again.';
 		} finally {
 			busy = false;
 		}

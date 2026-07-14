@@ -1,4 +1,4 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { createAuthHandle, type AuthServer, type AuthLocals } from '@delightstack/auth/server';
 import { createWebsocketHandle } from '@delightstack/websocket/server';
@@ -6,6 +6,7 @@ import { createDatabaseHandle } from '@delightstack/database/server';
 import { createAiHandle } from '@delightstack/ai/server';
 import { DelightError, createDevHandle } from '@delightstack/utilities';
 import { env } from '$env/dynamic/private';
+import { env as public_env } from '$env/dynamic/public';
 import { building, dev } from '$app/environment';
 import { tables } from '$lib/schema';
 import { sendTransactionalEmail } from '$lib/server/email';
@@ -16,15 +17,29 @@ import { limitMagicLink, type RateLimiterNamespace } from '$lib/server/rate-limi
 // A valid 64-char hex secret for dev only; production MUST set JWT_KEY_SECRET.
 const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
 
-function appOrigin(): string {
-	return env.PUBLIC_APP_URL ?? 'http://localhost:5174';
+/**
+ * The canonical origin of this deployment, or undefined when none is pinned.
+ *
+ * PUBLIC_APP_URL must be read from `$env/dynamic/public`: SvelteKit filters the
+ * public prefix *out* of `$env/dynamic/private`, so `env.PUBLIC_APP_URL` there is
+ * always undefined — even in production with the var set. Reading it from the
+ * wrong module is what pointed every deployed magic link at localhost.
+ *
+ * Undefined is a meaningful return: it makes the auth library fall back to the
+ * origin of the incoming request, which is correct for a deployment that has not
+ * pinned a canonical URL. Never guess localhost here.
+ */
+function appOrigin(): string | undefined {
+	return public_env.PUBLIC_APP_URL || undefined;
 }
 
-function rpId(): string {
+function rpId(): string | undefined {
+	const origin = appOrigin();
+	if (!origin) return undefined; // → library defaults to the request hostname
 	try {
-		return new URL(appOrigin()).hostname;
+		return new URL(origin).hostname;
 	} catch {
-		return 'localhost';
+		return undefined;
 	}
 }
 
@@ -39,9 +54,54 @@ function signupAllowed(email: string): boolean {
 	return owners.includes(email.trim().toLowerCase());
 }
 
+function clientIp(event: RequestEvent): string {
+	try {
+		return event.getClientAddress();
+	} catch {
+		return event.request.headers.get('cf-connecting-ip') ?? '';
+	}
+}
+
+/**
+ * First contact (§8) — create the account for an address that has never signed in.
+ *
+ * The library's magic-link route only mails an address that already has a user
+ * (`createEmailSignInToken` throws "Couldn't find user with given email"), so a
+ * brand-new address needs a user row before the link can be sent. We make it here,
+ * server-side, and drop the session `signUpWithEmail` returns on the floor.
+ *
+ * That discarded session is the entire point. `POST /api/auth/signup` answers with
+ * a live session cookie, so anything that calls it signs the browser in for an
+ * address it has never proven it controls. Creating the user out-of-band leaves the
+ * emailed link and code as the only ways to get a session.
+ */
+async function ensureUserExists(
+	penv: App.CloudflareEnv | undefined,
+	event: RequestEvent,
+	email: string,
+): Promise<void> {
+	const ns = penv?.AUTH;
+	if (!ns) return;
+	const auth = ns.get(ns.idFromName('main')) as unknown as AuthServer;
+	try {
+		await auth.signUpWithEmail(
+			{ name: email.split('@')[0] || email, email },
+			{
+				ip_address: clientIp(event) || undefined,
+				user_agent: event.request.headers.get('user-agent') ?? undefined,
+			},
+		);
+	} catch {
+		// Already registered — `checkEmailAvailability` throws. Nothing to do; the
+		// magic-link route below will find the user and mail them.
+	}
+}
+
 // ---------------------------------------------------------------------------
-// 0. Signup gate — reject magic-link / signup requests from disallowed emails
-//    BEFORE they reach the auth handler (which auto-creates users).
+// 0. Signup gate — the ONLY way into this instance is a magic link or code that
+//    was mailed to the address being claimed. `/api/auth/signup` hands out a
+//    session without any such proof, so it is sealed off entirely and sign-up
+//    happens as a side effect of the first sign-in request (ensureUserExists).
 // ---------------------------------------------------------------------------
 const signupGateHandle: Handle = async ({ event, resolve }) => {
 	// Capture platform env for the auth sendEmail closure (env is
@@ -53,10 +113,17 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 	}
 
 	const p = event.url.pathname;
-	const gated =
-		event.request.method === 'POST' &&
-		(p === '/api/auth/signin/email/magic' || p.startsWith('/api/auth/signup'));
-	if (!gated) return resolve(event);
+
+	// No unverified path to a session, for anyone, ever.
+	if (p.startsWith('/api/auth/signup')) {
+		return DelightError.forbidden(
+			'Accounts are created by requesting a sign-in link. Enter your email to get one.',
+		).toResponse();
+	}
+
+	if (event.request.method !== 'POST' || p !== '/api/auth/signin/email/magic') {
+		return resolve(event);
+	}
 
 	// Peek the email without consuming the body (clone).
 	let email = '';
@@ -67,25 +134,19 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 		/* not JSON — let auth handle validation */
 	}
 	if (email && !signupAllowed(email)) {
-		// If the user already exists, magic-link sign-in is fine; only block NEW accounts.
-		// We can't cheaply check existence here, so we allow known owners only when the
-		// instance is closed. Return a friendly closed-signups error.
+		// Only OWNER_EMAIL addresses (or anyone, when SIGNUPS_ENABLED) may hold an
+		// account here, and an address with no account can never sign in, so gating
+		// the sign-in request gates account creation too.
 		return DelightError.forbidden(
 			'This instance is not accepting new sign-ups. Ask the owner for access.',
 		).toResponse();
 	}
 
 	// Rate-limit the (allowed) request so a known address can't be email-bombed via
-	// unlimited magic-link/signup POSTs (§12). Fails open on a limiter outage.
+	// unlimited magic-link POSTs (§12). Fails open on a limiter outage.
 	const rl = penv?.RATE_LIMITER as unknown as RateLimiterNamespace | undefined;
 	if (rl) {
-		let ip = '';
-		try {
-			ip = event.getClientAddress();
-		} catch {
-			ip = event.request.headers.get('cf-connecting-ip') ?? '';
-		}
-		const { allowed, reset_in_ms } = await limitMagicLink(rl, email, ip);
+		const { allowed, reset_in_ms } = await limitMagicLink(rl, email, clientIp(event));
 		if (!allowed) {
 			const retry = Math.max(1, Math.ceil((reset_in_ms || 60_000) / 1000));
 			return new Response(
@@ -97,6 +158,8 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 			);
 		}
 	}
+
+	if (email) await ensureUserExists(penv, event, email);
 	return resolve(event);
 };
 
@@ -170,15 +233,19 @@ const authHandle = createAuthHandle({
 		email: {
 			link: true,
 			code: true,
+			// Undefined → the library builds links against the request origin.
 			base_url: appOrigin(),
 			sendEmail: async ({ to, subject, html, text }) => {
 				await sendTransactionalEmail(event_env(), { to, subject, html, text }, { dev });
 			},
 		},
-		passkey: {
+		// `passkeys`, not `passkey` — the singular key was silently ignored, so every
+		// field below was dead config. Each falls back to the request's own host /
+		// origin when PUBLIC_APP_URL is unset.
+		passkeys: {
 			rp_id: rpId(),
 			rp_name: 'Mail',
-			origins: [appOrigin()],
+			origins: appOrigin() ? [appOrigin() as string] : undefined,
 		},
 	},
 	getAuthServer: (event) => {
