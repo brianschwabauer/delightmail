@@ -3,7 +3,7 @@ import { dev } from '$app/environment';
 import { createClients } from '$lib/clients';
 import type { LayoutLoad } from './$types';
 
-export const load: LayoutLoad = async ({ parent, fetch }) => {
+export const load: LayoutLoad = async ({ parent, fetch, data }) => {
 	const { auth } = await parent();
 
 	if (auth.signed_out) throw redirect(307, '/signin');
@@ -13,5 +13,7 @@ export const load: LayoutLoad = async ({ parent, fetch }) => {
 	// which matters, because the local database below is namespaced by it.
 	const clients = await createClients({ auth, fetch, dev });
 
-	return { auth, ...clients };
+	// Forward the server load's answer explicitly: this universal load's return value
+	// *replaces* it as the layout's data, so anything not passed through is dropped.
+	return { auth, has_accounts: data.has_accounts, ...clients };
 };

@@ -20,6 +20,7 @@ import {
 	handleAttachment,
 	handleAttachmentUpload,
 } from './body-endpoint';
+import { handleOrgConsolidate } from './orgs';
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend, handleSaveDraft, handleDeleteDraft } from './send';
 import { handleTriageTest, handleUnsubscribe, handleUnsubscribeBulk } from './triage-endpoints';
@@ -58,6 +59,9 @@ async function route(event: RequestEvent): Promise<Response> {
 	}
 	if (pathname === '/api/accounts/domain' && method === 'POST') {
 		return handleDomainRegister(event);
+	}
+	if (pathname === '/api/accounts/orgs/consolidate' && method === 'POST') {
+		return handleOrgConsolidate(event);
 	}
 	if (pathname === '/api/accounts/imap/test' && method === 'POST') {
 		return handleImapTest(event);

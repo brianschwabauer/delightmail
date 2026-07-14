@@ -6,6 +6,7 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
+import { listDocs, countDocs, type ListableDb } from './db-list';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -417,22 +418,17 @@ async function fetchGoogleEmail(access_token: string): Promise<string> {
 	return info.email.toLowerCase();
 }
 
-interface DbLite {
+interface DbLite extends ListableDb {
 	create(entity_type: string, data: Record<string, unknown>): Promise<unknown> | unknown;
-	list(
-		entity_type: string,
-		query: Record<string, unknown>,
-	): Promise<{ docs: unknown[] }> | { docs: unknown[] };
 }
 
 async function findAccountByEmail(db: DbLite, email: string): Promise<unknown | undefined> {
-	const res = await db.list('account', { where: { email }, limit: 1 });
-	return res.docs[0];
+	const [account] = await listDocs<unknown>(db, 'account', { where: { email }, limit: 1 });
+	return account;
 }
 
 async function accountCount(db: DbLite): Promise<number> {
-	const res = await db.list('account', { limit: 100 });
-	return res.docs.length;
+	return countDocs(db, 'account');
 }
 
 function pickColor(index: number): string {

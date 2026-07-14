@@ -5,6 +5,7 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
+import { listDocs } from './db-list';
 
 function env(event: RequestEvent): App.CloudflareEnv | undefined {
 	return (event.platform as App.Platform | undefined)?.env;
@@ -31,13 +32,11 @@ export async function handlePushSubscribe(event: RequestEvent): Promise<Response
 	}
 
 	// Upsert on endpoint (unique).
-	const existing = await db.list('push_subscription', {
+	const [existing] = await listDocs<{ id: string }>(db, 'push_subscription', {
 		where: { endpoint: body.endpoint },
 		limit: 1,
 	});
-	if (existing.docs.length) {
-		return Response.json({ ok: true, id: (existing.docs[0] as { id: string }).id });
-	}
+	if (existing) return Response.json({ ok: true, id: existing.id });
 	const row = await db.create('push_subscription', {
 		endpoint: body.endpoint,
 		keys: { p256dh: body.keys.p256dh, auth: body.keys.auth },
@@ -53,10 +52,10 @@ export async function handlePushUnsubscribe(event: RequestEvent): Promise<Respon
 	if (!db) return DelightError.badRequest('No mailbox').toResponse();
 	const body = (await event.request.json().catch(() => null)) as { endpoint?: string } | null;
 	if (!body?.endpoint) return DelightError.badRequest('Missing endpoint').toResponse();
-	const existing = await db.list('push_subscription', {
+	const [existing] = await listDocs<{ id: string }>(db, 'push_subscription', {
 		where: { endpoint: body.endpoint },
 		limit: 1,
 	});
-	if (existing.docs.length) await db.delete('push_subscription', (existing.docs[0] as { id: string }).id);
+	if (existing) await db.delete('push_subscription', existing.id);
 	return Response.json({ ok: true });
 }

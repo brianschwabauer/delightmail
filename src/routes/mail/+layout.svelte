@@ -25,11 +25,18 @@
 
 	// No accounts ⇒ no mail can ever arrive, so the folder views would show an
 	// indefinite "All clear" that reads as a bug. Show onboarding instead until the
-	// org has a mailbox connected. `loading` guards the first frame, when the local
-	// index has not answered yet and every org looks account-less.
+	// org has a mailbox connected.
+	//
+	// While the client's local index is still loading it has no opinion, and taking its
+	// empty result at face value would render "no accounts" on the first frame for
+	// everyone — the wizard flashing over the mail UI on every cold load. Trust the
+	// server's answer (resolved during SSR) until the index actually answers.
 	const accounts = db.search('account', { limit: 1 });
 	let skippedSetup = $state(false);
-	const needsSetup = $derived(!accounts.loading && accounts.docs.length === 0 && !skippedSetup);
+	const hasAccounts = $derived(
+		accounts.loading ? (data.has_accounts ?? true) : accounts.docs.length > 0,
+	);
+	const needsSetup = $derived(!hasAccounts && !skippedSetup);
 
 	const kb = provideKeyboard();
 	const actions = provideActions(data.db);

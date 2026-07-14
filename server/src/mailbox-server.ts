@@ -679,12 +679,17 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	// Server-side thread listing (SSR / tests).
 	// -------------------------------------------------------------------------
 	async listThreads(folder: string, limit = 100): Promise<Thread[]> {
+		// `list()` answers in Orama's shape — `{ count, hits, cursor }`, each hit wrapping
+		// the row in `.document`. There is no `docs` field (that one belongs to the
+		// *client's* reactive search), so the old cast to `{ docs: Thread[] }` returned
+		// undefined. `sparse: false` so these are whole rows, not just indexed fields.
 		const res = this.list('thread', {
 			where: { folder: { eq: folder } },
 			order: [{ key: 'last_message_at', direction: 'DESC' }],
+			sparse: false,
 			limit,
-		} as never) as unknown as { docs: Thread[] };
-		return res.docs;
+		} as never) as unknown as { hits?: { document?: Thread }[] };
+		return (res?.hits ?? []).map((hit) => hit.document).filter((t): t is Thread => t != null);
 	}
 
 	// -------------------------------------------------------------------------
