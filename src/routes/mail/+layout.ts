@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { dev, browser } from '$app/environment';
+import { dev } from '$app/environment';
 import { createClients } from '$lib/clients';
 import type { LayoutLoad } from './$types';
 
@@ -8,13 +8,9 @@ export const load: LayoutLoad = async ({ parent, fetch }) => {
 
 	if (auth.signed_out) throw redirect(307, '/signin');
 
-	// One org per user ("personal workspace") — created automatically on first
-	// visit so the user never sees an org-picker (§4.1). Client-only: the
-	// AuthClient uses global fetch, which can't resolve relative URLs during SSR.
-	if (browser && !auth.org_id) {
-		await auth.createOrg({ name: `${auth.name || 'Personal'}'s Mail` });
-	}
-
+	// The one org per user ("personal workspace", §4.1) is provisioned server-side
+	// in hooks.server.ts, so `auth.org_id` is always set by the time we get here —
+	// which matters, because the local database below is namespaced by it.
 	const clients = await createClients({ auth, fetch, dev });
 
 	return { auth, ...clients };

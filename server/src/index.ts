@@ -56,6 +56,10 @@ export class AuthServer extends BaseAuthDatabaseServer {
 			permissions: ['owner', 'admin', 'member'],
 			oauth_scopes: [],
 			entitlements: ['ai', 'push', 'domains'],
+			// Granted to whoever creates an org. Must be one of `permissions` above:
+			// the default is 'org:admin', which isn't, so it encoded to a bitfield of
+			// 0 and left every mailbox owner with no permissions in their own mailbox.
+			orgAdminPermission: 'owner',
 		});
 	}
 }

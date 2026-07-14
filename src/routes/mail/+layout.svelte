@@ -11,6 +11,7 @@
 	import ChordHint from '$lib/components/ChordHint.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Compose from '$lib/components/Compose.svelte';
+	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import type { ComposeInit } from '$lib/components/Compose.svelte';
 	import { provideKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { provideActions } from '$lib/mail/actions-client.svelte';
@@ -21,6 +22,14 @@
 	const { auth, db, ws } = $derived(data);
 
 	const view = $derived(page.params.view ?? 'inbox');
+
+	// No accounts ⇒ no mail can ever arrive, so the folder views would show an
+	// indefinite "All clear" that reads as a bug. Show onboarding instead until the
+	// org has a mailbox connected. `loading` guards the first frame, when the local
+	// index has not answered yet and every org looks account-less.
+	const accounts = db.search('account', { limit: 1 });
+	let skippedSetup = $state(false);
+	const needsSetup = $derived(!accounts.loading && accounts.docs.length === 0 && !skippedSetup);
 
 	const kb = provideKeyboard();
 	const actions = provideActions(data.db);
@@ -149,7 +158,11 @@
 		<FolderRail {db} {view} {auth} onNavigate={() => (drawerOpen = false)} />
 	</div>
 	<main class="content">
-		{@render children()}
+		{#if needsSetup}
+			<SetupWizard onSkip={() => (skippedSetup = true)} />
+		{:else}
+			{@render children()}
+		{/if}
 	</main>
 </div>
 <button class="fab" onclick={() => openCompose()} aria-label="Compose">

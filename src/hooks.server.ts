@@ -1,6 +1,12 @@
 import type { Handle, HandleServerError, RequestEvent } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
-import { createAuthHandle, type AuthServer, type AuthLocals } from '@delightstack/auth/server';
+import {
+	createAuthHandle,
+	defineAuthConfig,
+	type AuthServer,
+	type AuthLocals,
+} from '@delightstack/auth/server';
+import { serializeSessionCookie } from '@delightstack/auth/sveltekit';
 import { createWebsocketHandle } from '@delightstack/websocket/server';
 import { createDatabaseHandle } from '@delightstack/database/server';
 import { createAiHandle } from '@delightstack/ai/server';
@@ -221,38 +227,47 @@ const emailLinkHandle: Handle = async ({ event, resolve }) => {
 // ---------------------------------------------------------------------------
 // 1. Auth — magic link + passkeys + sessions + /api/auth/*
 // ---------------------------------------------------------------------------
+const auth_config = defineAuthConfig({
+	secret: env.JWT_KEY_SECRET ?? DEV_SECRET,
+	issuer: 'delightmail',
+	permissions: ['owner', 'admin', 'member'] as const,
+	oauth_scopes: [] as const,
+	entitlements: ['ai', 'push', 'domains'] as const,
+	dev,
+	// The library defaults this to 'org:admin', which is not one of our permissions,
+	// so the owner of a new org was encoded with a permission bitfield of 0 — no
+	// permissions at all in their own mailbox.
+	org_admin_permission: 'owner',
+	session: { expires_in: 60 * 60 * 24 * 30 }, // 30-day rolling sessions (§8)
+	email: {
+		link: true,
+		code: true,
+		// Undefined → the library builds links against the request origin.
+		base_url: appOrigin(),
+		sendEmail: async ({ to, subject, html, text }) => {
+			await sendTransactionalEmail(event_env(), { to, subject, html, text }, { dev });
+		},
+	},
+	// `passkeys`, not `passkey` — the singular key was silently ignored, so every
+	// field below was dead config. Each falls back to the request's own host /
+	// origin when PUBLIC_APP_URL is unset.
+	passkeys: {
+		rp_id: rpId(),
+		rp_name: 'Mail',
+		origins: appOrigin() ? [appOrigin() as string] : undefined,
+	},
+});
+
+/** The AuthServer DO stub (one instance, named 'main') — the auth database. */
+function authServer(event: RequestEvent): AuthServer | undefined {
+	const ns = (event.platform as App.Platform | undefined)?.env?.AUTH;
+	if (!ns) return undefined;
+	return ns.get(ns.idFromName('main')) as unknown as AuthServer;
+}
+
 const authHandle = createAuthHandle({
-	config: {
-		secret: env.JWT_KEY_SECRET ?? DEV_SECRET,
-		issuer: 'delightmail',
-		permissions: ['owner', 'admin', 'member'] as const,
-		oauth_scopes: [] as const,
-		entitlements: ['ai', 'push', 'domains'] as const,
-		dev,
-		session: { expires_in: 60 * 60 * 24 * 30 }, // 30-day rolling sessions (§8)
-		email: {
-			link: true,
-			code: true,
-			// Undefined → the library builds links against the request origin.
-			base_url: appOrigin(),
-			sendEmail: async ({ to, subject, html, text }) => {
-				await sendTransactionalEmail(event_env(), { to, subject, html, text }, { dev });
-			},
-		},
-		// `passkeys`, not `passkey` — the singular key was silently ignored, so every
-		// field below was dead config. Each falls back to the request's own host /
-		// origin when PUBLIC_APP_URL is unset.
-		passkeys: {
-			rp_id: rpId(),
-			rp_name: 'Mail',
-			origins: appOrigin() ? [appOrigin() as string] : undefined,
-		},
-	},
-	getAuthServer: (event) => {
-		const auth = (event.platform as App.Platform | undefined)?.env?.AUTH;
-		if (!auth) return undefined as unknown as AuthServer;
-		return auth.get(auth.idFromName('main')) as unknown as AuthServer;
-	},
+	config: auth_config,
+	getAuthServer: (event) => authServer(event) as AuthServer,
 	building,
 });
 
@@ -261,6 +276,112 @@ let _last_env: App.CloudflareEnv | undefined;
 function event_env(): App.CloudflareEnv | undefined {
 	return _last_env;
 }
+
+// ---------------------------------------------------------------------------
+// 1b. Mailbox org — every session must own an org, because the mailbox DO is
+//     keyed by org_id (appHandle, below). A session without one has nowhere to
+//     put mail, which is what surfaced as "No mailbox for this session".
+//
+//     This used to be done in the browser: the mail and settings layout loads
+//     called auth.createOrg() when they noticed a missing org_id. That made a
+//     session's mailbox depend on client-side code running AND succeeding — and
+//     when it didn't (silently, in production), the account was left permanently
+//     unusable with no way to recover from the UI. Provision it server-side
+//     instead, on the first authenticated request, before any route can ask for
+//     locals.db.
+// ---------------------------------------------------------------------------
+function personalOrgName(name?: string): string {
+	return `${name || 'Personal'}'s Mail`;
+}
+
+/**
+ * Give the signed-in user an org if they lack one, and re-mint their session so
+ * it carries it. Returns the new JWT, or null if nothing was done.
+ *
+ * The org lives *inside* the JWT (`session.org`), so creating the row is not
+ * enough — the session has to be refreshed or the very next request looks just
+ * as org-less as this one did.
+ */
+async function provisionOrg(
+	event: RequestEvent,
+	session: { uid: string; jti: string; name?: string },
+): Promise<{ org_id: string; jwt: string } | null> {
+	// The generated DO stub types blow the TS instantiation depth on the org query,
+	// and `createOrg` types created_at/updated_at as required even though the DO
+	// stamps them on insert. Narrow the three methods we need by hand.
+	const auth = authServer(event) as unknown as
+		| {
+				listOrgs(query: unknown): Promise<{ id: string }[]>;
+				createOrg(org: Record<string, unknown>): Promise<{ id: string }>;
+				refreshSession(jti: string, meta: Record<string, unknown>): Promise<{ jwt: string }>;
+		  }
+		| undefined;
+	if (!auth) return null;
+
+	// Find-or-create. A previous attempt may have created the org and then failed
+	// to land the refreshed cookie, so never blindly create a second one.
+	const owned = await auth.listOrgs({
+		where: { key: 'owner_id', is: '=', value: session.uid },
+		limit: 1,
+	});
+	const existing = Array.isArray(owned) ? owned[0] : undefined;
+
+	const org = existing
+		? existing
+		: await auth.createOrg({
+				id: crypto.randomUUID(),
+				name: personalOrgName(session.name),
+				owner_id: session.uid,
+				db_id: '',
+				plan: 0,
+				json: '{}',
+			});
+
+	const refreshed = await auth.refreshSession(session.jti, {
+		ip_address: clientIp(event) || undefined,
+		user_agent: event.request.headers.get('user-agent') ?? undefined,
+	});
+	return { org_id: org.id, jwt: refreshed.jwt };
+}
+
+const orgHandle: Handle = async ({ event, resolve }) => {
+	const locals = event.locals as AuthLocals & App.Locals;
+	if (!locals.session || locals.org_id) return resolve(event);
+
+	let provisioned: { org_id: string; jwt: string } | null = null;
+	try {
+		provisioned = await provisionOrg(event, locals.session);
+	} catch (err) {
+		// Leave org_id unset: the route guards below answer with a clear error rather
+		// than handing out a half-provisioned mailbox.
+		console.error('[org] could not provision a mailbox for this session:', err);
+	}
+	if (!provisioned) return resolve(event);
+
+	const cookie = serializeSessionCookie(auth_config, provisioned.jwt);
+
+	// A page load: bounce through the same URL once so the auth handle re-runs against
+	// the new cookie and rebuilds `locals` — including the auth_client_data the browser
+	// uses to namespace its local database. Patching those by hand here would mean
+	// reaching into the library's session shape and getting it subtly wrong.
+	if (!event.url.pathname.startsWith('/api/')) {
+		return new Response(null, {
+			status: 303,
+			headers: {
+				location: event.url.pathname + event.url.search,
+				'set-cookie': cookie,
+				'cache-control': 'no-store',
+			},
+		});
+	}
+
+	// An API call: no document to rebuild, so patch the org onto locals in place.
+	// appHandle runs after this and derives locals.db from locals.org_id.
+	locals.org_id = provisioned.org_id;
+	const response = await resolve(event);
+	response.headers.append('set-cookie', cookie);
+	return response;
+};
 
 // ---------------------------------------------------------------------------
 // 2. App — platform bindings, mailbox DO, sync engine accessor
@@ -379,6 +500,7 @@ export const handle = sequence(
 	signupGateHandle,
 	emailLinkHandle,
 	authHandle as unknown as Handle,
+	orgHandle,
 	appHandle,
 	websocketHandle as unknown as Handle,
 	databaseHandle as unknown as Handle,
