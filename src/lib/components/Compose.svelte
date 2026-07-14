@@ -97,12 +97,24 @@
 			(identities.docs[0] as Identity | undefined),
 	);
 
-	// The Send button is enabled only when the message can actually go out: at
-	// least one committed recipient chip, a sending identity, and no attachment
-	// mid-upload. (A half-typed address must be committed — Enter/Tab/comma, or
-	// picking a suggestion — before it counts, which is standard chip behavior.)
+	// The uncommitted text sitting in each recipient field. It lives inside the
+	// <Input>, which doesn't expose it — but its `input` events bubble, so we
+	// mirror them here (see onFieldInput). That lets Send light up for an address
+	// that's fully typed but not yet a chip.
+	const drafts = $state({ to: '', cc: '', bcc: '' });
+	const typedTo = $derived.by(() => {
+		const a = parseAddress(drafts.to);
+		return a?.email && isSendableEmail(a.email) ? a : null;
+	});
+
+	// The Send button is enabled only when the message can actually go out: a
+	// recipient (chipped, or typed and complete — send() commits it), a sending
+	// identity, and no attachment mid-upload.
 	const canSend = $derived(
-		!sending && !!fromIdentity && to.length > 0 && !attachments.some((a) => a.uploading),
+		!sending &&
+			!!fromIdentity &&
+			(to.length > 0 || !!typedTo) &&
+			!attachments.some((a) => a.uploading),
 	);
 
 	// --- draft autosave (§6): every 3s of idle, persist to a draft row. The saver
@@ -186,6 +198,12 @@
 		if (/^[^@\s]+@[^@\s]+$/.test(trimmed)) return { email: trimmed };
 		return null;
 	}
+	// Deliberately stricter than parseAddress (which also accepts intranet-style
+	// `user@host`): this gates the two places we commit an address the user never
+	// explicitly picked — Enter and blur — so half-typed text can't become a chip.
+	function isSendableEmail(email: string): boolean {
+		return /^[^\s@<>,;]+@[^\s@<>,;.]+(\.[^\s@<>,;.]+)+$/.test(email);
+	}
 	// Address[] (from init/draft) → chip strings for <Input multiple>. We store the
 	// bare email as the chip and stash the name in `nameByEmail` for send time.
 	function initChips(list?: Address[]): string[] {
@@ -212,27 +230,104 @@
 	// at send. label === the email so the picked chip is the address itself. An
 	// empty query (e.g. the panel refreshing right after a pick) lists the most
 	// frequent contacts so adding several recipients stays a keyboard flow.
+	//
+	// When the query is itself a complete address, it leads the list: the <Input>
+	// parks its highlight on the first row, so writing to someone who isn't a
+	// contact yet is the same Enter-to-commit flow as writing to someone who is.
 	async function contactOptions(query: string): Promise<InputOption[]> {
 		const term = query.trim();
 		const chosen = new Set(
 			[...to, ...cc, ...bcc].map((c) => (parseAddress(c)?.email ?? c).toLowerCase()),
 		);
+		const typed = parseAddress(term);
+		const typedEmail =
+			typed?.email && isSendableEmail(typed.email) && !chosen.has(typed.email.toLowerCase())
+				? typed.email
+				: null;
+		if (typedEmail && typed?.name) nameByEmail.set(typedEmail.toLowerCase(), typed.name);
+
 		const res = await db.list(
 			'contact',
 			term
 				? { term, limit: 8 }
 				: { limit: 8, order: [{ key: 'send_count', direction: 'DESC' }] },
 		);
-		return (res.hits ?? [])
+		const contacts = (res.hits ?? [])
 			.map((h) => h.document as { email?: string; name?: string; send_count?: number })
 			.filter((c) => c.email && !chosen.has(c.email.toLowerCase()))
 			.sort((a, b) => (b.send_count ?? 0) - (a.send_count ?? 0))
-			.slice(0, 6)
 			.map((c) => {
 				const email = c.email!.toLowerCase();
 				if (c.name) nameByEmail.set(email, c.name);
 				return { value: email, label: email, description: c.name };
 			});
+
+		if (!typedEmail) return contacts.slice(0, 6);
+		// The typed address may also be a known contact — show it once, at the top,
+		// keeping the contact's name (the panel keys rows by `value`, so a duplicate
+		// would collide).
+		const key = typedEmail.toLowerCase();
+		const known = contacts.find((c) => c.value === key);
+		return [
+			{ value: key, label: typedEmail, description: known?.description ?? nameByEmail.get(key) },
+			...contacts.filter((c) => c.value !== key).slice(0, 5),
+		];
+	}
+
+	// --- committing a typed (unpicked) address ---
+	// The <Input> only turns text into a chip when you pick a suggestion (or type a
+	// comma); Enter always takes the highlighted suggestion, and its filter is
+	// debounced, so the panel can be a keystroke behind what you actually typed.
+	// Left alone, a complete address you typed and never "picked" is silently
+	// dropped at send. So compose commits it itself, on Enter and on blur.
+	type Field = 'to' | 'cc' | 'bcc';
+	function chipsOf(field: Field): string[] {
+		return field === 'to' ? to : field === 'cc' ? cc : bcc;
+	}
+	function setChips(field: Field, next: string[]): void {
+		if (field === 'to') to = next;
+		else if (field === 'cc') cc = next;
+		else bcc = next;
+	}
+	/** The recipient field an event came from, or null if it came from anywhere else. */
+	function recipientField(target: EventTarget | null): Field | null {
+		const id = (target as HTMLElement | null)?.id;
+		return id === 'to' || id === 'cc' || id === 'bcc' ? id : null;
+	}
+	/** Mirror each recipient field's draft text into `drafts` (the events bubble
+	 *  up to `.compose`; the subject input isn't a recipient field, so it's ignored). */
+	function onFieldInput(e: Event): void {
+		const field = recipientField(e.target);
+		if (field) drafts[field] = (e.target as HTMLInputElement).value;
+	}
+	/** Re-read a field's draft text from the DOM. Picking a suggestion clears the
+	 *  <Input>'s text without firing `input`, so typing alone doesn't keep `drafts`
+	 *  honest — chip changes have to resync it, after Svelte has flushed the clear. */
+	function syncDraft(field: Field): void {
+		void tick().then(() => {
+			drafts[field] = overlayEl?.querySelector<HTMLInputElement>(`#${field}`)?.value ?? '';
+		});
+	}
+	/** Commit the field's uncommitted text as a chip if it's a real address.
+	 *  Returns whether it did — Enter uses that to decide who owns the keystroke. */
+	function commitTypedAddress(field: Field): boolean {
+		const el = overlayEl?.querySelector<HTMLInputElement>(`#${field}`);
+		const addr = parseAddress(el?.value ?? '');
+		if (!addr?.email || !isSendableEmail(addr.email)) return false;
+		const key = addr.email.toLowerCase();
+		if (addr.name) nameByEmail.set(key, addr.name);
+		const chips = chipsOf(field);
+		if (!chips.some((c) => (parseAddress(c)?.email ?? c).toLowerCase() === key)) {
+			setChips(field, [...chips, addr.email]);
+		}
+		// The draft text lives in the <Input>'s own state, which we can't reach — so
+		// clear it the way the user would, by emptying the field and letting the
+		// component's `oninput` handler see it (this also refreshes its panel).
+		if (el) {
+			el.value = '';
+			el.dispatchEvent(new Event('input', { bubbles: true }));
+		}
+		return true;
 	}
 
 	function cycleIdentity(): void {
@@ -299,6 +394,10 @@
 	}
 
 	async function send(): Promise<void> {
+		// A recipient can still be sitting in a field as text — typed, complete, and
+		// never picked (clicking Send from a disabled state fires no blur). Commit
+		// those first so the message goes to who it looks like it's going to.
+		for (const f of ['to', 'cc', 'bcc'] as Field[]) commitTypedAddress(f);
 		const toList = toAddresses(to);
 		const ccList = showCc ? toAddresses(cc) : [];
 		const bccList = showBcc ? toAddresses(bcc) : [];
@@ -354,6 +453,22 @@
 			e.preventDefault();
 			e.stopPropagation();
 			void send();
+			return;
+		}
+		// Enter in a recipient field: a complete typed address wins over the
+		// highlighted suggestion (which, mid-debounce, may still be matching the
+		// previous keystroke). Claim it in the capture phase so the <Input> never
+		// gets to swap in a suggestion. If the user has arrowed off the first row
+		// they've chosen a suggestion deliberately — leave that Enter to the Input.
+		if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			const field = recipientField(e.target);
+			if (!field) return;
+			const active = (e.target as HTMLElement).getAttribute('aria-activedescendant');
+			if (active && !active.endsWith('-option-0')) return;
+			if (commitTypedAddress(field)) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
 		}
 	}
 
@@ -395,6 +510,7 @@
 			bind:this={overlayEl}
 			onkeydowncapture={onKeydownCapture}
 			onkeydown={onKeydown}
+			oninput={onFieldInput}
 			ondragover={(e) => e.preventDefault()}
 			ondrop={onDrop}>
 			<div class="fields">
@@ -413,12 +529,18 @@
 				<div class="row">
 					<label for="to">To</label>
 					<div class="field">
+						<!-- onblur: leaving the field commits a complete address you typed but
+						     never picked, so it can't be lost on the way to Subject or Send.
+						     (Clicking a suggestion doesn't blur the field — the panel swallows
+						     the pointerdown — so this can't race with a pick.) -->
 						<Input
 							id="to"
 							multiple
 							bind:value={to}
 							onfilter={contactOptions}
 							option={contactOption}
+							onblur={() => commitTypedAddress('to')}
+							onchange={() => syncDraft('to')}
 							placeholder="recipient@example.com" />
 					</div>
 					<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
@@ -432,7 +554,14 @@
 					<div class="row">
 						<label for="cc">Cc</label>
 						<div class="field">
-							<Input id="cc" multiple bind:value={cc} onfilter={contactOptions} option={contactOption} />
+							<Input
+								id="cc"
+								multiple
+								bind:value={cc}
+								onfilter={contactOptions}
+								option={contactOption}
+								onblur={() => commitTypedAddress('cc')}
+								onchange={() => syncDraft('cc')} />
 						</div>
 					</div>
 				</Expand>
@@ -440,7 +569,14 @@
 					<div class="row">
 						<label for="bcc">Bcc</label>
 						<div class="field">
-							<Input id="bcc" multiple bind:value={bcc} onfilter={contactOptions} option={contactOption} />
+							<Input
+								id="bcc"
+								multiple
+								bind:value={bcc}
+								onfilter={contactOptions}
+								option={contactOption}
+								onblur={() => commitTypedAddress('bcc')}
+								onchange={() => syncDraft('bcc')} />
 						</div>
 					</div>
 				</Expand>
