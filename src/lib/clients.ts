@@ -3,6 +3,7 @@
  * the mail layout's `load` (see routes/mail/+layout.ts). Mirrors the delightstack
  * example app's clients.ts, specialized for the mail schema.
  */
+import { browser } from '$app/environment';
 import { DatabaseClient, type DatabaseClientConfig } from '@delightstack/database/client';
 import { WebsocketClient } from '@delightstack/websocket/client';
 import { AiClient } from '@delightstack/ai/client';
@@ -52,6 +53,17 @@ export async function createClients(options: {
 	});
 
 	const ai = new AiClient({ ws });
+
+	// The websocket client stays idle until it is told which room to join, and
+	// nothing was ever telling it — so the connection was never opened, the status
+	// bar read "Offline" forever, and no live event (new mail, sync progress, send
+	// status) ever reached the client. The app quietly fell back to polling, which
+	// is why it looked like it worked. The room is the org: see the WS handle in
+	// hooks.server.ts, which routes to one DO per org.
+	//
+	// Browser-only: connect() runs through a SharedWorker, which does not exist
+	// during SSR (this load is universal).
+	if (browser && auth.org_id) await ws.connect(auth.org_id);
 
 	await db.init();
 

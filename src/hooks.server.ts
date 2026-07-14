@@ -224,6 +224,31 @@ const emailLinkHandle: Handle = async ({ event, resolve }) => {
 	return new Response(null, { status: 303, headers });
 };
 
+type SessionOrgs = { org?: Record<string, { p?: number }> } | null;
+
+/**
+ * Which org this request acts on, chosen from the ones carried in the session JWT.
+ *
+ * Must be **stable**: the mailbox DO is keyed by org_id, so a resolver that returned
+ * a different org from one request to the next would silently hand out a different
+ * (empty) mailbox. Sorting the ids gives the same answer every time. Orgs where the
+ * user actually holds a permission win over ones where they hold none, so an account
+ * carrying junk orgs from the duplicate-org bug lands on a properly-owned one.
+ */
+function pickOrg(event: RequestEvent, session: SessionOrgs): string | null {
+	const orgs = session?.org ?? {};
+	const ids = Object.keys(orgs);
+	if (!ids.length) return null;
+
+	// An explicit choice still wins — but only if the session actually grants it.
+	// (No route in this app carries an :org_id param, so there's nothing to read there.)
+	const explicit = event.url.searchParams.get('org') || event.request.headers.get('Org-ID');
+	if (explicit && explicit !== 'null' && ids.includes(explicit)) return explicit;
+
+	const owned = ids.filter((id) => (orgs[id]?.p ?? 0) !== 0);
+	return (owned.length ? owned : ids).sort()[0];
+}
+
 // ---------------------------------------------------------------------------
 // 1. Auth — magic link + passkeys + sessions + /api/auth/*
 // ---------------------------------------------------------------------------
@@ -238,6 +263,13 @@ const auth_config = defineAuthConfig({
 	// so the owner of a new org was encoded with a permission bitfield of 0 — no
 	// permissions at all in their own mailbox.
 	org_admin_permission: 'owner',
+	// The library's default resolver auto-selects an org only when the user has
+	// EXACTLY ONE, and returns null otherwise. Null org_id means "no mailbox", so a
+	// user who somehow acquired a second personal org could never reach their mail
+	// again — and the old client-side createOrg reacted to that by making yet another
+	// org on every page load, which is how one account ended up with ten of them.
+	// Resolving deterministically makes a duplicate org merely untidy instead of fatal.
+	resolveOrgId: (event, session) => pickOrg(event, session as SessionOrgs),
 	session: { expires_in: 60 * 60 * 24 * 30 }, // 30-day rolling sessions (§8)
 	email: {
 		link: true,
@@ -313,7 +345,10 @@ async function provisionOrg(
 		| {
 				listOrgs(query: unknown): Promise<{ id: string }[]>;
 				createOrg(org: Record<string, unknown>): Promise<{ id: string }>;
-				refreshSession(jti: string, meta: Record<string, unknown>): Promise<{ jwt: string }>;
+				refreshSession(
+					jti: string,
+					meta: Record<string, unknown>,
+				): Promise<{ jwt: string; decoded_jwt: { org?: Record<string, unknown> } }>;
 		  }
 		| undefined;
 	if (!auth) return null;
@@ -341,6 +376,14 @@ async function provisionOrg(
 		ip_address: clientIp(event) || undefined,
 		user_agent: event.request.headers.get('user-agent') ?? undefined,
 	});
+
+	// Never hand back a session that still can't see an org: the caller redirects on
+	// success, and redirecting to a request that will provision all over again is an
+	// infinite loop — which is exactly what shipped when org resolution could return
+	// null for a user who *did* have orgs.
+	if (!Object.keys(refreshed.decoded_jwt.org ?? {}).length) {
+		throw new Error(`refreshed session for ${session.uid} still carries no org`);
+	}
 	return { org_id: org.id, jwt: refreshed.jwt };
 }
 
