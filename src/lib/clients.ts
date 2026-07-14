@@ -10,7 +10,7 @@ import { AiClient } from '@delightstack/ai/client';
 import type { AuthClient } from '@delightstack/auth/client';
 import { tables } from './schema';
 
-/** Custom websocket events beyond the built-in `entity:*` (§9). */
+/** Custom websocket events beyond the built-in `entity:*`. */
 export interface MailEvents {
 	'mail:new': {
 		thread_id: string;

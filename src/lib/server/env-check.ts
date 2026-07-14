@@ -1,5 +1,5 @@
 /**
- * Startup environment validation (§13). Surfaces actionable errors/warnings for
+ * Startup environment validation. Surfaces actionable errors/warnings for
  * missing or malformed configuration once at boot, so a fresh deploy fails loud
  * and clear instead of misbehaving at runtime. Called once from hooks.server.ts.
  */
@@ -19,18 +19,23 @@ export function checkEnv(env: Env, opts: { dev?: boolean } = {}): EnvReport {
 
 	// --- required in production ---
 	if (!opts.dev) {
-		if (!env.PUBLIC_APP_URL) errors.push('PUBLIC_APP_URL is required (e.g. https://mail.example.com).');
+		if (!env.PUBLIC_APP_URL)
+			errors.push('PUBLIC_APP_URL is required (e.g. https://mail.example.com).');
 		if (!isHex64(env.JWT_KEY_SECRET)) {
 			errors.push('JWT_KEY_SECRET must be a 64-char hex string. Generate: openssl rand -hex 32');
 		}
 		if (!isHex64(env.CREDENTIALS_ENCRYPTION_KEY)) {
-			errors.push('CREDENTIALS_ENCRYPTION_KEY must be a 64-char hex string. Generate: openssl rand -hex 32');
+			errors.push(
+				'CREDENTIALS_ENCRYPTION_KEY must be a 64-char hex string. Generate: openssl rand -hex 32',
+			);
 		}
 		if (!env.OWNER_EMAIL && env.SIGNUPS_ENABLED !== 'true') {
 			errors.push('Set OWNER_EMAIL (allowlist) or SIGNUPS_ENABLED=true, else nobody can sign up.');
 		}
 		if (!env.MAIL_FROM && !env.SMTP_RELAY_HOST) {
-			warnings.push('No MAIL_FROM + EMAIL binding and no SMTP_RELAY_* — magic-link sign-in emails cannot be sent.');
+			warnings.push(
+				'No MAIL_FROM + EMAIL binding and no SMTP_RELAY_* — magic-link sign-in emails cannot be sent.',
+			);
 		}
 	}
 
@@ -46,7 +51,9 @@ export function checkEnv(env: Env, opts: { dev?: boolean } = {}): EnvReport {
 	};
 
 	if (features.gmail && !features.gmail_push) {
-		warnings.push('Gmail configured without Pub/Sub — falling back to polling (GMAIL_POLL_SECONDS).');
+		warnings.push(
+			'Gmail configured without Pub/Sub — falling back to polling (GMAIL_POLL_SECONDS).',
+		);
 	}
 	if (env.VAPID_PUBLIC_KEY && !env.VAPID_PRIVATE_KEY) {
 		errors.push('VAPID_PUBLIC_KEY is set but VAPID_PRIVATE_KEY is missing.');
@@ -55,19 +62,29 @@ export function checkEnv(env: Env, opts: { dev?: boolean } = {}): EnvReport {
 	return { errors, warnings, features };
 }
 
-let reported = false;
-/** Log the report once per isolate. Throws in production if there are errors. */
+let logged = false;
+/**
+ * Log the report once per isolate, and throw in production if there are errors.
+ *
+ * The throw must NOT be suppressed after the first call: a misconfigured deploy
+ * has to fail EVERY request, not just the first, or an operator sees one 500,
+ * reloads, and the app serves traffic while broken. So the "once" guard covers
+ * only the logging; the error check runs every time.
+ */
 export function reportEnvOnce(env: Env, opts: { dev?: boolean } = {}): void {
-	if (reported) return;
-	reported = true;
 	const { errors, warnings, features } = checkEnv(env, opts);
-	for (const w of warnings) console.warn(`[env] ⚠ ${w}`);
-	for (const e of errors) console.error(`[env] ✗ ${e}`);
-	const on = Object.entries(features)
-		.filter(([, v]) => v)
-		.map(([k]) => k);
-	console.log(`[env] features enabled: ${on.length ? on.join(', ') : 'none'}`);
+	if (!logged) {
+		logged = true;
+		for (const w of warnings) console.warn(`[env] ⚠ ${w}`);
+		for (const e of errors) console.error(`[env] ✗ ${e}`);
+		const on = Object.entries(features)
+			.filter(([, v]) => v)
+			.map(([k]) => k);
+		console.log(`[env] features enabled: ${on.length ? on.join(', ') : 'none'}`);
+	}
 	if (errors.length && !opts.dev) {
-		throw new Error(`DelightMail is misconfigured (${errors.length} error(s)). See the logs above.`);
+		throw new Error(
+			`DelightMail is misconfigured (${errors.length} error(s)). See the logs above.`,
+		);
 	}
 }

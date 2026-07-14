@@ -46,7 +46,7 @@ function fakeMailbox(): { mb: TriageMailbox; reviews: unknown[]; scheduled: stri
 	return { mb, reviews, scheduled };
 }
 
-describe('runTriageJob — no infinite spin on gateway outage (§7)', () => {
+describe('runTriageJob — no infinite spin on gateway outage', () => {
 	it('propagates a gateway error instead of swallowing it (so the job backs off, not re-runs every 2s)', async () => {
 		const { mb, reviews } = fakeMailbox();
 		await expect(

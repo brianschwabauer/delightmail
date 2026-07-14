@@ -24,6 +24,24 @@ import { limitMagicLink, type RateLimiterNamespace } from '$lib/server/rate-limi
 const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
 
 /**
+ * The session-signing secret, resolved once at module load and FAILING CLOSED in
+ * production. The app worker verifies session cookies statelessly (HMAC, no
+ * round-trip to the AuthServer), so if a real deploy fell back to the published
+ * DEV_SECRET, anyone could forge a signed-in session for any user/org. The
+ * server worker's resolveJwtSecret() enforces the same rule; the two MUST agree.
+ * `dev` is a build-time constant, so this throw only ever fires on a misconfigured
+ * production build — where refusing to boot is the correct outcome.
+ */
+function resolveAuthSecret(): string {
+	if (env.JWT_KEY_SECRET) return env.JWT_KEY_SECRET;
+	if (dev) return DEV_SECRET;
+	throw new Error(
+		'JWT_KEY_SECRET is not set. Set it to a 64-char hex value (openssl rand -hex 32) on ' +
+			'BOTH workers: `pnpm run secrets secrets.env` or `wrangler secret put JWT_KEY_SECRET`.',
+	);
+}
+
+/**
  * The canonical origin of this deployment, or undefined when none is pinned.
  *
  * PUBLIC_APP_URL must be read from `$env/dynamic/public`: SvelteKit filters the
@@ -49,7 +67,7 @@ function rpId(): string | undefined {
 	}
 }
 
-/** Whether a given email is allowed to create an account (§8). */
+/** Whether a given email is allowed to create an account. */
 function signupAllowed(email: string): boolean {
 	if (env.SIGNUPS_ENABLED === 'true') return true;
 	const owners = (env.OWNER_EMAIL ?? '')
@@ -69,7 +87,7 @@ function clientIp(event: RequestEvent): string {
 }
 
 /**
- * First contact (§8) — create the account for an address that has never signed in.
+ * First contact — create the account for an address that has never signed in.
  *
  * The library's magic-link route only mails an address that already has a user
  * (`createEmailSignInToken` throws "Couldn't find user with given email"), so a
@@ -149,7 +167,7 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 	}
 
 	// Rate-limit the (allowed) request so a known address can't be email-bombed via
-	// unlimited magic-link POSTs (§12). Fails open on a limiter outage.
+	// unlimited magic-link POSTs. Fails open on a limiter outage.
 	const rl = penv?.RATE_LIMITER as unknown as RateLimiterNamespace | undefined;
 	if (rl) {
 		const { allowed, reset_in_ms } = await limitMagicLink(rl, email, clientIp(event));
@@ -196,7 +214,10 @@ const emailLinkHandle: Handle = async ({ event, resolve }) => {
 	if (!navigated) return resolve(event);
 
 	const response = await resolve(event);
-	const body = (await response.clone().json().catch(() => ({}))) as {
+	const body = (await response
+		.clone()
+		.json()
+		.catch(() => ({}))) as {
 		redirect?: string;
 		message?: string;
 	};
@@ -253,7 +274,7 @@ function pickOrg(event: RequestEvent, session: SessionOrgs): string | null {
 // 1. Auth — magic link + passkeys + sessions + /api/auth/*
 // ---------------------------------------------------------------------------
 const auth_config = defineAuthConfig({
-	secret: env.JWT_KEY_SECRET ?? DEV_SECRET,
+	secret: resolveAuthSecret(),
 	issuer: 'delightmail',
 	permissions: ['owner', 'admin', 'member'] as const,
 	oauth_scopes: [] as const,
@@ -270,7 +291,7 @@ const auth_config = defineAuthConfig({
 	// org on every page load, which is how one account ended up with ten of them.
 	// Resolving deterministically makes a duplicate org merely untidy instead of fatal.
 	resolveOrgId: (event, session) => pickOrg(event, session as SessionOrgs),
-	session: { expires_in: 60 * 60 * 24 * 30 }, // 30-day rolling sessions (§8)
+	session: { expires_in: 60 * 60 * 24 * 30 }, // 30-day rolling sessions
 	email: {
 		link: true,
 		code: true,
@@ -476,11 +497,11 @@ const websocketHandle = createWebsocketHandle({
 });
 
 // ---------------------------------------------------------------------------
-// 4. Database — generated CRUD + /api/sync, with domain-rule hooks (§9)
+// 4. Database — generated CRUD + /api/sync, with domain-rule hooks
 // ---------------------------------------------------------------------------
 // R2 pointers are server-managed. If a client could set message.body_keys /
 // attachment.r2_key, it could aim a body/attachment read at another org's R2
-// object (§12 IDOR). Strip them from every client write; the server sets them
+// object (IDOR). Strip them from every client write; the server sets them
 // directly on the DO (ingest / send), which bypasses this handle.
 // body_keys is the IDOR vector (a client-aimed R2 read); provider_ids is the
 // two-way-sync mapping. Both are server-set. rfc822_message_id is intentionally
@@ -503,6 +524,12 @@ const databaseHandle = createDatabaseHandle({
 	hooks: {
 		ai_review: { beforeCreate: rejectClientWrite, beforeUpdate: rejectClientWrite },
 		outbox: { beforeCreate: rejectClientWrite, beforeUpdate: rejectClientWrite },
+		// An identity's `email` is the From on outbound mail. On the SMTP-relay
+		// transport the relay authenticates the connection, not the envelope, so a
+		// client-forged identity would let a user send as any address through the
+		// deployer's reputation. Identities are created server-side only (OAuth
+		// connect / cf_domain register / inbound catch-all), so reject client writes.
+		identity: { beforeCreate: rejectClientWrite, beforeUpdate: rejectClientWrite },
 		message: {
 			beforeCreate: ({ data }) => strip(data, MESSAGE_SERVER_FIELDS),
 			beforeUpdate: ({ data }) => strip(data, MESSAGE_SERVER_FIELDS),

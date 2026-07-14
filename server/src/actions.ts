@@ -1,5 +1,5 @@
 /**
- * DB-integrated thread actions (§5.1 outbound, §10.2). Applies the pure patch
+ * DB-integrated thread actions (outbound). Applies the pure patch
  * from src/lib/mail/actions.ts to the thread + its messages, optimistically.
  * MailboxServer fans out provider write-back jobs after this returns.
  */

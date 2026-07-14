@@ -69,7 +69,7 @@ export function computeThreadPatch(
 		case 'trash':
 			return { folder: 'trash', provider_op: 'trash' };
 		case 'delete':
-			// Delete forever — Gmail scope caveat handled at the provider layer (§5.1).
+			// Delete forever — Gmail scope caveat handled at the provider layer.
 			return { folder: 'trash', hard_delete: true, provider_op: 'delete_forever' };
 		case 'spam':
 			return { folder: 'spam', provider_op: 'spam' };
@@ -97,7 +97,7 @@ export function computeThreadPatch(
 	}
 }
 
-/** The inverse patch for undo (§10.2 z). */
+/** The inverse patch for undo (z). */
 export function invertPatch(before: ThreadStateForAction, patch: ThreadPatch): ThreadPatch {
 	return {
 		folder: patch.folder !== undefined ? before.folder : undefined,

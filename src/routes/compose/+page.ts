@@ -3,7 +3,7 @@ import type { PageLoad } from './$types';
 
 /**
  * PWA entry point for the `mailto:` protocol handler and the share target
- * (§10.4). Both land here; we translate their params into a compose request and
+ * Both land here; we translate their params into a compose request and
  * bounce into the mail layout, which owns the compose overlay.
  */
 export const load: PageLoad = ({ url }) => {

@@ -117,7 +117,7 @@
 			!attachments.some((a) => a.uploading),
 	);
 
-	// --- draft autosave (§6): every 3s of idle, persist to a draft row. The saver
+	// --- draft autosave: every 3s of idle, persist to a draft row. The saver
 	// serializes saves, so fast typing during an in-flight create can't spawn a
 	// second create (duplicate/orphan drafts). ---
 	let sent = $state(false);
@@ -177,7 +177,7 @@
 		};
 	});
 
-	// Signature preview (§10.3): shown below the body, swapped when the identity
+	// Signature preview: shown below the body, swapped when the identity
 	// changes, and merged into the doc at send time without touching what's written.
 	const signatureDoc = $derived.by(() => {
 		const raw = fromIdentity?.signature_doc;
@@ -431,7 +431,7 @@
 				throw new Error(err.message || `Send failed (${res.status})`);
 			}
 			// The sent message supersedes the draft — stop autosaving and drop it,
-			// waiting for any in-flight save first so it can't re-create an orphan (§6).
+			// waiting for any in-flight save first so it can't re-create an orphan.
 			sent = true;
 			void saver.discardAfterSend();
 			toast('Sending… (undo from the outbox within your undo window)');

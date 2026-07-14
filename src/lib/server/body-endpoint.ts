@@ -1,8 +1,8 @@
 /**
- * Message body + attachment serving (§4.3, §9). Bodies are immutable, so
+ * Message body + attachment serving. Bodies are immutable, so
  * responses carry a long immutable cache header and are KV-cached on the hot
  * path. The sanitized HTML is served from the API origin for the sandboxed
- * reading-pane iframe (§12).
+ * reading-pane iframe.
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
@@ -35,7 +35,7 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	}
 
 	// Tenant guard: every R2 key is `{org_id}/…`. Never read a key outside the
-	// caller's org, even if a tampered body_keys points elsewhere (§12 IDOR).
+	// caller's org, even if a tampered body_keys points elsewhere (IDOR).
 	if (!ownsKey(key, org_id)) return DelightError.notFound('Body not found').toResponse();
 
 	const cacheKey = `body:${org_id}:${id}:${format ?? 'html'}`;
@@ -47,7 +47,7 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 			'content-type': contentType,
 			'x-content-type-options': 'nosniff',
 			'cache-control': IMMUTABLE,
-			// The reading pane iframe pins a strict CSP (§12).
+			// The reading pane iframe pins a strict CSP.
 			'content-security-policy':
 				"default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src https: data:",
 		},
@@ -102,7 +102,7 @@ export async function handleAttachment(event: RequestEvent, id: string): Promise
 	// straight from inbound MIME) and are served from the app origin. Only render
 	// safe raster images inline (cid: images resolve here); force everything else —
 	// notably text/html and image/svg+xml, which execute script when rendered as a
-	// document — to download so it can never run in our origin (§12 stored XSS).
+	// document — to download so it can never run in our origin (stored XSS).
 	const mime = (att.mime_type ?? 'application/octet-stream').replace(/[\r\n]/g, '');
 	const baseType = mime.split(';')[0].trim().toLowerCase();
 	const disposition = INLINE_SAFE_TYPES.has(baseType) ? 'inline' : 'attachment';
@@ -147,7 +147,7 @@ function contentDisposition(kind: 'inline' | 'attachment', filename?: string): s
 	return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB (§10.3)
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
 
 /** POST /api/attachments/upload — store a compose attachment, return its R2 key. */
 export async function handleAttachmentUpload(event: RequestEvent): Promise<Response> {

@@ -1,5 +1,5 @@
 /**
- * R2 body storage (§4.3). SQLite holds only metadata + an 8KB excerpt; the raw
+ * R2 body storage. SQLite holds only metadata + an 8KB excerpt; the raw
  * MIME, sanitized HTML, and plain text live in R2 under an org-prefixed,
  * content-addressed key so it is stable before the DB row exists.
  *
@@ -105,7 +105,7 @@ export async function writeAttachments(
 	return out;
 }
 
-/** Read a stored body, KV-cached (7d) on the hot path (§4.3). */
+/** Read a stored body, KV-cached (7d) on the hot path. */
 export async function readBody(
 	r2: R2Bucket,
 	kv: KVNamespace | undefined,

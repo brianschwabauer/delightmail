@@ -1,6 +1,6 @@
 /**
  * Workers-compatible Web Push (RFC 8291 aes128gcm payload encryption + RFC 8292
- * VAPID) using only Web Crypto (§10.4). Used by MailboxServer to notify devices
+ * VAPID) using only Web Crypto. Used by MailboxServer to notify devices
  * of important new mail. Requires VAPID keys; push is skipped when absent.
  *
  * Not unit-tested here (needs a live push service + VAPID keypair); implemented

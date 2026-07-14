@@ -1,5 +1,5 @@
 /**
- * AI triage job (§7). Runs in MailboxServer's alarm per batch of untriaged
+ * AI triage job. Runs in MailboxServer's alarm per batch of untriaged
  * inbound mail: deterministic pre-pass → AI classification via the AI Gateway
  * dynamic route → code-enforced guardrails → action (bounded by triage_mode) →
  * ai_review audit → unsubscribe task. The pure logic lives in
@@ -116,7 +116,7 @@ async function triageOne(
 	const headers = (msg.headers_subset ?? {}) as Record<string, string>;
 	const fromEmail = (from?.email ?? '').toLowerCase();
 	// Match the SENDER, not their whole domain — one known @gmail.com contact must
-	// not whitelist every gmail.com sender (§7.2). `known` is a set of addresses.
+	// not whitelist every gmail.com sender. `known` is a set of addresses.
 	const isKnown = known.includes(fromEmail);
 	// A reply in a thread the user already participates in (has sent into) skips AI.
 	const participated = !!msg.in_reply_to && threadHasOutbound(mb, msg.thread_id as string);
@@ -188,7 +188,7 @@ async function triageOne(
 		tokens += (result.usage as { total_tokens?: number } | undefined)?.total_tokens ?? 0;
 		let parsed = parseVerdict(extractJson(result.content));
 		if (!parsed.valid) {
-			// One retry before falling back (§7.2).
+			// One retry before falling back.
 			result = await gateway.complete({
 				messages,
 				model,
@@ -237,11 +237,11 @@ async function triageOne(
 		});
 		if (cand) {
 			// Auto-execute only http_oneclick, and only when the user opted in
-			// (§7.5) — everything else stays a one-click-away suggestion.
+			// everything else stays a one-click-away suggestion.
 			let status: 'suggested' | 'done' | 'failed' = 'suggested';
 			if (autoUnsub && cand.method === 'http_oneclick' && cand.target) {
 				// SSRF-guarded: target comes from the sender's List-Unsubscribe header
-				// (§7.5, H3). safeUnsubscribePost never throws.
+				// safeUnsubscribePost never throws.
 				const res = await safeUnsubscribePost(cand.target);
 				status = res.ok ? 'done' : 'failed';
 			}
@@ -349,7 +349,7 @@ function threadHasOutbound(mb: TriageMailbox, thread_id: string): boolean {
 
 /**
  * Enqueue a web-push for a freshly-triaged inbox message when it clears the
- * user's push threshold (§10.4). 'all' is handled at ingest; 'off' never pushes.
+ * user's push threshold. 'all' is handled at ingest; 'off' never pushes.
  */
 function maybePush(
 	mb: TriageMailbox,

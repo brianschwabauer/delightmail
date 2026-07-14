@@ -1,5 +1,5 @@
 /**
- * Web-push subscription endpoints (§10.4). Subscriptions are stored per device;
+ * Web-push subscription endpoints. Subscriptions are stored per device;
  * MailboxServer sends pushes for important new mail. VAPID keys are optional —
  * push is simply disabled when they're absent.
  */

@@ -1,5 +1,5 @@
 /**
- * Gmail API adapter (§5.1). Thin, dependency-free client over the Gmail REST API
+ * Gmail API adapter. Thin, dependency-free client over the Gmail REST API
  * plus the normalization that turns a raw Gmail message into a NormalizedMessage
  * (writing raw/html/text to R2 along the way). Called by SyncEngine job handlers.
  */
@@ -181,7 +181,7 @@ export class GmailClient {
 	}
 
 	/**
-	 * Find an already-sent message by its RFC822 Message-ID (§6, H2). Used to
+	 * Find an already-sent message by its RFC822 Message-ID. Used to
 	 * dedup an outbound send on retry: Gmail's messages.send is NOT idempotent, so
 	 * if a prior attempt delivered before we recorded it (a crash in the
 	 * send→record window), we must detect the existing copy instead of re-sending.
@@ -216,7 +216,7 @@ export class GmailApiError extends Error {
 /** True only when a message is DEFINITIVELY gone at Gmail (deleted between the
  *  list and the fetch) — the one case where skipping it is safe. Everything else
  *  (401 token expiry, 403 quota, 400, network timeout) is transient and must
- *  retry rather than advance the sync cursor past un-fetched mail (§5.1, R8). */
+ * retry rather than advance the sync cursor past un-fetched mail. */
 export function isMessageGoneError(err: unknown): boolean {
 	return err instanceof GmailApiError && (err.status === 404 || err.status === 410);
 }
@@ -227,7 +227,7 @@ export function isAuthError(err: unknown): boolean {
 	return err instanceof GmailApiError && err.status === 401;
 }
 
-/** Map Gmail label ids to DelightMail folder + flags (§5.1). */
+/** Map Gmail label ids to DelightMail folder + flags. */
 export function gmailLabelsToState(labelIds: string[] = []): {
 	folder: string;
 	is_read: boolean;
@@ -249,7 +249,7 @@ export function gmailLabelsToState(labelIds: string[] = []): {
 	};
 }
 
-/** Gmail's built-in system labels — everything else is a user label (§5.1). */
+/** Gmail's built-in system labels — everything else is a user label. */
 const SYSTEM_LABELS = new Set([
 	'INBOX',
 	'SENT',
@@ -279,7 +279,7 @@ export async function gmailToNormalized(
 	const state = gmailLabelsToState(msg.labelIds);
 
 	// User (non-system) Gmail labels → DelightMail labels, carrying the Gmail label
-	// id so the provider_map can round-trip (§5.1). Names come from the cached map.
+	// id so the provider_map can round-trip. Names come from the cached map.
 	const labels = (msg.labelIds ?? [])
 		.filter((id) => !SYSTEM_LABELS.has(id) && ctx.labelMap?.[id])
 		.map((id) => ({ name: ctx.labelMap![id], provider_id: id }));
@@ -288,7 +288,7 @@ export async function gmailToNormalized(
 	const prefix = await messagePrefix(ctx.org_id, parsed.rfc822_message_id);
 	// R2 writes are the transient-failure surface here. Wrap them as RetryableError
 	// so a storage blip retries the whole page instead of dropping the message and
-	// letting the sync cursor advance past it (§5.1, R8 — never silently lose mail).
+	// letting the sync cursor advance past it (never silently lose mail).
 	let body_keys: BodyKeys;
 	let attachments: StoredAttachment[];
 	try {
@@ -298,7 +298,7 @@ export async function gmailToNormalized(
 			text: parsed.text || undefined,
 		});
 		// format=raw carries attachment bytes inline, so store them here. (The >2MB
-		// lazy-fetch optimization from §5.1 is a follow-up; correctness first.)
+		// lazy-fetch optimization is a follow-up; correctness first.)
 		attachments = await writeAttachments(
 			ctx.r2,
 			prefix,

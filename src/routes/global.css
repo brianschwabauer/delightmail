@@ -1,6 +1,6 @@
 /* Design tokens + base styles from the shared package (this pulls in tokens.css
    and the styled-native scrollbar). Brand seed + app-level semantic tokens for
-   DelightMail — a calm, text-forward blue accent (§10). */
+   DelightMail — a calm, text-forward blue accent. */
 @import '@delightstack/styles/global.css';
 
 :root {

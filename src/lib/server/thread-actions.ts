@@ -1,5 +1,5 @@
 /**
- * Bulk thread action endpoint (§9). One round-trip for multi-select; fans out
+ * Bulk thread action endpoint. One round-trip for multi-select; fans out
  * provider write-back jobs inside MailboxServer.applyThreadAction.
  */
 import type { RequestEvent } from '@sveltejs/kit';

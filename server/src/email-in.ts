@@ -1,5 +1,5 @@
 /**
- * Cloudflare Email Routing inbound handler (§5.2). Golden rule (R8): capture the
+ * Cloudflare Email Routing inbound handler. Golden rule (R8): capture the
  * raw bytes to R2 FIRST so mail is never lost, then parse + route. On any
  * internal error we keep the R2 copy for the replay job and never bounce.
  *
@@ -122,7 +122,7 @@ export async function handleInboundEmail(
 	} catch (err) {
 		console.error('[email] ingest failed, keeping R2 copy for replay:', err);
 		// Keep a KV marker AND enqueue a replay job so the message is actually
-		// re-ingested from R2 later (§5.2, R8) rather than sitting captured-but-lost.
+		// re-ingested from R2 later rather than sitting captured-but-lost.
 		await env.KV.put(`pending-email:${raw_key}`, JSON.stringify({ to, from, domain, org_id }), {
 			expirationTtl: 60 * 60 * 24 * 14,
 		});

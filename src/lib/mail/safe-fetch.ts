@@ -1,7 +1,7 @@
 /**
  * SSRF-guarded outbound fetch for server-initiated requests to URLs taken from
  * untrusted email content — specifically the List-Unsubscribe one-click POST
- * (§7.5, H3). A sender fully controls that URL, so without guards the worker
+ * A sender fully controls that URL, so without guards the worker
  * becomes a request-forgery primitive and a live-address oracle. We require
  * https, refuse private/loopback/link-local targets, never follow redirects
  * (they could retarget an internal host), and bound the request with a timeout.

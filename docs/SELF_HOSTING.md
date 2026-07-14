@@ -16,7 +16,7 @@ A personal instance costs about **$5/mo** (Workers Paid) plus pennies of R2/AI.
 ## 1. Clone + install
 
 ```sh
-git clone https://github.com/brianschwabauer/mail.brianschwabauer.com delightmail
+git clone https://github.com/brianschwabauer/delightmail
 cd delightmail
 pnpm install
 cp server/.dev.vars.example server/.dev.vars   # dev works with the defaults
@@ -31,6 +31,11 @@ wrangler kv namespace create CACHE      # copy the id into BOTH wrangler configs
 
 Put the KV namespace id in `wrangler.jsonc` (`kv_namespaces`) and
 `server/wrangler.toml` (`[[kv_namespaces]]`), replacing `REPLACE_WITH_KV_NAMESPACE_ID`.
+
+Then set your own hostname in `wrangler.jsonc` — both the `routes` pattern and
+`PUBLIC_APP_URL` (they must match; magic links, the Gmail OAuth redirect URI, and
+the passkey relying-party id are all derived from `PUBLIC_APP_URL`). They ship as
+`mail.example.com`.
 
 ## 3. Generate + push secrets
 

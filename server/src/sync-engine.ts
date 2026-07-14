@@ -1,11 +1,11 @@
 /**
- * SyncEngine — one Durable Object per connected account (§2 key decision).
+ * SyncEngine — one Durable Object per connected account (key decision).
  * A protocol head: Gmail history sync, IMAP polling (P7), backfill, watch
  * renewal, outbound send jobs, and provider write-back. Normalizes messages and
  * delivers them to MailboxServer via idempotent RPC batches (ingestMessages).
  *
- * Alarm-driven job queue with exponential backoff (§5.4). AES-GCM-encrypted
- * credentials in local SQLite (§12). No user-visible data lives here.
+ * Alarm-driven job queue with exponential backoff. AES-GCM-encrypted
+ * credentials in local SQLite. No user-visible data lives here.
  */
 import { DurableObject } from 'cloudflare:workers';
 import { encryptSecret, decryptSecret } from './crypto';
@@ -80,12 +80,12 @@ interface SyncState {
 	access_token_expiry?: number;
 }
 
-// Exponential backoff ladder (§5.4): 30s, 1m, 2m, 4m, 8m, 16m, then give up.
+// Exponential backoff ladder: 30s, 1m, 2m, 4m, 8m, 16m, then give up.
 const MAX_ATTEMPTS = 7;
 const JOB_TIME_BUDGET_MS = 25_000;
 const RAW_BATCH = 20; // messages.get chunk size
 // ~20 msg/s throttle (Gmail per-user quota is 250 units/s; messages.get = 5
-// units, §5.1). Pause this long after each RAW_BATCH so backfill can't outrun it.
+// units). Pause this long after each RAW_BATCH so backfill can't outrun it.
 const RAW_BATCH_PAUSE_MS = 1_000;
 function retryBackoffMs(attempts: number): number {
 	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
@@ -142,7 +142,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			attempts INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending',
 			last_error TEXT
 		)`);
-		// Send idempotency (§6, H2): a message-level result marker plus a
+		// Send idempotency: a message-level result marker plus a
 		// per-recipient log so retries never re-deliver an already-sent message.
 		this.#sql.exec(`CREATE TABLE IF NOT EXISTS send_result (
 			message_id TEXT PRIMARY KEY, result TEXT NOT NULL
@@ -153,7 +153,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		)`);
 		// Marks that we are about to hit (or already hit) the provider for a send,
 		// written BEFORE the provider call so a crash in the deliver→record window
-		// is detectable on retry and can be deduped instead of re-sent (§6, H2).
+		// is detectable on retry and can be deduped instead of re-sent.
 		this.#sql.exec(`CREATE TABLE IF NOT EXISTS send_attempt (
 			message_id TEXT PRIMARY KEY, at INTEGER NOT NULL
 		)`);
@@ -379,7 +379,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		const gmail = await this.#gmail();
 
 		// On the first page, record the profile historyId so history sync can
-		// resume from the moment backfill started (§5.1).
+		// resume from the moment backfill started.
 		if (!payload.page_token && !state.gmail_history_id) {
 			const profile = await gmail.getProfile();
 			this.#saveState({ gmail_history_id: profile.historyId, account_email: profile.emailAddress });
@@ -440,7 +440,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			try {
 				res = await gmail.listHistory(state.gmail_history_id, pageToken);
 			} catch (err) {
-				// 404 = cursor too old → bounded re-list recovery (§5.1).
+				// 404 = cursor too old → bounded re-list recovery.
 				if (String(err).includes('404')) return this.#recoverFromStaleCursor(gmail);
 				throw err;
 			}
@@ -486,7 +486,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 
 	async #renewWatch(): Promise<void> {
 		if (!this.env.GMAIL_PUBSUB_TOPIC) {
-			// No Pub/Sub configured → fall back to polling (§5.1).
+			// No Pub/Sub configured → fall back to polling.
 			const seconds = Number(this.env.GMAIL_POLL_SECONDS ?? 90);
 			await this.scheduleJob('history_sync', {}, seconds * 1000);
 			await this.scheduleJob('renew_watch', {}, seconds * 1000);
@@ -495,11 +495,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		const gmail = await this.#gmail();
 		const res = await gmail.watch(this.env.GMAIL_PUBSUB_TOPIC);
 		this.#saveState({ gmail_watch_expiry: Number(res.expiration) });
-		// Re-arm 6 days out (watches expire after 7, §5.1).
+		// Re-arm 6 days out (watches expire after 7).
 		await this.scheduleJob('renew_watch', {}, 6 * 24 * 60 * 60 * 1000);
 	}
 
-	// -- send idempotency helpers (§6, H2) --
+	// -- send idempotency helpers --
 	#priorSendResult(message_id: string): SendResult | null {
 		const row = this.#sql
 			.exec(`SELECT result FROM send_result WHERE message_id = ?`, message_id)
@@ -550,7 +550,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #sendMessage(payload: SendPayload): Promise<void> {
 		const state = this.#state();
 		// Idempotency guard: if a prior attempt already delivered this message, never
-		// re-send — just re-affirm the result to the mailbox and stop (§6, H2).
+		// re-send — just re-affirm the result to the mailbox and stop.
 		const prior = this.#priorSendResult(payload.message_id);
 		if (prior?.ok) {
 			await this.#mailbox().markSendResult(payload.message_id, prior);
@@ -614,7 +614,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				result = { ok: true, provider_ids: { gmail_id: sent.id, gmail_thread_id: sent.threadId } };
 			} else if (state.kind === 'imap') {
 				// IMAP identity → the account's OWN SMTP submission creds, not the
-				// deployer's global relay (§6). (APPEND to \Sent is gated on the R1
+				// deployer's global relay. (APPEND to \Sent is gated on the R1
 				// spike; until then the local folder='sent' copy is the record.)
 				const creds = (await this.#decryptCreds()) as {
 					smtp?: { host: string; port: number; user?: string; pass?: string };
@@ -623,7 +623,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				await this.#sendViaSmtp(built.raw, fromEmail, payload, creds.smtp);
 				result = { ok: true };
 			} else {
-				// cf_domain: Cloudflare Email Service, else the global SMTP relay (§6).
+				// cf_domain: Cloudflare Email Service, else the global SMTP relay.
 				await this.#sendViaEmailServiceOrSmtp(built.raw, fromEmail, payload);
 				result = { ok: true };
 			}
@@ -658,7 +658,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			)?.EmailMessage;
 			if (EmailMessage) {
 				// Deliver per-recipient via the envelope; strip Bcc from the header so
-				// blind-copy recipients aren't disclosed to everyone (§6, H1). Skip any
+				// blind-copy recipients aren't disclosed to everyone. Skip any
 				// recipient a prior attempt already reached so a retry can't re-send (H2).
 				const safeRaw = stripBccHeader(raw);
 				for (const to of recipients) {
@@ -714,13 +714,13 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			credentials: cfg.user && cfg.pass ? { username: cfg.user, password: cfg.pass } : undefined,
 		});
 		// Bcc is delivered via the `to` envelope list above; strip it from the
-		// header so recipients never see the blind-copy list (§6, H1).
+		// header so recipients never see the blind-copy list.
 		await mailer.send({ from: fromEmail, to: recipients, raw: stripBccHeader(raw) });
 		await mailer.close();
 	}
 
 	// -------------------------------------------------------------------------
-	// IMAP (§5.3) — R1 spike-gated. imapflow over node:tls under nodejs_compat.
+	// IMAP — R1 spike-gated. imapflow over node:tls under nodejs_compat.
 	// If Workers sockets prove insufficient, the adapter interface is unchanged
 	// and a Cloudflare Container bridge is dropped in behind it.
 	// -------------------------------------------------------------------------
@@ -829,7 +829,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #providerAction(payload: ProviderActionPayload): Promise<void> {
 		const state = this.#state();
 		// Two-way write-back is implemented for Gmail; IMAP STORE/MOVE is gated on
-		// the R1 spike (§5.3). Non-gmail accounts must not call #gmail() (no token) —
+		// the R1 spike. Non-gmail accounts must not call #gmail() (no token) —
 		// the local action already applied; provider echo lands when IMAP ships.
 		if (state.kind !== 'gmail') {
 			console.log(`[SyncEngine] provider_action ${payload.op} skipped (kind=${state.kind}, R1)`);
@@ -856,7 +856,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 					await gmail.modify(id, ['SPAM'], ['INBOX']);
 					break;
 				case 'move':
-					// Undo of archive/trash/spam moves the message back to a folder (§5.1, H6).
+					// Undo of archive/trash/spam moves the message back to a folder.
 					await this.#moveOnGmail(gmail, id, payload.folder);
 					break;
 				case 'read':
@@ -935,7 +935,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				// (401 token expiry, 403 quota, 400, network timeout) is transient: a
 				// bare `continue` here would drop the message AND let the caller advance
 				// the history cursor past it → permanent silent mail loss. Re-throw so
-				// the whole page retries with the cursor un-advanced (§5.1, R8).
+				// the whole page retries with the cursor un-advanced.
 				if (!isMessageGoneError(err)) {
 					// A rejected token won't fix itself on retry unless we clear the
 					// cached access token so the next attempt refreshes it.
@@ -960,7 +960,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				if (err instanceof RetryableError) throw err;
 				// Non-retryable (e.g. unparseable MIME): capture the raw bytes durably
 				// before moving on, so the message is recoverable rather than silently
-				// lost when the sync cursor advances (§5.1, R8).
+				// lost when the sync cursor advances.
 				await this.#deadLetterRawMessage(state, id, msg.raw ?? '', err);
 			}
 		}
@@ -972,7 +972,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	 * never silently lost: the raw bytes go to a durable R2 dead-letter key and a
 	 * KV marker records it for operator visibility / replay. If even the R2
 	 * capture fails, throw RetryableError so the page retries rather than advancing
-	 * the sync cursor past an unrecoverable message (§5.1, R8).
+	 * the sync cursor past an unrecoverable message.
 	 */
 	async #deadLetterRawMessage(
 		state: SyncState,

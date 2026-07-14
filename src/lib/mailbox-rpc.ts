@@ -63,15 +63,15 @@ export interface MailboxRpc {
 	setMeta(data: Record<string, unknown>): Promise<void>;
 
 	// --- mail-specific RPC (implemented in MailboxServer) ---
-	/** Idempotent bulk ingest keyed on rfc822_message_id (§5). */
+	/** Idempotent bulk ingest keyed on rfc822_message_id. */
 	ingestMessages(batch: unknown[]): Promise<{ ingested: number; skipped: number }>;
 	/** Apply an optimistic action to threads and enqueue provider write-back. */
 	applyThreadAction(action: ThreadAction, actor?: string): Promise<{ affected: string[] }>;
-	/** Queue an outbound message for the undo-send pipeline (§6). */
+	/** Queue an outbound message for the undo-send pipeline. */
 	enqueueSend(message: Partial<Message>, identity_id: string): Promise<{ message_id: string }>;
 	/** Cancel a queued send within the undo window. */
 	undoSend(message_id: string): Promise<{ ok: boolean }>;
-	/** Create or update an autosaved draft (§6). */
+	/** Create or update an autosaved draft. */
 	saveDraft(input: {
 		draft_id?: string;
 		identity_id: string;

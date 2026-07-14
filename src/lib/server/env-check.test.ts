@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkEnv } from './env-check';
+import { checkEnv, reportEnvOnce } from './env-check';
 
 const HEX = '0'.repeat(64);
 
@@ -20,7 +20,13 @@ describe('checkEnv', () => {
 
 	it('flags a non-hex JWT secret', () => {
 		const r = checkEnv(
-			{ PUBLIC_APP_URL: 'x', JWT_KEY_SECRET: 'not-hex', CREDENTIALS_ENCRYPTION_KEY: HEX, OWNER_EMAIL: 'a@b.c', MAIL_FROM: 'm@x.c' },
+			{
+				PUBLIC_APP_URL: 'x',
+				JWT_KEY_SECRET: 'not-hex',
+				CREDENTIALS_ENCRYPTION_KEY: HEX,
+				OWNER_EMAIL: 'a@b.c',
+				MAIL_FROM: 'm@x.c',
+			},
 			{ dev: false },
 		);
 		expect(r.errors.some((e) => e.includes('JWT_KEY_SECRET'))).toBe(true);
@@ -28,7 +34,12 @@ describe('checkEnv', () => {
 
 	it('requires OWNER_EMAIL or open signups', () => {
 		const r = checkEnv(
-			{ PUBLIC_APP_URL: 'x', JWT_KEY_SECRET: HEX, CREDENTIALS_ENCRYPTION_KEY: HEX, MAIL_FROM: 'm@x.c' },
+			{
+				PUBLIC_APP_URL: 'x',
+				JWT_KEY_SECRET: HEX,
+				CREDENTIALS_ENCRYPTION_KEY: HEX,
+				MAIL_FROM: 'm@x.c',
+			},
 			{ dev: false },
 		);
 		expect(r.errors.some((e) => e.includes('OWNER_EMAIL'))).toBe(true);
@@ -56,5 +67,30 @@ describe('checkEnv', () => {
 	it('errors when VAPID public key lacks its private key', () => {
 		const r = checkEnv({ VAPID_PUBLIC_KEY: 'a' }, { dev: true });
 		expect(r.errors.some((e) => e.includes('VAPID_PRIVATE_KEY'))).toBe(true);
+	});
+});
+
+describe('reportEnvOnce — fails closed on EVERY request, not just the first', () => {
+	it('re-throws for a misconfigured production env each time it is called', () => {
+		const bad = { PUBLIC_APP_URL: 'x' }; // no secrets → errors
+		// The "once" guard covers logging only; a broken deploy must keep failing so
+		// an operator can't reload past one 500 into a running-but-forgeable app.
+		expect(() => reportEnvOnce(bad, { dev: false })).toThrow(/misconfigured/);
+		expect(() => reportEnvOnce(bad, { dev: false })).toThrow(/misconfigured/);
+	});
+
+	it('does not throw once the config is valid', () => {
+		expect(() =>
+			reportEnvOnce(
+				{
+					PUBLIC_APP_URL: 'https://mail.example.com',
+					JWT_KEY_SECRET: HEX,
+					CREDENTIALS_ENCRYPTION_KEY: HEX,
+					OWNER_EMAIL: 'me@example.com',
+					MAIL_FROM: 'mail@example.com',
+				},
+				{ dev: false },
+			),
+		).not.toThrow();
 	});
 });

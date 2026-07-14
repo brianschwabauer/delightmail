@@ -1,5 +1,5 @@
 /**
- * Account connection endpoints (§5.1, §9). Gmail OAuth connect is a standard
+ * Account connection endpoints. Gmail OAuth connect is a standard
  * code flow, separate from app sign-in: a signed-in user links N Gmail accounts.
  * The refresh token is handed to the account's SyncEngine (which encrypts it);
  * it never touches the mailbox DB.
@@ -65,7 +65,9 @@ function redirectUri(event: RequestEvent): string {
 export async function handleGoogleStart(event: RequestEvent): Promise<Response> {
 	const penv = env(event);
 	if (!penv?.GOOGLE_CLIENT_ID) {
-		return DelightError.badRequest('Gmail connect is not configured on this instance.').toResponse();
+		return DelightError.badRequest(
+			'Gmail connect is not configured on this instance.',
+		).toResponse();
 	}
 	const org_id = event.locals.org_id;
 	if (!org_id || !penv.KV) return DelightError.badRequest('No mailbox').toResponse();
@@ -127,14 +129,16 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 
 	// Idempotent-ish: reuse an existing account row for this email if present.
 	const existing = await findAccountByEmail(db, email);
-	const account = existing ?? (await db.create('account', {
-		kind: 'gmail',
-		email,
-		display_name: email,
-		color: pickColor(await accountCount(db)),
-		status: 'connecting',
-		config: { gmail_address: email },
-	}));
+	const account =
+		existing ??
+		(await db.create('account', {
+			kind: 'gmail',
+			email,
+			display_name: email,
+			color: pickColor(await accountCount(db)),
+			status: 'connecting',
+			config: { gmail_address: email },
+		}));
 	const account_id = String((account as { id: string }).id);
 
 	// Ensure a default identity exists.
@@ -161,7 +165,11 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 	// hints to the right SyncEngine (the notification only carries the address).
 	await penv.KV.put(`gmail-route:${email.toLowerCase()}`, account_id);
 
-	return redirectWithToast(event, `Connected ${email}. Backfilling your mail…`, '/settings/accounts');
+	return redirectWithToast(
+		event,
+		`Connected ${email}. Backfilling your mail…`,
+		'/settings/accounts',
+	);
 }
 
 interface ImapBody {
@@ -277,6 +285,17 @@ export async function handleDomainRegister(event: RequestEvent): Promise<Respons
 		return DelightError.badRequest('Enter a valid domain (e.g. example.com).').toResponse();
 	}
 
+	// The email() handler routes ALL inbound mail for a domain by this KV mapping,
+	// so a domain must not be claimable by a second org — otherwise, on a
+	// multi-tenant instance, one user could register another's domain and silently
+	// receive (and send as) their mail. Reject if it's already claimed elsewhere.
+	// (This is a collision guard, not proof of DNS ownership; a self-hoster running
+	// SIGNUPS_ENABLED for untrusted users should add a TXT-record challenge.)
+	const existing = await penv.KV.get(`domain:${domain}`);
+	if (existing && existing !== org_id) {
+		return DelightError.badRequest('That domain is already registered.').toResponse();
+	}
+
 	// Create the account (or reuse) and map the domain → org in KV so the
 	// server worker's email() handler can route inbound mail.
 	const { account_id } = await (
@@ -324,17 +343,16 @@ export async function handleAccountLifecycle(
 ): Promise<Response> {
 	const penv = env(event);
 	const org_id = event.locals.org_id;
-	const db = event.locals.db as unknown as {
-		get(t: string, id: string): AccountRow;
-		update(t: string, id: string, data: Record<string, unknown>): unknown;
-	};
+	const db = event.locals.db;
 	if (!penv?.SYNC || !org_id || !db) return DelightError.badRequest('No mailbox').toResponse();
 
-	// Ownership: the account must live in THIS org's DO. get throws → 404. This is
-	// what stops one org pausing/resyncing another org's SyncEngine by id (IDOR).
-	let account: AccountRow;
+	// Ownership: the account must live in THIS org's DO — get() rejects for a row
+	// that isn't here → 404. This is what stops one org pausing/resyncing another
+	// org's SyncEngine by id (IDOR). db is a DO stub, so get() is ASYNC: it MUST be
+	// awaited, or a missing-row rejection escapes the try/catch and the guard is
+	// dead, letting any account id through to the global SYNC namespace below.
 	try {
-		account = db.get('account', account_id);
+		await db.get('account', account_id);
 	} catch {
 		return DelightError.notFound('Account not found').toResponse();
 	}
@@ -343,21 +361,24 @@ export async function handleAccountLifecycle(
 	if (action === 'pause') {
 		await sync.pause();
 		try {
-			db.update('account', account_id, { status: 'paused' });
+			await db.update('account', account_id, { status: 'paused' });
 		} catch {
 			/* ignore */
 		}
 	} else if (action === 'resume') {
 		await sync.resume();
 		try {
-			db.update('account', account_id, { status: 'live' });
+			await db.update('account', account_id, { status: 'live' });
 		} catch {
 			/* ignore */
 		}
 	} else {
 		await sync.resync();
 		try {
-			db.update('account', account_id, { status: 'backfilling', status_detail: 'Re-syncing…' });
+			await db.update('account', account_id, {
+				status: 'backfilling',
+				status_detail: 'Re-syncing…',
+			});
 		} catch {
 			/* ignore */
 		}
@@ -366,18 +387,21 @@ export async function handleAccountLifecycle(
 }
 
 /** DELETE /api/accounts/:id — remove an account: purge its SyncEngine + rows. */
-export async function handleAccountDelete(event: RequestEvent, account_id: string): Promise<Response> {
+export async function handleAccountDelete(
+	event: RequestEvent,
+	account_id: string,
+): Promise<Response> {
 	const penv = env(event);
 	const org_id = event.locals.org_id;
-	const db = event.locals.db as unknown as {
-		get(t: string, id: string): AccountRow;
-		delete(t: string, id: string): unknown;
-	};
+	const db = event.locals.db;
 	if (!penv?.SYNC || !org_id || !db) return DelightError.badRequest('No mailbox').toResponse();
 
+	// Ownership: the account must live in THIS org's DO. get() is async (DO stub) —
+	// it MUST be awaited, or a missing-row rejection escapes the try/catch and any
+	// account id would be destroyed via the global SYNC namespace below (IDOR).
 	let account: AccountRow;
 	try {
-		account = db.get('account', account_id);
+		account = (await db.get('account', account_id)) as unknown as AccountRow;
 	} catch {
 		return DelightError.notFound('Account not found').toResponse();
 	}
@@ -401,7 +425,7 @@ export async function handleAccountDelete(event: RequestEvent, account_id: strin
 	// (R2 bodies are org-prefixed, not per-account, so any orphaned objects are
 	// reclaimed when the whole org is deleted; a per-account R2 sweep is a follow-up.)
 	try {
-		db.delete('account', account_id);
+		await db.delete('account', account_id);
 	} catch (err) {
 		console.error('[accounts] account delete failed:', err);
 	}
@@ -435,7 +459,11 @@ function pickColor(index: number): string {
 	return ACCOUNT_COLORS[index % ACCOUNT_COLORS.length];
 }
 
-function redirectWithToast(event: RequestEvent, toast: string, to = '/settings/accounts'): Response {
+function redirectWithToast(
+	event: RequestEvent,
+	toast: string,
+	to = '/settings/accounts',
+): Response {
 	const url = new URL(to, appUrl(event));
 	url.searchParams.set('toast', toast);
 	return new Response(null, { status: 303, headers: { location: url.toString() } });

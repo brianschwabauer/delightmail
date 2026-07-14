@@ -56,7 +56,7 @@
 		let all = (results.docs ?? []) as Thread[];
 		all = all
 			.filter((t) => !actions.isRemoved(String(t.id)))
-			// Account scope filter (All / per-account, §10.1).
+			// Account scope filter (All / per-account).
 			.filter((t) => scope.includes(t.account_ids as string[] | undefined))
 			.map((t) => {
 				const patch = actions.patchFor(String(t.id));
@@ -101,7 +101,7 @@
 	onMount(() => {
 		density = currentDensity();
 		// Deep-link: /mail/[view]?t=<thread_id> opens a thread (push notificationclick
-		// lands here, §10.4). Selection lives in the query so list scroll never resets.
+		// lands here). Selection lives in the query so list scroll never resets.
 		const t = new URLSearchParams(location.search).get('t');
 		if (t) {
 			openId = t;
@@ -422,7 +422,7 @@
 	}
 
 	// D → confirm-modal defaulting to Yes (Enter confirms, Esc cancels) — never
-	// hard-delete on a single keystroke (Gmail-scope caveat §5.1).
+	// hard-delete on a single keystroke (Gmail-scope caveat).
 	function askDelete() {
 		if (targets().length) confirmingDelete = true;
 	}
@@ -539,7 +539,7 @@
 			reply_to: nzList(m.reply_to),
 		};
 		// Quoted history (from the excerpt available client-side), collapsed under a
-		// blockquote the user types above (§10.3).
+		// blockquote the user types above.
 		const quoted = buildQuoteDoc({ from: src.from, date: m.date, text: m.text_excerpt ?? '' });
 		let init: ComposeInit;
 		if (kind === 'forward') {
@@ -580,7 +580,7 @@
 
 	// `a` toggles: archive from anywhere, but un-archive (back to inbox) when the
 	// target already lives in the archive — so the same key does the sensible
-	// thing in the Archive folder (§6 mirrors the reader's Archive/Unarchive button).
+	// thing in the Archive folder (mirrors the reader's Archive/Unarchive button).
 	function toggleArchive() {
 		const t = targets()[0];
 		if (t && (t.folder as string) === 'archive') void act('move', { folder: 'inbox' });

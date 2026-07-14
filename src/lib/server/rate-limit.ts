@@ -1,7 +1,7 @@
 /**
  * Thin wrapper over the RateLimiterServer Durable Object (@delightstack/rate-limiter)
  * for app-worker request throttling. Used to protect the unauthenticated
- * magic-link / signup endpoints from email-bombing abuse (§8, §12).
+ * magic-link / signup endpoints from email-bombing abuse.
  *
  * The DO is a token bucket: setOptions(max_tokens, refill_every_seconds) then
  * consume(key, cost) → true when a token was available. Every check FAILS OPEN —

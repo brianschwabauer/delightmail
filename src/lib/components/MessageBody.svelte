@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Renders a message body inside a sandboxed iframe (§12). The body HTML is
+	 * Renders a message body inside a sandboxed iframe. The body HTML is
 	 * served sanitized from /api/messages/:id/body with a strict CSP
 	 * (`default-src 'none'`), and the sandbox omits `allow-scripts`, so scripts can
 	 * never run even if sanitization missed something. We DO grant

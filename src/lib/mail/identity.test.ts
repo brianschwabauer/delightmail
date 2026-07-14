@@ -2,20 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { resolveReplyIdentity, resolveComposeIdentity, type IdentityLike } from './identity';
 
 const ids: IdentityLike[] = [
-	{ id: '1', email: 'brian@showandtour.com', account_id: 'gmail-1', is_default: true },
-	{ id: '2', email: 'brian@brianschwabauer.com', account_id: 'cf-1' },
-	{ id: '3', email: 'hello@brianschwabauer.com', account_id: 'cf-1', auto_created: true },
+	{ id: '1', email: 'me@gmail.com', account_id: 'gmail-1', is_default: true },
+	{ id: '2', email: 'me@example.com', account_id: 'cf-1' },
+	{ id: '3', email: 'hello@example.com', account_id: 'cf-1', auto_created: true },
 ];
 
 describe('resolveReplyIdentity', () => {
 	it('prefers the address the message was received as', () => {
-		const r = resolveReplyIdentity(ids, { received_as: 'hello@brianschwabauer.com' });
+		const r = resolveReplyIdentity(ids, { received_as: 'hello@example.com' });
 		expect(r?.id).toBe('3');
 	});
 
 	it('falls back to an identity in To/Cc', () => {
 		const r = resolveReplyIdentity(ids, {
-			recipients: [{ email: 'brian@brianschwabauer.com' }],
+			recipients: [{ email: 'me@example.com' }],
 		});
 		expect(r?.id).toBe('2');
 	});

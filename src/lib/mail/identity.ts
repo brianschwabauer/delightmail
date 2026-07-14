@@ -1,5 +1,5 @@
 /**
- * Reply-from identity resolution (§6). Pure — unit-tested in identity.test.ts.
+ * Reply-from identity resolution. Pure — unit-tested in identity.test.ts.
  * Replies default to the address that RECEIVED the thread; new composes default
  * to the last-used identity, then the global default.
  */

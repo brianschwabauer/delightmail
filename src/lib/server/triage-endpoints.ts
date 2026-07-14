@@ -1,5 +1,5 @@
 /**
- * AI triage preview + unsubscribe execution endpoints (§7).
+ * AI triage preview + unsubscribe execution endpoints.
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
@@ -73,7 +73,7 @@ export async function handleUnsubscribeBulk(event: RequestEvent): Promise<Respon
 
 /**
  * Run a single unsubscribe task. http_oneclick does a server-side RFC 8058 POST;
- * on failure it downgrades to a manual link rather than dead-ending (§7.5).
+ * on failure it downgrades to a manual link rather than dead-ending.
  * `block` additionally creates a trash sender_rule — the real guarantee against
  * spammers who ignore unsubscribes.
  */

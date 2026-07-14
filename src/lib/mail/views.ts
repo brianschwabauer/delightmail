@@ -1,6 +1,6 @@
 /**
  * Maps a UI view name (the `/mail/[view]` param) to a thread search query.
- * Pure — unit-tested in views.test.ts. The `folder` enum values match §4.2.
+ * Pure — unit-tested in views.test.ts. The `folder` enum values match the schema.
  */
 export interface ThreadQuery {
 	where?: Record<string, unknown>;

@@ -1,11 +1,11 @@
 /**
- * Transactional email delivery for magic links (§8 bootstrap).
+ * Transactional email delivery for magic links (bootstrap).
  *
  * Priority: Cloudflare Email Service (env.EMAIL binding + MAIL_FROM) →
  * SMTP relay (SMTP_RELAY_* env) → dev console fallback (logs the link so a
  * fresh install can sign in before any mail provider is configured).
  *
- * This is the same transport layer used for user mail (§6); kept dependency-free
+ * This is the same transport layer used for user mail; kept dependency-free
  * here so it can run in the app worker without pulling worker-only modules.
  */
 export interface OutgoingEmail {

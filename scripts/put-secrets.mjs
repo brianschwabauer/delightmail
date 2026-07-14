@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Push secrets to both Cloudflare Workers from a local .env-style file (§13).
+ * Push secrets to both Cloudflare Workers from a local .env-style file.
  *
  *   node scripts/put-secrets.mjs [path/to/secrets.env]
  *

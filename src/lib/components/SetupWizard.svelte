@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * First-run onboarding (§4.1). Shown in place of the mail pane while the org has
+	 * First-run onboarding. Shown in place of the mail pane while the org has
 	 * no accounts — an empty inbox with no explanation is indistinguishable from a
 	 * broken one, and every path out of it lives on a settings page the user has no
 	 * reason to visit yet.

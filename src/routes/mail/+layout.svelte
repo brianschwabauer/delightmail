@@ -138,7 +138,7 @@
 			{ keys: 'g t', description: 'Go to Sent', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/sent') },
 			{ keys: 'g d', description: 'Go to Drafts', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/drafts') },
 			{ keys: 'g a', description: 'Go to Archive', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/archive') },
-			// Account scope: Ctrl+1 = All, Ctrl+2..9 = accounts in order (§10.1).
+			// Account scope: Ctrl+1 = All, Ctrl+2..9 = accounts in order.
 			...Array.from({ length: 9 }, (_, i) => ({
 				keys: `Ctrl+${i + 1}`,
 				description: i === 0 ? 'Scope: all accounts' : `Scope: account ${i}`,

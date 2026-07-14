@@ -15,7 +15,7 @@ function env(over: Partial<Env> = {}): Env {
 	return { KV: {}, SYNC: {}, ...over } as unknown as Env;
 }
 
-describe('gmail-webhook — OIDC fail-closed (§12)', () => {
+describe('gmail-webhook — OIDC fail-closed', () => {
 	it('rejects with 403 when GMAIL_PUSH_AUDIENCE / SA_EMAIL are unset', async () => {
 		const res = await handleGmailWebhook(req({ authorization: 'Bearer whatever' }), env());
 		expect(res.status).toBe(403);

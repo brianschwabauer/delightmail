@@ -1,5 +1,5 @@
 /**
- * IMAP folder ↔ DelightMail folder mapping (§5.3). Pure + unit-tested. Uses the
+ * IMAP folder ↔ DelightMail folder mapping. Pure + unit-tested. Uses the
  * IMAP special-use flags where present, else common folder-name heuristics.
  */
 export function imapToLocalFolder(

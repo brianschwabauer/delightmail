@@ -1,9 +1,9 @@
 /**
- * AI triage domain logic (§7). Pure + unit-tested (triage.test.ts). The DB /
+ * AI triage domain logic. Pure + unit-tested (triage.test.ts). The DB /
  * gateway orchestration lives in server/src/triage.ts.
  *
  * The AI only ever returns JSON (no tools, no send/delete). Guardrails are
- * enforced in CODE regardless of what the model says (§7.4).
+ * enforced in CODE regardless of what the model says.
  */
 import { z } from 'zod';
 
@@ -22,7 +22,7 @@ export const verdictSchema = z.object({
 	importance: z.number().int().min(0).max(3),
 	action: z.enum(['keep', 'archive', 'spam', 'trash']),
 	unsubscribe_recommended: z.boolean(),
-	// The contract is ≤120 chars (§7.3); accept a longer model summary but store
+	// The contract is ≤120 chars; accept a longer model summary but store
 	// it truncated rather than failing the whole verdict into the keep fallback.
 	summary: z
 		.string()
@@ -32,7 +32,7 @@ export const verdictSchema = z.object({
 });
 export type TriageVerdict = z.infer<typeof verdictSchema>;
 
-/** The fail-open fallback verdict when the model output is unusable (§7.2). */
+/** The fail-open fallback verdict when the model output is unusable. */
 export const FALLBACK_VERDICT: TriageVerdict = {
 	category: 'primary',
 	importance: 2,
@@ -51,12 +51,12 @@ export function parseVerdict(raw: unknown): { verdict: TriageVerdict; valid: boo
 
 export interface GuardrailContext {
 	is_known_correspondent: boolean;
-	/** Confidence below this floor downgrades destructive actions to keep (§7.3). */
+	/** Confidence below this floor downgrades destructive actions to keep. */
 	confidence_floor?: number;
 }
 
 /**
- * Apply the hard, code-enforced guardrails to a verdict (§7.4):
+ * Apply the hard, code-enforced guardrails to a verdict:
  * - AI can never permanently delete (there is no delete_forever action anyway).
  * - Never trash/spam a known correspondent.
  * - Never act destructively on importance-3 (urgent-human) mail.
@@ -90,7 +90,7 @@ export function applyGuardrails(
 
 export type TriageMode = 'label_only' | 'quarantine' | 'full_auto';
 
-/** Map a guarded verdict + mode to the folder the message should land in (§7.2). */
+/** Map a guarded verdict + mode to the folder the message should land in. */
 export function resolveFolder(verdict: TriageVerdict, mode: TriageMode): string | null {
 	if (verdict.action === 'keep') return null; // stay in inbox
 	if (mode === 'label_only') return null; // only category labels, no move
@@ -112,7 +112,7 @@ export function resolveFolder(verdict: TriageVerdict, mode: TriageMode): string 
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic pre-pass (§7.2) — free, instant, runs before any AI call.
+// Deterministic pre-pass — free, instant, runs before any AI call.
 // ---------------------------------------------------------------------------
 export interface SenderRuleMatcher {
 	from_domain?: string;
@@ -151,7 +151,7 @@ export function matchSenderRule(rules: SenderRule[], m: MessageSignals): SenderR
 }
 
 // ---------------------------------------------------------------------------
-// Prompt construction (§7.4) — the fixed frame wraps the user policy. The
+// Prompt construction — the fixed frame wraps the user policy. The
 // user-editable policy is untrusted-but-benign; the message content is untrusted
 // data inside delimiters and instructions in it must be ignored.
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 /**
- * Serialized compose-draft autosave (§6). Guarantees at most one save is ever in
+ * Serialized compose-draft autosave. Guarantees at most one save is ever in
  * flight, so a *create* finishes (and yields its draft id) before the next save
  * runs. Without that, fast typing during an in-flight create issues a second
  * create — two draft rows, one orphaned. On send, `discardAfterSend()` stops

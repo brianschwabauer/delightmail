@@ -9,7 +9,7 @@ DEV="true"
 JWT_KEY_SECRET="dev-secret-change-me-in-production-min-64-chars-long-0123456789abcdef"
 CREDENTIALS_ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
 PUBLIC_APP_URL="http://localhost:5174"
-OWNER_EMAIL="brian@showandtour.com"
+OWNER_EMAIL="you@example.com"
 
 # Magic-link delivery (one of these must work before first sign-in). In dev the
 # link is logged to the console, so these are optional locally.
@@ -38,7 +38,7 @@ MAIL_FROM="mail@example.com"
 # Web push (omit → push disabled)
 # VAPID_PUBLIC_KEY=""
 # VAPID_PRIVATE_KEY=""
-# VAPID_SUBJECT="mailto:brian@showandtour.com"
+# VAPID_SUBJECT="mailto:you@example.com"
 
 # Tunables
 # SEND_DAILY_LIMIT="100"

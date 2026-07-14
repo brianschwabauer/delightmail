@@ -7,7 +7,11 @@
 	import type { Message, Thread } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
 	import { docToText } from '$lib/mail/compose';
+	import { threadSenderLabel, parseParticipantText } from '$lib/mail/participants';
+	import { useScope } from '$lib/mail/scope.svelte';
 	import MessageBody from './MessageBody.svelte';
+
+	const scope = useScope();
 
 	interface Props {
 		db: MailDatabaseClient;
@@ -80,11 +84,10 @@
 	// Sender/date for the skeleton's message head — real data we already hold from the
 	// list doc, so only the body content is unknown (and shimmers in).
 	const previewFrom = $derived(
-		previewThread?.participant_text ||
-			(previewThread?.participants ?? [])
-				.map((p) => p.name || p.email)
-				.filter(Boolean)
-				.join(', ') ||
+		threadSenderLabel(previewThread, {
+			emails: scope.selfEmails,
+			domains: scope.selfDomains,
+		}) ||
 			previewThread?.subject ||
 			'(unknown)',
 	);
@@ -162,11 +165,29 @@
 		}
 	}
 
+	// A message search hit only carries INDEXED fields, so `from`/`to` (objects) are
+	// absent on anything not just written locally — `from_text` is indexed for
+	// exactly this reason. Prefer the structured address, fall back to parsing it.
 	function who(m: Message): string {
-		return m.from?.name || m.from?.email || '(unknown)';
+		const from = m.from?.name || m.from?.email;
+		if (from) return from;
+		const parsed = parseParticipantText(m.from_text)[0];
+		return parsed?.name || parsed?.email || '(unknown)';
 	}
+	/** Empty when the recipients aren't loaded — better to omit the line than to
+	 *  assert "to me" for a message that might be a cc or a list. */
 	function recipients(m: Message): string {
-		return m.to?.map((t) => t.name || t.email).join(', ') || 'me';
+		return m.to?.map((t) => t.name || t.email).filter(Boolean).join(', ') ?? '';
+	}
+	/**
+	 * `body_keys` is not indexed either, so it is absent on every message that came
+	 * from a search hit rather than a local write — reading `body_keys.html` there
+	 * renders each message as a plain excerpt after a reload. When it's unknown,
+	 * attempt the HTML body: MessageBody falls back to the excerpt by itself if the
+	 * fetch comes back empty.
+	 */
+	function hasHtmlBody(m: Message): boolean {
+		return m.body_keys ? !!m.body_keys.html : true;
 	}
 	function fmt(ts: number): string {
 		return ts ? new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
@@ -276,7 +297,9 @@
 						<Avatar name={who(m)} size="2" />
 						<span class="meta">
 							<span class="from">{who(m)}</span>
-							<span class="to">to {recipients(m)}</span>
+							{#if recipients(m)}
+								<span class="to">to {recipients(m)}</span>
+							{/if}
 						</span>
 						<span class="date">{fmt(m.date)}</span>
 					</button>
@@ -285,7 +308,7 @@
 							<MessageBody
 								messageId={String(m.id)}
 								excerpt={m.text_excerpt ?? ''}
-								hasHtml={!!m.body_keys?.html} />
+								hasHtml={hasHtmlBody(m)} />
 						</div>
 					{:else}
 						<button class="snippet" onclick={() => toggle(String(m.id))}>{m.text_excerpt?.slice(0, 160) ?? ''}</button>

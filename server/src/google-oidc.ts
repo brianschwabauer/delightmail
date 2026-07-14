@@ -1,5 +1,5 @@
 /**
- * Verify a Google-signed OIDC JWT (used for Pub/Sub push auth, §5.1, §12).
+ * Verify a Google-signed OIDC JWT (used for Pub/Sub push auth).
  * Fetches Google's public JWKS, verifies the RS256 signature, and checks
  * issuer / audience / service-account email. JWKS is cached in module memory
  * for the isolate's lifetime.

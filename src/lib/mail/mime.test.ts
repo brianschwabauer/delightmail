@@ -111,7 +111,7 @@ describe('toExcerpt', () => {
 
 const SAMPLE_EML = [
 	'From: Sarah Chen <sarah@example.com>',
-	'To: brian@showandtour.com',
+	'To: me@example.com',
 	'Cc: Team <team@example.com>',
 	'Subject: Re: Q3 planning doc',
 	'Message-ID: <msg-123@example.com>',
@@ -130,7 +130,7 @@ describe('parseEmail', () => {
 		const p = await parseEmail(SAMPLE_EML);
 		expect(p.rfc822_message_id).toBe('<msg-123@example.com>');
 		expect(p.from).toEqual({ name: 'Sarah Chen', email: 'sarah@example.com' });
-		expect(p.to[0].email).toBe('brian@showandtour.com');
+		expect(p.to[0].email).toBe('me@example.com');
 		expect(p.cc[0].email).toBe('team@example.com');
 		expect(p.subject).toBe('Re: Q3 planning doc');
 		expect(p.in_reply_to).toBe('<msg-100@example.com>');

@@ -64,4 +64,41 @@ describe('buildMimeMessage', () => {
 		expect(raw).not.toMatch(/^Bcc: evil@x\.com/im);
 		expect(raw).not.toMatch(/^X-Injected:/im);
 	});
+
+	it('neutralizes CRLF header injection in attachment filename and mime_type', () => {
+		const { raw } = buildMimeMessage({
+			from: { email: 'a@b.com' },
+			to: [{ email: 'c@d.com' }],
+			subject: 'Hi',
+			text: 'yo',
+			attachments: [
+				{
+					filename: 'a.txt"\r\nX-Injected: yes\r\nContent-Type: text/html',
+					mime_type: 'text/plain\r\nX-Evil: 1',
+					base64: Buffer.from('data').toString('base64'),
+				},
+			],
+		});
+		expect(raw).not.toMatch(/^X-Injected:/im);
+		expect(raw).not.toMatch(/^X-Evil:/im);
+		// The broken-out quote is neutered, so the filename can't escape its header.
+		expect(raw).not.toContain('a.txt"');
+	});
+
+	it('falls back to a safe content type for a malformed mime_type', () => {
+		const { raw } = buildMimeMessage({
+			from: { email: 'a@b.com' },
+			to: [{ email: 'c@d.com' }],
+			subject: 'Hi',
+			text: 'yo',
+			attachments: [
+				{
+					filename: 'x',
+					mime_type: 'not a mime type',
+					base64: Buffer.from('d').toString('base64'),
+				},
+			],
+		});
+		expect(raw).toContain('application/octet-stream');
+	});
 });

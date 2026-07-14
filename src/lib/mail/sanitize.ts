@@ -1,5 +1,5 @@
 /**
- * Email HTML sanitizer (§12). Email HTML is hostile input: strip scripts, forms,
+ * Email HTML sanitizer. Email HTML is hostile input: strip scripts, forms,
  * event handlers, and external stylesheets; keep inline styles, tables, and
  * images. Runs once at ingest; the result is ALSO rendered inside a sandboxed,
  * CSP-pinned iframe, so this is defense-in-depth, not the only barrier.
@@ -24,7 +24,7 @@ type HastRoot = { type: 'root'; children: unknown[] };
 /** A permissive-but-safe schema for rendering marketing/email HTML. */
 const emailSchema: Schema = {
 	...defaultSchema,
-	// Remote images load by design (§1 non-goals); allow cid: + data: too.
+	// Remote images load by design (non-goals); allow cid: + data: too.
 	protocols: {
 		...defaultSchema.protocols,
 		src: ['http', 'https', 'cid', 'data'],

@@ -3,7 +3,7 @@
  * the mail tables, an alarm-driven job engine (triage / outbox / push), and the
  * mail-specific RPC surface the app worker calls (see src/lib/mailbox-rpc.ts).
  *
- * Storage split (§4, §11): SQLite holds metadata + an 8KB searchable excerpt;
+ * Storage split: SQLite holds metadata + an 8KB searchable excerpt;
  * full HTML/raw/attachments live in R2. Orama search index lives in DO memory.
  */
 import { DatabaseServer } from '@delightstack/database/worker';
@@ -37,7 +37,7 @@ export interface MailboxEnv {
 
 const SETTINGS_ID = 'main';
 
-// Exponential backoff ladder (§5.4): 30s, 1m, 2m, 4m, 8m, 16m, then give up.
+// Exponential backoff ladder: 30s, 1m, 2m, 4m, 8m, 16m, then give up.
 // The cap must be reachable — the old ×5/attempts<5 form topped out at 4m.
 const MAX_JOB_ATTEMPTS = 7;
 function retryBackoffMs(attempts: number): number {
@@ -97,7 +97,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Custom-domain (cf_domain) accounts + aliases (§5.2).
+	// Custom-domain (cf_domain) accounts + aliases.
 	// -------------------------------------------------------------------------
 	/** Find or create the cf_domain account for a domain (the mailbox itself). */
 	async ensureCfDomainAccount(domain: string): Promise<{ account_id: string }> {
@@ -136,7 +136,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Ingest (§5) — idempotent on rfc822_message_id, runs threading + counters.
+	// Ingest — idempotent on rfc822_message_id, runs threading + counters.
 	// -------------------------------------------------------------------------
 	async ingestMessages(batch: NormalizedMessage[]): Promise<{ ingested: number; skipped: number }> {
 		const result = ingestBatch(this, batch);
@@ -150,11 +150,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				subject: m.subject,
 			});
 		}
-		// Triage newly-arrived inbound messages after paint (§7).
+		// Triage newly-arrived inbound messages after paint.
 		const inbound = result.new_messages.filter((m) => m.is_outbound === false);
 		if (inbound.length) await this.scheduleJob('triage', {}, 0);
 
-		// Web push (§10.4). Only 'all' mode pushes at ingest; 'important'/'mentions'
+		// Web push. Only 'all' mode pushes at ingest; 'important'/'mentions'
 		// push from the triage job, where the message's importance is actually known
 		// (pushing here would fire before classification, defeating the threshold).
 		if (this.#menv.VAPID_PUBLIC_KEY) {
@@ -174,13 +174,13 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				}
 			}
 		}
-		// Ensure the weekly digest is scheduled (§7.2 safety net).
+		// Ensure the weekly digest is scheduled (safety net).
 		await this.#ensureDigestScheduled();
 		return { ingested: result.ingested, skipped: result.skipped };
 	}
 
 	// -------------------------------------------------------------------------
-	// Actions (§5.1 outbound / §6) — optimistic local write + provider job.
+	// Actions (outbound /) — optimistic local write + provider job.
 	// -------------------------------------------------------------------------
 	async applyThreadAction(
 		action: {
@@ -198,7 +198,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		const affected = applyThreadActionLocal(this, action);
 
 		// Fan out provider write-back to each owning SyncEngine. `move` carries the
-		// target folder so undo of archive/trash reaches Gmail (§5.1, H6).
+		// target folder so undo of archive/trash reaches Gmail.
 		for (const [account_id, gmail_ids] of byAccount) {
 			if (!gmail_ids.length) continue;
 			this.#enqueueProviderAction(account_id, {
@@ -243,7 +243,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	/**
 	 * Apply a remote flag/label/delete change echoed from a provider (Gmail
 	 * history). Idempotent and does NOT re-enqueue provider jobs — this is the
-	 * inbound half of two-way sync, so it must not loop (§5.1).
+	 * inbound half of two-way sync, so it must not loop.
 	 */
 	async applyRemoteFlagChange(payload: {
 		op: 'labels' | 'deleted';
@@ -308,7 +308,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Send pipeline (§6).
+	// Send pipeline.
 	// -------------------------------------------------------------------------
 	async enqueueSend(
 		payload: {
@@ -328,7 +328,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	): Promise<{ message_id: string }> {
 		const settings = await this.ensureSettings();
 		const undo = (settings.undo_send_seconds ?? 10) * 1000;
-		// Rate-limit outbound (§6, §12). Over budget → push the send later rather
+		// Rate-limit outbound. Over budget → push the send later rather
 		// than dropping it (the outbox row still persists), protecting sender
 		// reputation from a compromised session without losing the user's mail.
 		const extraDelay = await this.#reserveSendSlot();
@@ -481,7 +481,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	/**
-	 * Create or update an autosaved draft (§6). Drafts are message rows
+	 * Create or update an autosaved draft. Drafts are message rows
 	 * (is_draft=true, folder=drafts) in a standalone thread; the client autosaves
 	 * every 3s and deletes on send.
 	 */
@@ -634,7 +634,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	/**
-	 * Reserve an outbound-send slot against two token buckets (§6): a burst cap
+	 * Reserve an outbound-send slot against two token buckets: a burst cap
 	 * (10/min) and a daily cap (default 100/day, SEND_DAILY_LIMIT-tunable). Returns
 	 * the extra delay (ms) to push the send out by when over budget, or 0.
 	 */
@@ -693,7 +693,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Triage preview (§7.4) — run the prompt against recent mail without acting.
+	// Triage preview — run the prompt against recent mail without acting.
 	// -------------------------------------------------------------------------
 	async triageTest(prompt: string, count: number): Promise<unknown[]> {
 		if (!this.#menv.AI || !this.#menv.AI_GATEWAY_NAME) {
@@ -757,7 +757,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	// -------------------------------------------------------------------------
-	// Job engine (§5.4) — a tiny persistent alarm queue shared by triage,
+	// Job engine — a tiny persistent alarm queue shared by triage,
 	// outbox and push. Jobs are rows in a local (non-synced) `job_queue` table.
 	// -------------------------------------------------------------------------
 	#ensureJobTable(): void {
@@ -829,11 +829,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		await this.#rearmAlarm();
 	}
 
-	/** Send a web push to every registered device (§10.4). */
+	/** Send a web push to every registered device. */
 	async #sendPush(payload: { title?: string; body?: string; thread_id?: string }): Promise<void> {
 		const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = this.#menv;
 		if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
-		// Quiet hours (§10.4): suppress non-digest pushes inside the window.
+		// Quiet hours: suppress non-digest pushes inside the window.
 		const settings = await this.ensureSettings();
 		if (withinQuietHours(settings.quiet_hours ?? undefined)) return;
 		const { sendWebPush } = await import('./webpush');
@@ -905,7 +905,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	/**
-	 * Re-ingest an inbound message from its captured R2 raw (§5.2, R8). Enqueued by
+	 * Re-ingest an inbound message from its captured R2 raw. Enqueued by
 	 * the email() handler when the first ingest attempt throws after R2 capture, so
 	 * a transient DO hiccup never silently loses mail.
 	 */
@@ -977,7 +977,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	/**
-	 * Weekly digest (§7.2, §7.5): summarize what AI triage filtered in the last
+	 * Weekly digest: summarize what AI triage filtered in the last
 	 * week — count, top senders, pending unsubscribe suggestions — as a push, then
 	 * reschedule itself. The safety net that makes aggressive filtering trustworthy.
 	 */
@@ -1034,7 +1034,7 @@ function safeParse(json: string | null): unknown {
 
 /**
  * True if the current UTC time falls within a "HH:MM-HH:MM" quiet-hours window
- * (§10.4). Handles windows that wrap past midnight (e.g. 22:00-07:00). Uses UTC
+ * Handles windows that wrap past midnight (e.g. 22:00-07:00). Uses UTC
  * since the DO has no user timezone; deployers document this in settings.
  */
 function withinQuietHours(window: string | undefined): boolean {
@@ -1058,7 +1058,7 @@ async function sha40(input: string): Promise<string> {
 		.slice(0, 40);
 }
 
-/** Map a thread action to the provider operation for two-way sync (§5.1). */
+/** Map a thread action to the provider operation for two-way sync. */
 function providerOpFor(action: string): string {
 	switch (action) {
 		case 'archive':

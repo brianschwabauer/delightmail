@@ -24,7 +24,7 @@
 	const kb = useKeyboard();
 
 	/** Sign out, first telling the service worker to drop this device's cached
-	 *  private mail so it can't be served to the next user who signs in (§H5). */
+	 * private mail so it can't be served to the next user who signs in. */
 	async function signOut() {
 		try {
 			const reg = await navigator.serviceWorker?.ready;
@@ -47,8 +47,11 @@
 		{ id: 'trash', label: 'Trash', icon: 'trash' },
 	];
 
-	// Live account list drives the per-account scope switcher (§10.1).
+	// Live account list drives the per-account scope switcher.
 	const accounts = db.search('account', { limit: 20 });
+	// Every address the user sends/receives as — thread rows use it to leave the
+	// user out of the participant label (a row should name the other people).
+	const identities = db.search('identity', { limit: 50 });
 
 	// Unread inbox count (live). Kept cheap — a where-filtered search.
 	const inboxUnread = db.search('thread', {
@@ -66,6 +69,16 @@
 			label: (a.display_name || a.email) as string,
 			color: a.color as string | undefined,
 		}));
+		// A cf_domain account's `email` holds the bare domain (see schema), so every
+		// address at it is the user's; other kinds hold a single address.
+		scope.selfDomains = accounts.docs
+			.filter((a) => a.kind === 'cf_domain')
+			.map((a) => String(a.email ?? ''))
+			.filter(Boolean);
+		scope.selfEmails = [
+			...accounts.docs.filter((a) => a.kind !== 'cf_domain').map((a) => String(a.email ?? '')),
+			...identities.docs.map((i) => String(i.email ?? '')),
+		].filter(Boolean);
 	});
 
 	// --- keyboard folder navigation (yazi's leftmost / "parent" column) ---

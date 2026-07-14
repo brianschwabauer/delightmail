@@ -1,5 +1,5 @@
 /**
- * Theme application (§10.1). The preference (`system|light|dark`) is stored in
+ * Theme application. The preference (`system|light|dark`) is stored in
  * localStorage for a flash-free boot (see app.html) and mirrored to the settings
  * table for cross-device sync. `data-theme` on <html> drives the OKLCH tokens.
  */

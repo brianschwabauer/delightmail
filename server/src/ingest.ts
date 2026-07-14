@@ -1,5 +1,5 @@
 /**
- * DB-integrated ingest orchestration (§5). Takes normalized messages from the
+ * DB-integrated ingest orchestration. Takes normalized messages from the
  * sync adapters / email() handler and writes them into MailboxServer:
  *   raw/body already in R2 → metadata + excerpt into SQLite → threading →
  *   counters. Idempotent on rfc822_message_id (unique index).
@@ -45,7 +45,7 @@ export interface NormalizedMessage {
 		content_id?: string;
 		r2_key: string;
 	}>;
-	/** User (non-system) provider labels to map onto DelightMail labels (§5.1). */
+	/** User (non-system) provider labels to map onto DelightMail labels. */
 	labels?: Array<{ name: string; provider_id: string }>;
 	attachment_count?: number;
 	size_bytes?: number;
@@ -80,7 +80,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 	const result: IngestResult = { ingested: 0, skipped: 0, new_messages: [] };
 
 	for (const msg of batch) {
-		// Idempotency is PER-ACCOUNT (§5.4): the same message delivered to two
+		// Idempotency is PER-ACCOUNT: the same message delivered to two
 		// connected accounts stays two rows. Scoping the check by account_id is
 		// what keeps the Gmail→DelightMail migration overlap from collapsing.
 		const existing = db.exec(
@@ -115,7 +115,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 		// Resolve user provider-labels to DelightMail label rows (with provider_map).
 		const label_ids = resolveLabelIds(db, msg);
 
-		// Thread create + message insert + counter update must land together (§5.4).
+		// Thread create + message insert + counter update must land together.
 		// DatabaseServer.transaction is a *declarative batch* API and can't express
 		// "create thread → reference its new id → update its counters", so we rely on
 		// the DO's single-threaded, synchronous execution: this block runs to
@@ -189,7 +189,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 		const { message_id, thread_id } = run();
 
 		// Contact autocomplete + the known-correspondent guardrail depend on this
-		// running (§7.2) — without it the contact table stays empty and the guard
+		// running — without it the contact table stays empty and the guard
 		// never fires. Inbound records the sender; outbound records recipients.
 		maintainContacts(db, msg);
 
@@ -248,7 +248,7 @@ function makeLookups(db: DbLike): ThreadLookups {
  * Reconcile an already-ingested message against a re-fetched copy (resync,
  * 404-recovery, backfill overlap). The dedup skip used to only backfill provider
  * ids and discard the authoritative flag/folder state, so read/archived changes
- * made while the history cursor was stale could never be repaired (§5.1, H7).
+ * made while the history cursor was stale could never be repaired.
  * Note: a re-fetch that races an in-flight local action can momentarily revert it
  * — the version-guard for that race is a separate follow-up.
  */
@@ -290,7 +290,7 @@ function reconcileExistingMessage(
 }
 
 /** Recompute a thread's unread_count / folder / starred from its message rows,
- *  after a flag reconcile (§5.1, H7). Thread lives in inbox if any message does,
+ * after a flag reconcile. Thread lives in inbox if any message does,
  *  otherwise it follows its newest message. */
 function recomputeThreadFromMessages(db: DbLike, thread_id: string): void {
 	const rows = db.exec(
@@ -346,7 +346,7 @@ function updateThreadCounters(
 	const inbound = !msg.is_outbound;
 	const wasArchived = thread.folder === 'archive';
 
-	// A new inbound message promotes an archived thread back to inbox (§5.4).
+	// A new inbound message promotes an archived thread back to inbox.
 	const nextFolder =
 		inbound && wasArchived && (msg.folder ?? 'inbox') === 'inbox' ? 'inbox' : thread.folder;
 
@@ -376,7 +376,7 @@ function updateThreadCounters(
 /**
  * Ensure a DelightMail `label` row exists for each user provider-label on the
  * message, recording the provider id in `provider_map` for two-way sync, and
- * return the label row ids (§5.1). No-op when the message carries no user labels.
+ * return the label row ids. No-op when the message carries no user labels.
  */
 function resolveLabelIds(db: DbLike, msg: NormalizedMessage): string[] {
 	if (!msg.labels?.length) return [];
@@ -421,7 +421,7 @@ function ensureLabel(
 
 /**
  * Maintain the contact table on every ingested message. Sending to someone marks
- * them a known correspondent (§7.2 "never auto-trash known correspondents").
+ * them a known correspondent ("never auto-trash known correspondents").
  */
 export function maintainContacts(db: DbLike, msg: NormalizedMessage): void {
 	const now = Date.now();

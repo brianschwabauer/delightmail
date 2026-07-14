@@ -1,5 +1,5 @@
 /**
- * Conversation threading (§5.4). Pure and exhaustively unit-tested
+ * Conversation threading. Pure and exhaustively unit-tested
  * (threading.test.ts) — no I/O. The DB-integrated orchestration lives in
  * server/src/ingest.ts and calls `resolveThread` with lookup closures.
  *

@@ -1,5 +1,5 @@
 /**
- * MIME parsing helpers (§5, §17). Wraps `postal-mime` (Workers-compatible) and
+ * MIME parsing helpers. Wraps `postal-mime` (Workers-compatible) and
  * normalizes its output into the shapes the ingest pipeline expects. The pure
  * helpers (address normalization, header extraction, excerpt) are unit-tested in
  * mime.test.ts; `parseEmail` is exercised against real .eml fixtures.
@@ -83,7 +83,7 @@ export function parseReferences(value: string | undefined): string[] {
 	return (value.match(/<[^>]+>/g) ?? []).map((s) => s.trim());
 }
 
-/** Pull the small set of headers features actually need (§4.2). */
+/** Pull the small set of headers features actually need. */
 export function extractHeadersSubset(headers: Array<{ key: string; value: string }>): HeadersSubset {
 	const get = (name: string): string | undefined => {
 		const lname = name.toLowerCase();
@@ -128,7 +128,7 @@ export function htmlToPlainText(html: string): string {
 		.trim();
 }
 
-/** Clamp a Date header to a sane epoch (§4.2: absurd dates clamp to now). */
+/** Clamp a Date header to a sane epoch (absurd dates clamp to now). */
 export function normalizeDate(dateStr: string | undefined, receivedAt = Date.now()): number {
 	if (!dateStr) return receivedAt;
 	const parsed = Date.parse(dateStr);
@@ -207,7 +207,7 @@ export async function parseEmail(
 }
 
 /**
- * Deterministic fallback id for the rare message with no Message-ID (§5.4).
+ * Deterministic fallback id for the rare message with no Message-ID.
  * SHA-256 of Date+From+Subject+To+body-prefix (per the plan) — a 32-bit hash
  * collides at ~50% by ~65k such messages (birthday bound), silently dropping the
  * colliding email as a duplicate; a 128-bit digest makes that negligible.

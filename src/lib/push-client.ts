@@ -1,5 +1,5 @@
 /**
- * Client-side web-push subscription (§10.4). Requests permission, subscribes via
+ * Client-side web-push subscription. Requests permission, subscribes via
  * the service worker using the server's VAPID public key, and registers the
  * subscription. iOS requires the PWA installed to Home Screen (16.4+).
  */

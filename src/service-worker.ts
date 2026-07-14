@@ -1,7 +1,7 @@
 /// <reference types="@sveltejs/kit" />
 /// <reference lib="webworker" />
 /**
- * PWA service worker (§10.4). Precaches the app shell, serves immutable message
+ * PWA service worker. Precaches the app shell, serves immutable message
  * bodies + attachments cache-first (they never change), and network-only for
  * everything else — the real offline data layer is the DatabaseClient's IndexedDB
  * mirror, not the SW. Also displays web-push notifications and deep-links on click.
@@ -61,7 +61,7 @@ sw.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// Navigations → stale-while-revalidate (§10.4): serve the cached page instantly
+	// Navigations → stale-while-revalidate: serve the cached page instantly
 	// so cold PWA start is fast, and refresh it in the background. The real data
 	// still comes from the DatabaseClient's IndexedDB mirror after boot.
 	//
@@ -117,7 +117,7 @@ async function cacheFirst(req: Request, cacheName: string): Promise<Response> {
 
 // The app posts { type: 'clear-caches' } on sign-out so this device never serves
 // one user's private bodies/attachments or cached shell navigation to the next
-// user who signs in on it (§10.4, H5).
+// user who signs in on it.
 sw.addEventListener('message', (event) => {
 	const data = event.data as { type?: string } | undefined;
 	if (data?.type === 'clear-caches') event.waitUntil(clearPrivateCaches());
@@ -128,7 +128,7 @@ async function clearPrivateCaches(): Promise<void> {
 	await caches.delete(PAGE_CACHE);
 }
 
-// --- Web push (§10.4) ---
+// --- Web push ---
 sw.addEventListener('push', (event) => {
 	if (!event.data) return;
 	let payload: { title?: string; body?: string; thread_id?: string; badge?: number } = {};

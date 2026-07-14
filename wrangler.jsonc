@@ -28,20 +28,21 @@
 			},
 		],
 	},
-	"kv_namespaces": [{ "binding": "KV", "id": "fd755ea379d346ae8f73c62b4ef8886b" }],
+	"kv_namespaces": [{ "binding": "KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
 	"r2_buckets": [{ "binding": "R2", "bucket_name": "delightmail" }],
 	// Cloudflare Email Service — the app worker sends magic-link / transactional
 	// mail via env.EMAIL (§8). Without this the documented Email Service sign-in
 	// path throws at runtime; deployers using an SMTP relay instead can drop it.
 	"send_email": [{ "name": "EMAIL" }],
 	"services": [{ "binding": "SELF", "service": "delightmail" }],
-	// The canonical origin. Keep this in lockstep with PUBLIC_APP_URL below: magic
-	// links, the Gmail OAuth redirect URI, and the passkey relying-party ID are all
-	// built from PUBLIC_APP_URL, so a hostname the worker doesn't serve breaks
-	// sign-in. Declaring it here (rather than only in the dashboard) means a fresh
-	// `wrangler deploy` re-creates the custom domain and its DNS record.
-	"routes": [{ "pattern": "mail.brianschwabauer.com", "custom_domain": true }],
+	// The canonical origin — CHANGE BOTH to your own hostname. Keep the route and
+	// PUBLIC_APP_URL in lockstep: magic links, the Gmail OAuth redirect URI, and the
+	// passkey relying-party ID are all built from PUBLIC_APP_URL, so a hostname the
+	// worker doesn't serve breaks sign-in. Declaring the route here (rather than only
+	// in the dashboard) means a fresh `wrangler deploy` re-creates the custom domain
+	// and its DNS record.
+	"routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
 	"vars": {
-		"PUBLIC_APP_URL": "https://mail.brianschwabauer.com",
+		"PUBLIC_APP_URL": "https://mail.example.com",
 	},
 }

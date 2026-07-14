@@ -1,5 +1,5 @@
 /**
- * Pane focus (§10.2, yazi-style navigation). Tracks which of the three panes —
+ * Pane focus (yazi-style navigation). Tracks which of the three panes —
  * folders (parent) → list (current) → reading (child/preview) — currently owns
  * the keyboard. `h`/`←` moves toward the parent, `l`/`→` toward the child, and
  * `j/k/↑/↓` act inside the focused pane. It's a shared reactive singleton

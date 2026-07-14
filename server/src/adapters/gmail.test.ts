@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { GmailApiError, RetryableError, isMessageGoneError, isAuthError } from './gmail';
 
-describe('Gmail error classification (§5.1, R8 — never silently lose mail)', () => {
+describe('Gmail error classification (never silently lose mail)', () => {
 	it('treats 404/410 as a definitively-gone message (safe to skip)', () => {
 		expect(isMessageGoneError(new GmailApiError(404, 'not found'))).toBe(true);
 		expect(isMessageGoneError(new GmailApiError(410, 'gone'))).toBe(true);

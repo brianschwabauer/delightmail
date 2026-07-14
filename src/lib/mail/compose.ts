@@ -1,5 +1,5 @@
 /**
- * Compose domain helpers (§6): reply/forward recipients, subjects, quoting, and
+ * Compose domain helpers: reply/forward recipients, subjects, quoting, and
  * threading (Message-ID / References). Pure + unit-tested in compose.test.ts.
  *
  * The actual MIME serialization (`buildMimeMessage`, which pulls in `mimetext`
@@ -82,7 +82,7 @@ function escapeHtml(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Editor (ProseMirror) document helpers for compose (§10.3). Pure + tested.
+// Editor (ProseMirror) document helpers for compose. Pure + tested.
 // ---------------------------------------------------------------------------
 export interface ProseNode {
 	type: string;
@@ -118,7 +118,7 @@ export function docToText(node: unknown): string {
 
 /**
  * Append an identity's signature (below a `--` marker) to the compose doc at send
- * time, leaving what the user wrote untouched (§10.3). Null signature is a no-op.
+ * time, leaving what the user wrote untouched. Null signature is a no-op.
  */
 export function mergeSignatureDoc(editorDoc: unknown, signatureDoc: unknown): ProseNode {
 	const base = asDoc(editorDoc);
@@ -130,7 +130,7 @@ export function mergeSignatureDoc(editorDoc: unknown, signatureDoc: unknown): Pr
 
 /**
  * Build the quoted-history doc for a reply: an empty paragraph to type into,
- * then a blockquote with the attribution line and the original text (§10.3).
+ * then a blockquote with the attribution line and the original text.
  */
 export function buildQuoteDoc(original: { from?: Address; date?: number; text?: string }): ProseNode {
 	const when = original.date ? new Date(original.date).toUTCString() : '';

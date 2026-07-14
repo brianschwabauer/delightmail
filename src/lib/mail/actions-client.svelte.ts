@@ -1,5 +1,5 @@
 /**
- * Client-side optimistic action manager (§10.2, §11 "optimistic everything").
+ * Client-side optimistic action manager ("optimistic everything").
  * Actions apply to the local view within one frame, fire the authoritative
  * /api/threads/actions endpoint (which updates messages + provider write-back),
  * and are reversible via the undo stack (z).
@@ -93,7 +93,7 @@ export class ActionManager {
 			return;
 		}
 
-		// Register undo only after the action actually succeeded (§10.2), and show
+		// Register undo only after the action actually succeeded, and show
 		// the undo toast the plan requires where undo is possible. The toast's Undo
 		// button reverses THIS entry (not whatever is on top of the stack) — it's
 		// the only undo affordance on touch, where `z` doesn't exist.
@@ -217,7 +217,7 @@ function stateOf(t: Thread): ThreadStateForAction {
 
 /**
  * Whether `z` can meaningfully reverse this action. delete (hard delete forever)
- * can't be locally restored, so it never enters the undo stack (§10.2).
+ * can't be locally restored, so it never enters the undo stack.
  */
 function isUndoable(action: ThreadActionName): boolean {
 	return action !== 'delete';

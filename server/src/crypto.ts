@@ -1,5 +1,5 @@
 /**
- * AES-GCM encryption for stored mail credentials (§12). The key is the 32-byte
+ * AES-GCM encryption for stored mail credentials. The key is the 32-byte
  * hex `CREDENTIALS_ENCRYPTION_KEY` env secret. Ciphertext is stored as
  * base64(iv[12] || ciphertext) so a single string round-trips through SQLite.
  */
@@ -14,14 +14,18 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 async function importKey(keyHex: string | undefined): Promise<CryptoKey> {
-	if (!keyHex || keyHex.length < 32) {
-		throw new Error('CREDENTIALS_ENCRYPTION_KEY missing or too short (need 32-byte hex).');
+	// Must be EXACTLY 64 hex chars = 32 bytes = AES-256. The old check counted
+	// characters (`length < 32`), so a 32-char key silently became AES-128, and a
+	// non-hex passphrase parsed to mostly-zero bytes (parseInt → NaN → 0) — either
+	// way, stored credentials would be protected by far less entropy than intended.
+	if (!keyHex || !/^[0-9a-f]{64}$/i.test(keyHex.trim().replace(/^0x/, ''))) {
+		throw new Error(
+			'CREDENTIALS_ENCRYPTION_KEY must be a 64-char hex string (32 bytes). ' +
+				'Generate one with: openssl rand -hex 32',
+		);
 	}
-	const raw = hexToBytes(keyHex).slice(0, 32);
-	return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [
-		'encrypt',
-		'decrypt',
-	]);
+	const raw = hexToBytes(keyHex);
+	return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
 function toBase64(bytes: Uint8Array): string {

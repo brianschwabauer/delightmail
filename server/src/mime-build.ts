@@ -1,5 +1,5 @@
 /**
- * RFC-822 MIME serialization (§6). Server-only: `mimetext` pulls in node:os,
+ * RFC-822 MIME serialization. Server-only: `mimetext` pulls in node:os,
  * so this must never reach the client bundle. The pure compose helpers
  * (threading, subjects, recipients) live in src/lib/mail/compose.ts.
  */
@@ -29,7 +29,7 @@ export interface BuiltMessage {
 
 /** Strip CR/LF and other control chars from a header value so user-supplied
  *  fields (recipients, subject, In-Reply-To/References) can't inject extra
- *  headers — mimetext does not sanitize setHeader/addr inputs (§6, §12). */
+ * headers — mimetext does not sanitize setHeader/addr inputs. */
 function headerSafe(v: string): string {
 	return v.replace(/[\r\n]+/g, ' ').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
@@ -41,7 +41,7 @@ function addr(a: Address): { addr: string; name?: string } {
 /** Remove the Bcc header (and any folded continuation) from a raw MIME message.
  *  Blind-copy recipients are delivered via the SMTP/Email-Service envelope, never
  *  a header — leaving Bcc in the transmitted copy discloses them to every
- *  recipient (§6). Gmail's API strips Bcc itself, so this is applied only on the
+ * recipient. Gmail's API strips Bcc itself, so this is applied only on the
  *  raw-relay transports. */
 export function stripBccHeader(raw: string): string {
 	// Header/body boundary is the first blank line (handle CRLF and bare LF).
@@ -94,7 +94,15 @@ export function buildMimeMessage(payload: ComposePayload): BuiltMessage {
 	}
 
 	for (const att of payload.attachments ?? []) {
-		msg.addAttachment({ filename: att.filename, contentType: att.mime_type, data: att.base64 });
+		// filename and mime_type are user-supplied and, like every other header value,
+		// mimetext does not sanitize them — an un-neutered CR/LF here injects part
+		// headers and can forge a MIME boundary. Strip control chars (headerSafe) and
+		// the quote/backslash that would break out of the quoted filename, and accept
+		// only a well-formed type/subtype (else fall back to a safe default).
+		const filename = headerSafe(att.filename ?? '').replace(/["\\]/g, '_');
+		const rawType = headerSafe(att.mime_type ?? '');
+		const contentType = /^[\w.+-]+\/[\w.+-]+$/.test(rawType) ? rawType : 'application/octet-stream';
+		msg.addAttachment({ filename, contentType, data: att.base64 });
 	}
 
 	return { raw: msg.asRaw(), message_id, references };

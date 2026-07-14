@@ -1,5 +1,5 @@
 /**
- * Org maintenance (§4.1).
+ * Org maintenance.
  *
  * An org here is not a product concept — it's the key the mailbox Durable Object is
  * addressed by, one per user, never surfaced in the UI. A bug in the old client-side

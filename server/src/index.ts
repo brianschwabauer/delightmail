@@ -1,7 +1,7 @@
 /**
  * DelightMail server worker — hosts all Durable Object classes and the inbound
  * mail entrypoints. Deploy this BEFORE the app worker (the app binds these DOs
- * cross-script via script_name). See PLAN.html §2, §9.
+ * cross-script via script_name).
  */
 import { AuthDatabaseServer as BaseAuthDatabaseServer } from '@delightstack/auth/worker';
 import { WebsocketServer } from '@delightstack/websocket/worker';
@@ -37,7 +37,7 @@ export interface Env {
 // across the two workers. Production MUST set JWT_KEY_SECRET (fail closed below).
 const DEV_JWT_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
 
-/** Resolve the session-signing secret, failing closed in production (§13). */
+/** Resolve the session-signing secret, failing closed in production. */
 function resolveJwtSecret(env: Env): string {
 	if (env.JWT_KEY_SECRET) return env.JWT_KEY_SECRET;
 	if (env.DEV === 'true') return DEV_JWT_SECRET;
@@ -90,7 +90,7 @@ export default {
 			});
 		}
 
-		// Gmail Pub/Sub push (§5.1). OIDC-verified inside the handler.
+		// Gmail Pub/Sub push. OIDC-verified inside the handler.
 		if (url.pathname === '/webhooks/gmail' && request.method === 'POST') {
 			return handleGmailWebhook(request, env);
 		}
@@ -127,7 +127,7 @@ export default {
 		}
 	},
 
-	/** Cloudflare Email Routing inbound handler (§5.2). */
+	/** Cloudflare Email Routing inbound handler. */
 	async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
 		await handleInboundEmail(message, env, ctx);
 	},

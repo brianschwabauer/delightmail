@@ -18,7 +18,7 @@
 		}
 	});
 
-	// Register the PWA service worker (§10.4). Vite only builds it in production.
+	// Register the PWA service worker. Vite only builds it in production.
 	onMount(() => {
 		if (!dev && 'serviceWorker' in navigator) {
 			navigator.serviceWorker.register('/service-worker.js', { type: 'module' }).catch(() => {});

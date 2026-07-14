@@ -1,5 +1,5 @@
 /**
- * Compose send endpoints (§6). Renders the editor doc to HTML + text, then hands
+ * Compose send endpoints. Renders the editor doc to HTML + text, then hands
  * a queued message to MailboxServer, which stores it (folder=sent,
  * send_status=queued) and starts the undo-send window.
  */
@@ -30,13 +30,24 @@ interface SendBody {
 /** POST /api/send */
 export async function handleSend(event: RequestEvent): Promise<Response> {
 	const db = event.locals.db;
-	if (!db) return DelightError.badRequest('No mailbox').toResponse();
+	const org_id = event.locals.org_id;
+	if (!db || !org_id) return DelightError.badRequest('No mailbox').toResponse();
 
 	const body = (await event.request.json().catch(() => null)) as SendBody | null;
 	if (!body?.identity_id) return DelightError.badRequest('Missing identity').toResponse();
 	if (!Array.isArray(body.to) || body.to.length === 0) {
 		return DelightError.badRequest('No recipients').toResponse();
 	}
+
+	// Attachments are referenced by an R2 key the client supplies. Every key is
+	// `{org_id}/…`; the SyncEngine reads whatever key lands here and attaches its
+	// bytes to the outbound mail, so a key outside this org would exfiltrate another
+	// tenant's stored mail. Reject any attachment not owned by the caller — the same
+	// guard body-endpoint.ts enforces on reads (the client CRUD hooks strip r2_key
+	// for exactly this reason; /api/send is the one path that writes it).
+	const attachments = (body.attachments ?? []).filter((a) => a.r2_key && a.filename);
+	const foreign = attachments.find((a) => !a.r2_key.startsWith(`${org_id}/`));
+	if (foreign) return DelightError.badRequest('Invalid attachment').toResponse();
 
 	let html = '';
 	let text = '';
@@ -45,7 +56,9 @@ export async function handleSend(event: RequestEvent): Promise<Response> {
 		html = renderHTML(doc);
 		text = renderText(doc);
 	} catch (err) {
-		return DelightError.badRequest(`Could not render message: ${(err as Error).message}`).toResponse();
+		return DelightError.badRequest(
+			`Could not render message: ${(err as Error).message}`,
+		).toResponse();
 	}
 
 	const result = await db.enqueueSend(
@@ -60,9 +73,7 @@ export async function handleSend(event: RequestEvent): Promise<Response> {
 			references: body.references ?? [],
 			thread_id: body.thread_id,
 			draft_doc: JSON.stringify(body.doc ?? {}),
-			attachments: (body.attachments ?? [])
-				.filter((a) => a.r2_key && a.filename)
-				.slice(0, 30),
+			attachments: attachments.slice(0, 30),
 		} as never,
 		body.identity_id,
 	);
@@ -77,7 +88,7 @@ export async function handleUndoSend(event: RequestEvent, messageId: string): Pr
 	return Response.json(result);
 }
 
-/** POST /api/drafts — autosave a compose draft (§6). */
+/** POST /api/drafts — autosave a compose draft. */
 export async function handleSaveDraft(event: RequestEvent): Promise<Response> {
 	const db = event.locals.db;
 	if (!db) return DelightError.badRequest('No mailbox').toResponse();

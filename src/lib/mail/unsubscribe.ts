@@ -1,5 +1,5 @@
 /**
- * List-Unsubscribe / RFC 8058 one-click extraction (§7.5). Pure — unit-tested in
+ * List-Unsubscribe / RFC 8058 one-click extraction. Pure — unit-tested in
  * unsubscribe.test.ts. Produces an unsubscribe-task candidate from a message's
  * headers; execution (server-side POST / mailto / manual link) is in the mail
  * pipeline.

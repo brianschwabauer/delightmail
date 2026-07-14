@@ -3,7 +3,11 @@
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
 	import { contactAvatarUrl } from '$lib/mail/avatar';
+	import { threadSenderLabel, threadParticipants } from '$lib/mail/participants';
+	import { useScope } from '$lib/mail/scope.svelte';
 	import type { Thread } from '$lib/schema';
+
+	const scope = useScope();
 
 	interface Props {
 		docs: Thread[];
@@ -170,13 +174,19 @@
 		if (now.getTime() - ts < 7 * 864e5) return d.toLocaleDateString(undefined, { weekday: 'short' });
 		return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
+	// `participant_text` is the search blob ("Name email, Name email"), not a label —
+	// name the other people on the thread, leaving the user out.
 	function sender(t: Thread): string {
-		return t.participant_text || t.subject || '(no sender)';
+		const label = threadSenderLabel(t, {
+			emails: scope.selfEmails,
+			domains: scope.selfDomains,
+		});
+		return label || t.subject || '(no sender)';
 	}
 	// participants[0] is the message's `from` (ingest pushes it first), so it's
 	// the sender whose favicon/Gravatar we want on the row.
 	function senderAvatar(t: Thread): string | undefined {
-		return contactAvatarUrl(t.participants?.[0]?.email);
+		return contactAvatarUrl(threadParticipants(t)[0]?.email ?? undefined);
 	}
 </script>
 

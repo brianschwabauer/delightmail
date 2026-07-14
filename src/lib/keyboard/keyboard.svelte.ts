@@ -1,5 +1,5 @@
 /**
- * Keyboard engine (§10.2). A single manager owns all bindings: a context stack
+ * Keyboard engine. A single manager owns all bindings: a context stack
  * (global → pane → overlay), chord support with a 1.2s timeout + on-screen hint,
  * and a registry that feeds both the `?` help overlay and the command palette.
  *
@@ -47,7 +47,7 @@ export class Keyboard {
 	/**
 	 * Apply user key overrides (settings.keyboard_overrides), a map of
 	 * default-key → replacement-key. Retroactively re-keys already-registered
-	 * bindings so it can be called after the mail view has mounted (§10.2).
+	 * bindings so it can be called after the mail view has mounted.
 	 */
 	setOverrides(map: Record<string, string>): void {
 		this.#overrides = map ?? {};

@@ -3,13 +3,13 @@
  *
  * Imported by BOTH workers: the SvelteKit app worker (typed CRUD + the
  * DatabaseClient mirror) and the server worker (MailboxServer extends
- * DatabaseServer<typeof tables>). See PLAN.html §4.2.
+ * DatabaseServer<typeof tables>).
  *
  * DSL notes (verified against @delightstack/database):
  * - Auto `id` (string PK) + `created_at`/`updated_at` (epoch-ms numbers).
  * - `.searchable()` puts a field in the Orama index → it is both fuzzy-searchable
  *   AND usable in a `where` filter, and is mirrored to clients. Keep the set
- *   small (§11). Enums/booleans/arrays/FKs support `.searchable()` but NOT
+ * small. Enums/booleans/arrays/FKs support `.searchable()` but NOT
  *   `.indexable()`; `.indexable()` (strings/numbers) only adds a SQLite index for
  *   server-side `exec()` lookups.
  * - `.sortable()` implies searchable and enables `order`.
@@ -58,7 +58,7 @@ export const accountTable = Database.table('account', (s) => ({
 		{ value: 'imap', label: 'IMAP' },
 		{ value: 'cf_domain', label: 'Custom Domain' },
 	]),
-	// Not `.email()` — for cf_domain accounts this holds the bare domain (§4.2).
+	// Not `.email()` — for cf_domain accounts this holds the bare domain.
 	email: s.string().label('Email').searchable(),
 	display_name: s.string().label('Display name').optional(),
 	color: s.string().label('Color').optional(),
@@ -116,7 +116,7 @@ export const identityTable = Database.table('identity', (s) => ({
 export const threadTable = Database.table('thread', (s) => ({
 	id: s.primaryKey(),
 	subject: s.string().searchable(),
-	// Re:/Fwd:/[list]-stripped, lowercased subject — the threading match key (§5.4).
+	// Re:/Fwd:/[list]-stripped, lowercased subject — the threading match key.
 	subject_normalized: s.string().optional().indexable(),
 	snippet: s.string().optional(),
 	participants: s.array(s.object(addressShape(s))).optional(),
@@ -151,7 +151,7 @@ export const messageTable = Database.table('message', (s) => ({
 	identity_email: s.string().optional(),
 	// Indexed for idempotency lookups but NOT globally unique: the same message
 	// delivered to two connected accounts is two rows (dedupe is per-account by
-	// design, §5.4) — ingest scopes the idempotency check by account_id.
+	// design) — ingest scopes the idempotency check by account_id.
 	rfc822_message_id: s.string().indexable(),
 	in_reply_to: s.string().optional(),
 	references: s.array(s.string()).optional(),
@@ -305,7 +305,7 @@ export const aiReviewTable = Database.table('ai_review', (s) => ({
 }));
 
 // ---------------------------------------------------------------------------
-// unsubscribe_task — unsubscribe pipeline state (§7.5)
+// unsubscribe_task — unsubscribe pipeline state
 // ---------------------------------------------------------------------------
 export const unsubscribeTaskTable = Database.table('unsubscribe_task', (s) => ({
 	id: s.primaryKey(),
@@ -378,12 +378,12 @@ export const settingsTable = Database.table('settings', (s) => ({
 			{ value: 'all', label: 'All new mail' },
 		])
 		.default('important'),
-	// Local-time window during which pushes are suppressed, "HH:MM-HH:MM" (§10.4).
+	// Local-time window during which pushes are suppressed, "HH:MM-HH:MM".
 	quiet_hours: s.string().optional(),
 }));
 
 // ---------------------------------------------------------------------------
-// outbox — durable send queue (§6); survives offline composes
+// outbox — durable send queue; survives offline composes
 // ---------------------------------------------------------------------------
 export const outboxTable = Database.table('outbox', (s) => ({
 	id: s.primaryKey(),

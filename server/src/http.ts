@@ -1,5 +1,5 @@
 /**
- * fetch with a bounded timeout (§13, H10). Every server-initiated request must
+ * fetch with a bounded timeout. Every server-initiated request must
  * time out, otherwise a hung or slow upstream ties up the calling Durable Object
  * alarm for the full Workers subrequest wall-clock. On timeout the request is
  * aborted and fetch rejects (AbortError), so callers' existing retry/error

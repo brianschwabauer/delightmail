@@ -38,7 +38,7 @@ function throwingNamespace(): RateLimiterNamespace {
 	};
 }
 
-describe('rate-limit — magic-link abuse protection (§12)', () => {
+describe('rate-limit — magic-link abuse protection', () => {
 	it('allows a burst then blocks once the bucket is drained', async () => {
 		const rl = fakeNamespace();
 		const opts = { max_tokens: 3, refill_every_seconds: 60 };
