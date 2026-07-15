@@ -219,10 +219,13 @@ export const attachmentTable = Database.table('attachment', (s) => ({
 	id: s.primaryKey(),
 	message_id: s
 		.foreignKey({ type: 'string', table: 'message', column: 'id' })
-		.onDelete('CASCADE'),
+		.onDelete('CASCADE')
+		.searchable(),
 	filename: s.string().searchable().optional(),
-	mime_type: s.string().optional(),
-	size_bytes: s.number().default(0),
+	// searchable/sortable so the reading pane's attachment chips (icon by mime,
+	// human size) render straight from the local index — instant and offline.
+	mime_type: s.string().searchable().optional(),
+	size_bytes: s.number().sortable().default(0),
 	r2_key: s.string().optional(),
 	content_id: s.string().optional(),
 	image_id: s.string().optional(),

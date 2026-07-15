@@ -58,6 +58,44 @@
 	}));
 
 	const docs = $derived(threadId ? ((messages.docs ?? []) as Message[]) : []);
+
+	// Attachment chips for every message in the open thread (one live query;
+	// filename/mime/size are all in the local index so this renders instantly,
+	// offline included). `GET /api/attachments/:id` serves the bytes.
+	interface AttachmentDoc {
+		id: string;
+		message_id: string;
+		filename?: string;
+		mime_type?: string;
+		size_bytes?: number;
+	}
+	const attachmentDocs = db.search('attachment', () => ({
+		where: {
+			message_id: docs.length ? docs.map((m) => String(m.id)) : ['__none__'],
+		},
+		limit: 100,
+	}));
+	const attachmentsFor = $derived.by(() => {
+		const map = new Map<string, AttachmentDoc[]>();
+		for (const a of (attachmentDocs.docs ?? []) as unknown as AttachmentDoc[]) {
+			const list = map.get(String(a.message_id)) ?? [];
+			list.push(a);
+			map.set(String(a.message_id), list);
+		}
+		return map;
+	});
+	function attIcon(mime?: string): 'image' | 'calendar' | 'file' {
+		const m = (mime ?? '').toLowerCase();
+		if (m.startsWith('image/')) return 'image';
+		if (m.includes('calendar')) return 'calendar';
+		return 'file';
+	}
+	function fmtSize(bytes?: number): string {
+		const b = bytes ?? 0;
+		if (b < 1024) return `${b} B`;
+		if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+		return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+	}
 	// Hand the loaded thread up to the page so reply/forward can act on messages
 	// already in memory instead of issuing a fresh (possibly hanging) query.
 	$effect(() => {
@@ -321,6 +359,23 @@
 								excerpt={m.text_excerpt ?? ''}
 								hasHtml={hasHtmlBody(m)} />
 						</div>
+						{#if attachmentsFor.get(String(m.id))?.length}
+							<div class="attachments">
+								{#each attachmentsFor.get(String(m.id)) ?? [] as att (att.id)}
+									<a
+										class="att-chip"
+										href="/api/attachments/{encodeURIComponent(att.id)}"
+										target="_blank"
+										rel="noopener"
+										title={att.filename || 'attachment'}>
+										<Icon name={attIcon(att.mime_type)} size={15} />
+										<span class="att-name">{att.filename || 'attachment'}</span>
+										<span class="att-size">{fmtSize(att.size_bytes)}</span>
+										<Icon name="download" size={13} class="att-dl" />
+									</a>
+								{/each}
+							</div>
+						{/if}
 					{:else}
 						<button class="snippet" onclick={() => toggle(String(m.id))}>{m.text_excerpt?.slice(0, 160) ?? ''}</button>
 					{/if}
@@ -555,6 +610,46 @@
 		overflow: hidden;
 		background: var(--color-bg-0);
 		box-shadow: 0 1px 2px color-mix(in oklab, black 6%, transparent);
+	}
+	.attachments {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		margin-top: var(--space-2);
+	}
+	.att-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		max-width: 280px;
+		padding: 6px 10px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-0);
+		color: inherit;
+		text-decoration: none;
+		font-size: var(--font-size-0);
+		transition:
+			border-color 120ms var(--ease-out, ease),
+			background 120ms var(--ease-out, ease);
+	}
+	.att-chip:hover {
+		border-color: color-mix(in oklab, var(--color-primary) 45%, var(--color-border));
+		background: color-mix(in oklab, var(--color-primary) 5%, var(--color-bg-0));
+	}
+	.att-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.att-size {
+		color: var(--color-text-disabled);
+		font-variant-numeric: tabular-nums;
+		flex-shrink: 0;
+	}
+	.att-chip :global(.att-dl) {
+		color: var(--color-text-disabled);
+		flex-shrink: 0;
 	}
 	.msg-head {
 		position: relative;
