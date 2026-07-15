@@ -207,7 +207,7 @@ packages:
         optional: true
 
   '@delightstack/database@file:vendor/delightstack-database.tgz':
-    resolution: {integrity: sha512-K0AgwWYhpqfpVJNmjjM2+ArFpmZ5jDvp+MjyjzRu7DRJn7eV8Lg93xLLWBg8aTlB/nFz4iLQCcU8SXYwMUH19Q==, tarball: file:vendor/delightstack-database.tgz}
+    resolution: {integrity: sha512-CveCOet0YzWka1FFjC2vMsYF2vQQvepf6ItvmSpkx0osGbUYOXbySCRtvn6wV9kO5zrWRfRQczfKyPv2Qz9xIg==, tarball: file:vendor/delightstack-database.tgz}
     version: 1.0.0
     peerDependencies:
       svelte: ^5.36.0

@@ -139,17 +139,14 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	// Ingest — idempotent on rfc822_message_id, runs threading + counters.
 	// -------------------------------------------------------------------------
 	async ingestMessages(batch: NormalizedMessage[]): Promise<{ ingested: number; skipped: number }> {
-		const result = ingestBatch(this, batch);
-		for (const m of result.new_messages) {
-			this.broadcastMail({
-				event: 'mail:new',
-				thread_id: m.thread_id,
-				message_id: m.id,
-				folder: m.folder,
-				from: m.from,
-				subject: m.subject,
-			});
-		}
+		// batch(): one index serialization per entity for the whole batch instead
+		// of one per row (a full-index encode per write made big backfills O(N²)
+		// in DO duration), with SQL + index committing atomically at the end.
+		const result = this.batch(() => ingestBatch(this, batch));
+		// (No per-message `mail:new` fan-out here: nothing consumes it — the
+		// entity change broadcasts from the writes above already carry the new
+		// rows to clients, and a 10k-message backfill was making 10k+ pointless
+		// cross-DO websocket RPCs.)
 		// Triage newly-arrived inbound messages after paint.
 		const inbound = result.new_messages.filter((m) => m.is_outbound === false);
 		if (inbound.length) await this.scheduleJob('triage', {}, 0);
