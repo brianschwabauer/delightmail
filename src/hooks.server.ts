@@ -528,8 +528,20 @@ const databaseHandle = createDatabaseHandle({
 		// transport the relay authenticates the connection, not the envelope, so a
 		// client-forged identity would let a user send as any address through the
 		// deployer's reputation. Identities are created server-side only (OAuth
-		// connect / cf_domain register / inbound catch-all), so reject client writes.
-		identity: { beforeCreate: rejectClientWrite, beforeUpdate: rejectClientWrite },
+		// connect / cf_domain register / inbound catch-all) and email is immutable —
+		// but display name, signature, and the default flag belong to the user.
+		identity: {
+			beforeCreate: rejectClientWrite,
+			beforeUpdate: ({ data }) => {
+				const allowed: Record<string, unknown> = {};
+				for (const f of ['name', 'signature_doc', 'is_default'] as const) {
+					if (f in (data as Record<string, unknown>))
+						allowed[f] = (data as Record<string, unknown>)[f];
+				}
+				if (!Object.keys(allowed).length) rejectClientWrite();
+				return allowed as never;
+			},
+		},
 		message: {
 			beforeCreate: ({ data }) => strip(data, MESSAGE_SERVER_FIELDS),
 			beforeUpdate: ({ data }) => strip(data, MESSAGE_SERVER_FIELDS),

@@ -107,6 +107,21 @@ function asDoc(doc: unknown): ProseNode {
 	return { type: 'doc', content: [] };
 }
 
+/** Plain text → a minimal ProseMirror doc (one paragraph per line). The
+ *  inverse of docToText for simple content — used by the signature editor. */
+export function textToDoc(text: string): ProseNode {
+	const lines = text.replace(/\r\n/g, '\n').split('\n');
+	// Trim trailing empty lines so round-trips don't grow the doc.
+	while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+	return {
+		type: 'doc',
+		content: lines.map((line) => ({
+			type: 'paragraph',
+			content: line ? [{ type: 'text', text: line }] : [],
+		})),
+	};
+}
+
 /** Flatten a ProseMirror doc to plain text (for signature/quote previews). */
 export function docToText(node: unknown): string {
 	const n = node as ProseNode | undefined;
