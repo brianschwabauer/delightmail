@@ -40,6 +40,7 @@
 		{ id: 'inbox', label: 'Inbox', icon: 'inbox' },
 		{ id: 'filtered', label: 'AI Filtered', icon: 'sparkles' },
 		{ id: 'starred', label: 'Starred', icon: 'star' },
+		{ id: 'snoozed', label: 'Snoozed', icon: 'clock' },
 		{ id: 'sent', label: 'Sent', icon: 'send' },
 		{ id: 'drafts', label: 'Drafts', icon: 'pencil' },
 		{ id: 'archive', label: 'Archive', icon: 'archive' },

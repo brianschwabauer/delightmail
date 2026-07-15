@@ -53,7 +53,7 @@ export class ActionManager {
 	async apply(
 		threads: Thread[],
 		action: ThreadActionName,
-		opts: { folder?: string; label_id?: string } = {},
+		opts: { folder?: string; label_id?: string; snooze_until?: number } = {},
 	): Promise<void> {
 		if (!threads.length) return;
 		const ids = threads.map((t) => String(t.id));
@@ -238,7 +238,8 @@ function inverseAction(action: ThreadActionName): ThreadActionName {
 		case 'spam':
 		case 'delete':
 		case 'move':
-			return 'move'; // move back to the previous folder
+		case 'snooze':
+			return 'move'; // move back to the previous folder (also clears the snooze)
 		case 'star':
 			return 'unstar';
 		case 'unstar':

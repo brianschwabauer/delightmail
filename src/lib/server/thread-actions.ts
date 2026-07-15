@@ -16,7 +16,16 @@ const VALID_ACTIONS = new Set([
 	'unstar',
 	'move',
 	'label',
+	'snooze',
 ]);
+
+/** Snoozes must wake within a sane horizon (1 year) and be in the future. */
+function validSnoozeUntil(v: unknown): number | undefined {
+	const n = Number(v);
+	if (!Number.isFinite(n)) return undefined;
+	if (n <= Date.now() || n > Date.now() + 366 * 24 * 60 * 60_000) return undefined;
+	return Math.round(n);
+}
 
 export async function handleThreadActions(event: RequestEvent): Promise<Response> {
 	const db = event.locals.db;
@@ -27,6 +36,7 @@ export async function handleThreadActions(event: RequestEvent): Promise<Response
 		action?: string;
 		folder?: string;
 		label_id?: string;
+		snooze_until?: number;
 	} | null;
 
 	if (!body?.action || !VALID_ACTIONS.has(body.action)) {
@@ -35,6 +45,10 @@ export async function handleThreadActions(event: RequestEvent): Promise<Response
 	if (!Array.isArray(body.thread_ids) || body.thread_ids.length === 0) {
 		return DelightError.badRequest('No threads selected').toResponse();
 	}
+	const snooze_until = body.action === 'snooze' ? validSnoozeUntil(body.snooze_until) : undefined;
+	if (body.action === 'snooze' && !snooze_until) {
+		return DelightError.badRequest('Snooze needs a future wake time.').toResponse();
+	}
 
 	const result = await db.applyThreadAction(
 		{
@@ -42,6 +56,7 @@ export async function handleThreadActions(event: RequestEvent): Promise<Response
 			action: body.action as never,
 			folder: body.folder,
 			label_id: body.label_id,
+			snooze_until,
 		},
 		event.locals.user?.id,
 	);

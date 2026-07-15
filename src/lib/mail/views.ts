@@ -30,6 +30,13 @@ export function viewToQuery(
 			return { ...base, where: { ...folderIs('quarantine'), ...account } };
 		case 'starred':
 			return { ...base, where: { starred: true, ...account } };
+		case 'snoozed':
+			// Soonest wake first — the top row is the next thing coming back.
+			return {
+				where: { ...folderIs('snoozed'), ...account },
+				order: [{ key: 'snoozed_until', direction: 'ASC' }],
+				limit: 100,
+			};
 		case 'sent':
 			return { ...base, where: { ...folderIs('sent'), ...account } };
 		case 'drafts':
@@ -73,6 +80,7 @@ export function viewTitle(view: string): string {
 		inbox: 'Inbox',
 		filtered: 'AI Filtered',
 		starred: 'Starred',
+		snoozed: 'Snoozed',
 		sent: 'Sent',
 		drafts: 'Drafts',
 		archive: 'Archive',

@@ -13,7 +13,8 @@ export type ThreadActionName =
 	| 'star'
 	| 'unstar'
 	| 'move'
-	| 'label';
+	| 'label'
+	| 'snooze';
 
 export type Folder =
 	| 'inbox'
@@ -38,6 +39,8 @@ export interface ThreadPatch {
 	starred?: boolean;
 	unread_count?: number;
 	label_ids?: string[];
+	/** Epoch-ms wake time (snooze); 0 clears it (any move out of snoozed). */
+	snoozed_until?: number;
 	/** True when the message rows also need is_read flipped. */
 	mark_read?: boolean;
 	mark_unread?: boolean;
@@ -61,18 +64,18 @@ export interface ThreadPatch {
 export function computeThreadPatch(
 	action: ThreadActionName,
 	state: ThreadStateForAction,
-	opts: { folder?: Folder; label_id?: string } = {},
+	opts: { folder?: Folder; label_id?: string; snooze_until?: number } = {},
 ): ThreadPatch {
 	switch (action) {
 		case 'archive':
-			return { folder: 'archive', provider_op: 'archive' };
+			return { folder: 'archive', snoozed_until: 0, provider_op: 'archive' };
 		case 'trash':
-			return { folder: 'trash', provider_op: 'trash' };
+			return { folder: 'trash', snoozed_until: 0, provider_op: 'trash' };
 		case 'delete':
 			// Delete forever — Gmail scope caveat handled at the provider layer.
 			return { folder: 'trash', hard_delete: true, provider_op: 'delete_forever' };
 		case 'spam':
-			return { folder: 'spam', provider_op: 'spam' };
+			return { folder: 'spam', snoozed_until: 0, provider_op: 'spam' };
 		case 'read':
 			return { unread_count: 0, mark_read: true, provider_op: 'read' };
 		case 'unread':
@@ -86,7 +89,16 @@ export function computeThreadPatch(
 		case 'unstar':
 			return { starred: false, provider_op: 'unstar' };
 		case 'move':
-			return { folder: (opts.folder ?? 'inbox') as Folder, provider_op: 'move' };
+			return { folder: (opts.folder ?? 'inbox') as Folder, snoozed_until: 0, provider_op: 'move' };
+		case 'snooze':
+			// The thread hides in `snoozed` until snoozed_until; the MailboxServer's
+			// wake job moves it back to the inbox. Gmail's copy archives while
+			// snoozed (so other clients quiet down too) and returns on wake.
+			return {
+				folder: 'snoozed',
+				snoozed_until: opts.snooze_until ?? Date.now() + 60 * 60_000,
+				provider_op: 'archive',
+			};
 		case 'label': {
 			const set = new Set(state.label_ids ?? []);
 			if (opts.label_id) set.add(opts.label_id);

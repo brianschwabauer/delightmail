@@ -359,11 +359,12 @@ function updateThreadCounters(
 	const mergedParticipants = dedupeAddresses([...(thread.participants ?? []), ...participants]);
 	const accountIds = new Set([...(thread.account_ids ?? []), msg.account_id]);
 	const inbound = !msg.is_outbound;
-	const wasArchived = thread.folder === 'archive';
+	const wasAsleep = thread.folder === 'archive' || thread.folder === 'snoozed';
 
-	// A new inbound message promotes an archived thread back to inbox.
-	const nextFolder =
-		inbound && wasArchived && (msg.folder ?? 'inbox') === 'inbox' ? 'inbox' : thread.folder;
+	// A new inbound message promotes an archived OR snoozed thread back to
+	// inbox — a reply is exactly what a snooze is waiting for.
+	const wakes = inbound && wasAsleep && (msg.folder ?? 'inbox') === 'inbox';
+	const nextFolder = wakes ? 'inbox' : thread.folder;
 
 	const gmailIds = thread.gmail_thread_ids ?? [];
 	if (msg.gmail_thread_id && !gmailIds.some((g) => g.thread_id === msg.gmail_thread_id)) {
@@ -391,6 +392,7 @@ function updateThreadCounters(
 		subject: is_newest ? (msg.subject ?? undefined) : undefined,
 		subject_normalized: is_newest ? normalizeSubject(msg.subject) : undefined,
 		gmail_thread_ids: gmailIds.length ? gmailIds : undefined,
+		snoozed_until: wakes ? 0 : undefined,
 	});
 }
 

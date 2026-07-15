@@ -185,6 +185,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			action: string;
 			folder?: string;
 			label_id?: string;
+			snooze_until?: number;
 		},
 		_actor?: string,
 	): Promise<{ affected: string[] }> {
@@ -204,6 +205,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				...(op === 'move' ? { folder: action.folder } : {}),
 			});
 		}
+		// A snooze needs its wake alarm (idempotent: arms for the earliest wake).
+		if (action.action === 'snooze') await this.#armSnoozeAlarm();
 		return { affected };
 	}
 
@@ -318,7 +321,14 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				unread_count: rows[0]?.unread ?? 0,
 				starred: !!rows[0]?.starred,
 			};
-			if (newest[0]?.folder) update.folder = newest[0].folder;
+			// A snoozed thread stays snoozed — its Gmail copy is archived while it
+			// sleeps, and deriving the folder from that would silently unsnooze it.
+			const current = this.exec(
+				`SELECT folder FROM thread WHERE id = ? LIMIT 1`,
+				thread_id,
+			) as Array<{ folder: string }>;
+			const snoozed = current[0]?.folder === 'snoozed';
+			if (newest[0]?.folder && !snoozed) update.folder = newest[0].folder;
 			this.update('thread', thread_id, update as never);
 		} catch {
 			/* ignore */
@@ -937,6 +947,64 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		}
 	}
 
+	/**
+	 * Move every snoozed thread whose wake time has passed back to the inbox
+	 * (unread, so it actually resurfaces), then re-arm the alarm for the next
+	 * earliest wake. Scan-based and idempotent — a missed alarm just wakes late.
+	 */
+	async #wakeSnoozedThreads(): Promise<void> {
+		const now = Date.now();
+		const due = this.exec(
+			`SELECT id FROM thread
+			 WHERE folder = 'snoozed' AND snoozed_until > 0 AND snoozed_until <= ?`,
+			now,
+		) as Array<{ id: string }>;
+		if (due.length) {
+			this.batch(() => {
+				for (const row of due) {
+					try {
+						this.update('thread', row.id, {
+							folder: 'inbox',
+							snoozed_until: 0,
+						} as never);
+					} catch {
+						/* thread deleted while snoozed */
+					}
+					// Through the entity API (NOT raw SQL) so the search index,
+					// tombstones, and websocket broadcasts stay in sync.
+					const msgs = this.exec(
+						`SELECT id FROM message WHERE thread_id = ? AND folder = 'snoozed'`,
+						row.id,
+					) as Array<{ id: string }>;
+					for (const m of msgs) {
+						try {
+							this.update('message', m.id, { folder: 'inbox' } as never);
+						} catch {
+							/* ignore */
+						}
+					}
+				}
+			});
+			// Bring the Gmail copies back to the inbox too (snooze archived them).
+			const byAccount = this.#gmailIdsByAccount(due.map((r) => r.id));
+			for (const [account_id, gmail_ids] of byAccount) {
+				if (!gmail_ids.length) continue;
+				this.#enqueueProviderAction(account_id, { op: 'move', gmail_ids, folder: 'inbox' });
+			}
+		}
+		await this.#armSnoozeAlarm();
+	}
+
+	/** Schedule the unsnooze job for the earliest pending wake (if any). */
+	async #armSnoozeAlarm(): Promise<void> {
+		const next = this.exec(
+			`SELECT MIN(snoozed_until) AS at FROM thread
+			 WHERE folder = 'snoozed' AND snoozed_until > 0`,
+		) as Array<{ at: number | null }>;
+		const at = next[0]?.at;
+		if (at) await this.scheduleJob('unsnooze', {}, Math.max(1000, at - Date.now() + 500));
+	}
+
 	async #runJob(type: string, _payload: unknown): Promise<void> {
 		switch (type) {
 			case 'triage': {
@@ -955,6 +1023,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				return this.#sendPush(_payload as { title?: string; body?: string; thread_id?: string });
 			case 'digest':
 				return this.#sendDigest();
+			case 'unsnooze':
+				return this.#wakeSnoozedThreads();
 			case 'replay_r2':
 				return this.replayInboundEmail(
 					(_payload as { raw_key?: string }).raw_key ?? '',
@@ -1164,6 +1234,9 @@ function providerOpFor(action: string): string {
 			return 'move';
 		case 'label':
 			return 'label';
+		case 'snooze':
+			// Gmail's copy archives while snoozed; the wake job moves it back.
+			return 'archive';
 		default:
 			return 'none';
 	}

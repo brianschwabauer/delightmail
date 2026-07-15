@@ -16,6 +16,7 @@ export interface ThreadActionRequest {
 	action: string;
 	folder?: string;
 	label_id?: string;
+	snooze_until?: number;
 }
 
 /** One create/update/delete for the DO's declarative transaction API. */
@@ -64,6 +65,7 @@ export function applyThreadActionLocal(db: DbLike, req: ThreadActionRequest): st
 		const patch = computeThreadPatch(action, state, {
 			folder: req.folder as Folder | undefined,
 			label_id: req.label_id,
+			snooze_until: req.snooze_until,
 		});
 
 		const message_ids = (
@@ -84,6 +86,8 @@ export function applyThreadActionLocal(db: DbLike, req: ThreadActionRequest): st
 			if (patch.unread_count !== undefined)
 				threadUpdate.unread_count = patch.unread_count;
 			if (patch.label_ids !== undefined) threadUpdate.label_ids = patch.label_ids;
+			if (patch.snoozed_until !== undefined)
+				threadUpdate.snoozed_until = patch.snoozed_until;
 			if (Object.keys(threadUpdate).length) {
 				ops.push({ update: { type: 'thread', id: thread_id, data: threadUpdate } });
 			}

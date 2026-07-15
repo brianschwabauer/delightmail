@@ -29,9 +29,12 @@ export interface ThreadAction {
 		| 'star'
 		| 'unstar'
 		| 'move'
-		| 'label';
+		| 'label'
+		| 'snooze';
 	folder?: string;
 	label_id?: string;
+	/** Epoch-ms wake time for `snooze`. */
+	snooze_until?: number;
 }
 
 /**

@@ -7,6 +7,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { viewToQuery, viewTitle, folderOfView } from '$lib/mail/views';
 	import { parseSearchInput } from '$lib/mail/search-operators';
+	import { snoozeOptions, fmtWake } from '$lib/mail/snooze';
 	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
@@ -160,6 +161,7 @@
 	let density = $state<Density>('comfortable');
 	let confirmingDelete = $state(false);
 	let moving = $state(false);
+	let snoozing = $state(false);
 	const MOVE_FOLDERS = ['inbox', 'archive', 'spam', 'trash'] as const;
 	onMount(() => {
 		density = currentDensity();
@@ -498,6 +500,16 @@
 		moving = false;
 		await act('move', { folder });
 	}
+
+	// b → snooze picker ("boomerang"). The thread hides in Snoozed and the
+	// server's wake job returns it to the inbox at the chosen time.
+	function openSnooze() {
+		if (targets().length) snoozing = true;
+	}
+	async function snoozeUntil(at: number) {
+		snoozing = false;
+		await act('snooze', { snooze_until: at });
+	}
 	async function unsubscribeCursor() {
 		const t = docs[cursor];
 		if (!t) return;
@@ -650,10 +662,13 @@
 		else void act('archive');
 	}
 
-	async function act(action: ThreadActionName, opts: { folder?: string } = {}) {
+	async function act(
+		action: ThreadActionName,
+		opts: { folder?: string; snooze_until?: number } = {},
+	) {
 		const ts = targets();
 		if (!ts.length) return;
-		const isOut = ['archive', 'trash', 'delete', 'spam', 'move'].includes(action);
+		const isOut = ['archive', 'trash', 'delete', 'spam', 'move', 'snooze'].includes(action);
 		await actions.apply(ts, action, opts);
 		clearSelection();
 		// Auto-advance past a removed cursor thread.
@@ -765,6 +780,7 @@
 			{ keys: '!', description: 'Mark spam', group: 'Actions', context: 'list', handler: () => act('spam') },
 			{ keys: 'v', description: 'Move to…', group: 'Actions', context: 'list', handler: openMove },
 			{ keys: 'm', description: 'Move to…', group: 'Actions', context: 'list', handler: openMove },
+			{ keys: 'b', description: 'Snooze…', group: 'Actions', context: 'list', handler: openSnooze },
 			{ keys: 'e', description: 'Unsubscribe', group: 'Actions', context: 'list', handler: () => void unsubscribeCursor() },
 			{ keys: 'r', description: 'Reply', group: 'Actions', context: 'list', handler: () => reply('reply') },
 			{ keys: 'R', description: 'Reply all', group: 'Actions', context: 'list', handler: () => reply('reply_all') },
@@ -774,6 +790,7 @@
 			{ keys: 'Escape', description: 'Close / clear', group: 'Panes', context: 'list', global: true, handler: () => {
 				if (confirmingDelete) confirmingDelete = false;
 				else if (moving) moving = false;
+				else if (snoozing) snoozing = false;
 				else if (searching) endSearch();
 				else if (filtering) endFilter();
 				else if (selected.size) clearSelection();
@@ -879,6 +896,17 @@
 				<Button size="0" outline class="cap" onclick={() => moveTo(f)}>{f}</Button>
 			{/each}
 			<Button size="0" transparent onclick={() => (moving = false)}><kbd>Esc</kbd></Button>
+		</div>
+	{/if}
+	{#if snoozing}
+		<div class="bar" role="menu" aria-label="Snooze until">
+			<span class="bar-msg"><Icon name="clock" size={14} /> Snooze until</span>
+			{#each snoozeOptions() as o (o.key)}
+				<Button size="0" outline onclick={() => snoozeUntil(o.at)}>
+					{o.label} <span class="wake">{fmtWake(o.at)}</span>
+				</Button>
+			{/each}
+			<Button size="0" transparent onclick={() => (snoozing = false)}><kbd>Esc</kbd></Button>
 		</div>
 	{/if}
 
@@ -1076,6 +1104,12 @@
 	.bar-msg {
 		flex: 1;
 		min-width: 0;
+	}
+	.wake {
+		color: var(--color-text-disabled);
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
+		margin-left: 4px;
 	}
 	.bar.danger {
 		background: var(--color-error-bg, color-mix(in oklab, var(--color-error) 12%, var(--color-bg-2)));
