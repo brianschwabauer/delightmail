@@ -122,15 +122,18 @@ export const threadTable = Database.table('thread', (s) => ({
 	participants: s.array(s.object(addressShape(s))).optional(),
 	participant_text: s.string().searchable().optional(),
 	account_ids: s.array(s.string()).searchable().optional(),
-	message_count: s.number().default(0),
-	unread_count: s.number().default(0),
+	// sortable/searchable: these drive the LIST UI (unread dot, count pill,
+	// paperclip) and search operators (is:unread, has:attachment) — a field
+	// must be in the Orama index to appear in sparse docs or be filterable.
+	message_count: s.number().sortable().default(0),
+	unread_count: s.number().sortable().default(0),
 	starred: s.boolean().searchable().default(false),
-	has_attachments: s.boolean().default(false),
+	has_attachments: s.boolean().searchable().default(false),
 	folder: s.enum(FOLDERS).searchable().default('inbox'),
 	label_ids: s.array(s.string()).searchable().optional(),
 	category: s.enum(CATEGORIES).searchable().optional(),
 	last_message_at: s.number().sortable().default(0),
-	snoozed_until: s.number().optional(),
+	snoozed_until: s.number().sortable().optional(),
 	gmail_thread_ids: s
 		.array(s.object({ account_id: s.string(), thread_id: s.string() }))
 		.optional(),
@@ -182,7 +185,7 @@ export const messageTable = Database.table('message', (s) => ({
 		.optional(),
 	date: s.number().sortable().default(0),
 	is_read: s.boolean().searchable().default(false),
-	is_starred: s.boolean().default(false),
+	is_starred: s.boolean().searchable().default(false),
 	is_draft: s.boolean().searchable().default(false),
 	is_outbound: s.boolean().default(false),
 	folder: s.enum(FOLDERS).searchable().default('inbox'),

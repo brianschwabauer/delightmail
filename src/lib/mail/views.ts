@@ -51,6 +51,22 @@ export function viewToQuery(
 	}
 }
 
+/** The folder a view maps to, or undefined for cross-folder views
+ *  (starred/search/label). Used to scope message-index searches. */
+export function folderOfView(view: string): string | undefined {
+	const map: Record<string, string> = {
+		inbox: 'inbox',
+		filtered: 'quarantine',
+		sent: 'sent',
+		drafts: 'drafts',
+		archive: 'archive',
+		spam: 'spam',
+		trash: 'trash',
+		snoozed: 'snoozed',
+	};
+	return map[view];
+}
+
 /** Human label for a view, used in the list header + document title. */
 export function viewTitle(view: string): string {
 	const map: Record<string, string> = {

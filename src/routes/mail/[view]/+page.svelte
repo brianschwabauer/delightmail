@@ -5,7 +5,8 @@
 	import { Button, Input, toast } from '@delightstack/components';
 	import { isMobile } from '$lib/mobile';
 	import Icon from '$lib/components/Icon.svelte';
-	import { viewToQuery, viewTitle } from '$lib/mail/views';
+	import { viewToQuery, viewTitle, folderOfView } from '$lib/mail/views';
+	import { parseSearchInput } from '$lib/mail/search-operators';
 	import { currentDensity, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
@@ -41,19 +42,81 @@
 	let searchbarEl = $state<HTMLElement>();
 	let filterbarEl = $state<HTMLElement>();
 
+	// Operators (from:, has:attachment, is:unread, is:starred, in:folder) are
+	// pulled out of the raw input; the remainder is the free-text term.
+	const parsed = $derived(parseSearchInput(searchTerm));
+
 	// Pass a REACTIVE query function — the search class re-queries automatically
 	// when its reactive deps (view / search state) change. (Recreating the search
 	// or setting `.query` in an effect fights the class's own reactivity.)
-	const results = db.search('thread', () =>
-		searching && searchTerm
-			? { ...viewToQuery(searchScope === 'all' ? 'search' : view), term: searchTerm, limit: 200 }
-			: viewToQuery(view),
+	const results = db.search('thread', () => {
+		if (!(searching && searchTerm)) return viewToQuery(view);
+		const q = viewToQuery(searchScope === 'all' ? 'search' : view);
+		const where: Record<string, unknown> = { ...(q.where ?? {}) };
+		if (parsed.folder) where.folder = { eq: parsed.folder };
+		if (parsed.starred) where.starred = true;
+		if (parsed.hasAttachment) where.has_attachments = true;
+		if (parsed.unread) where.unread_count = { gt: 0 };
+		return { ...q, where, term: parsed.term || undefined, limit: 200 };
+	});
+
+	// MESSAGE-scope search: the thread index only covers subject + participants,
+	// so "find that invoice" (body text) or from:alice need the message index —
+	// text_excerpt and from_text are indexed for exactly this. Hits map back to
+	// their threads and merge into the list below.
+	const messageHits = db.search('message', () => {
+		const active = searching && searchTerm && (parsed.term || parsed.from);
+		if (!active) return { where: { thread_id: ['__none__'] }, limit: 1 };
+		const where: Record<string, unknown> = {};
+		if (parsed.unread) where.is_read = false;
+		if (parsed.starred) where.is_starred = true;
+		const scopeFolder =
+			parsed.folder ?? (searchScope === 'folder' ? folderOfView(view) : undefined);
+		if (scopeFolder) where.folder = { eq: scopeFolder };
+		return {
+			term: parsed.term || parsed.from,
+			where: Object.keys(where).length ? where : undefined,
+			limit: 200,
+		};
+	});
+	const bodyThreadIds = $derived.by(() => {
+		if (!(searching && searchTerm)) return [] as string[];
+		const from = parsed.from;
+		const ids = new Set<string>();
+		for (const m of (messageHits.docs ?? []) as Message[]) {
+			// from: post-filters the hits precisely (the term search is fuzzy).
+			if (from && !(m.from_text ?? '').toLowerCase().includes(from)) continue;
+			if (m.thread_id) ids.add(String(m.thread_id));
+		}
+		return [...ids];
+	});
+	const bodyThreads = db.search('thread', () =>
+		bodyThreadIds.length
+			? { where: { id: bodyThreadIds }, limit: 200 }
+			: { where: { id: ['__none__'] }, limit: 1 },
 	);
 
 	// Apply the optimistic action overlay (hidden threads + flag patches), then
 	// the client-only yazi filter over the loaded docs.
 	const docs = $derived.by(() => {
 		let all = (results.docs ?? []) as Thread[];
+		// Merge in body-search matches the thread index missed, newest first.
+		if (searching && searchTerm) {
+			const seen = new Set(all.map((t) => String(t.id)));
+			const extras = ((bodyThreads.docs ?? []) as Thread[]).filter((t) => {
+				if (seen.has(String(t.id))) return false;
+				// Thread-level operators still apply to body matches.
+				if (parsed.starred && !t.starred) return false;
+				if (parsed.hasAttachment && !t.has_attachments) return false;
+				if (parsed.unread && !((t.unread_count ?? 0) > 0)) return false;
+				return true;
+			});
+			if (extras.length) {
+				all = [...all, ...extras].sort(
+					(a, b) => (b.last_message_at ?? 0) - (a.last_message_at ?? 0),
+				);
+			}
+		}
 		all = all
 			.filter((t) => !actions.isRemoved(String(t.id)))
 			// Account scope filter (All / per-account).

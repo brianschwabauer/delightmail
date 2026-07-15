@@ -59,7 +59,7 @@
 		limit: 200,
 	});
 	const unreadCount = $derived(
-		inboxUnread.docs.reduce((n, t) => n + (t.unread_count > 0 ? 1 : 0), 0),
+		inboxUnread.docs.reduce((n, t) => n + ((t.unread_count ?? 0) > 0 ? 1 : 0), 0),
 	);
 
 	// Feed the live account list into the scope switcher so Ctrl+1..9 maps to them.
