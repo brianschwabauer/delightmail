@@ -61,6 +61,21 @@ export interface DbLike {
 		id: string | number,
 		data: Record<string, unknown>,
 	): Record<string, unknown>;
+	delete(entity_type: string, id: string | number): void;
+	/**
+	 * Declarative multi-op write. One transaction serializes each touched
+	 * entity's search index ONCE (a single-op write pays the same full-index
+	 * serialization), and — unlike raw SQL — keeps the index, delete
+	 * tombstones, and websocket broadcasts in sync.
+	 */
+	transaction(
+		operations: Array<
+			| { create: { type: string; data: Record<string, unknown> } }
+			| { update: { type: string; id: string | number; data: Record<string, unknown> } }
+			| { delete: { type: string; id: string | number } }
+			| { exec: { statement: string; bindings?: unknown[] } }
+		>,
+	): unknown[];
 }
 
 export interface IngestResult {
