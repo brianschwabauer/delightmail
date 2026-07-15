@@ -27,6 +27,8 @@
 		/** Mobile selection mode (a selection exists): every row shows its checkbox
 		 *  and a plain tap TOGGLES instead of opening; swipes are disabled. */
 		selecting?: boolean;
+		/** Rows playing their exit animation (archived/trashed, about to leave). */
+		leaving?: Set<string>;
 	}
 	let {
 		docs,
@@ -41,6 +43,7 @@
 		onSwipe,
 		onLongPress,
 		selecting = false,
+		leaving = new Set(),
 	}: Props = $props();
 
 	// --- touch gestures (mobile): swipe-to-act + long-press-to-select ---
@@ -97,6 +100,10 @@
 		if (gesture.axis !== 'h') return;
 		// Resist past the commit point: full travel up to the threshold, then 1/3.
 		const abs = Math.abs(dx);
+		// The finger should FEEL the commitment point, not just see the underlay
+		// pop — one 8ms tick exactly when the swipe arms (and again if it re-arms).
+		const wasArmed = Math.abs(swipe?.index === gesture.index ? (swipe?.dx ?? 0) : 0) >= SWIPE_COMMIT;
+		if (!wasArmed && abs >= SWIPE_COMMIT) navigator.vibrate?.(8);
 		const eased = abs <= SWIPE_COMMIT ? abs : SWIPE_COMMIT + (abs - SWIPE_COMMIT) / 3;
 		swipe = { index: gesture.index, dx: Math.sign(dx) * Math.min(eased, SWIPE_MAX) };
 	}
@@ -214,6 +221,7 @@
 					class:compact={density === 'compact'}
 					class:swiping={dx !== 0}
 					class:settling={swipeSettling && swipe?.index === index}
+					class:leaving={leaving.has(String(t.id))}
 					style:height="{ROW_H}px"
 					role="option"
 					aria-selected={index === cursor}
@@ -380,6 +388,16 @@
 	.row.cursor {
 		background: var(--dm-cursor-bg);
 		box-shadow: inset 3px 0 0 var(--dm-cursor-bar);
+	}
+	/* Archive/trash exit: the row slides toward where it's going instead of
+	   blinking out. ActionManager holds the doc in place for the duration. */
+	.row.leaving {
+		transform: translateX(32px);
+		opacity: 0;
+		transition:
+			transform 160ms var(--ease-out, ease),
+			opacity 160ms var(--ease-out, ease);
+		pointer-events: none;
 	}
 	.row.selected {
 		background: var(--dm-selection-bg);

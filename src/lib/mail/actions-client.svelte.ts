@@ -30,9 +30,13 @@ interface UndoEntry {
 	restore: () => Promise<void>;
 }
 
+const EXIT_MS = 160;
+
 export class ActionManager {
 	#removed = $state<Set<string>>(new Set());
 	#patches = $state<Map<string, Partial<Thread>>>(new Map());
+	/** Rows playing their exit animation — still rendered, sliding out. */
+	#leaving = $state<Set<string>>(new Set());
 	#undoStack: UndoEntry[] = [];
 	#db: MailDatabaseClient;
 	#fetch: typeof globalThis.fetch;
@@ -47,6 +51,9 @@ export class ActionManager {
 	}
 	patchFor(id: string): Partial<Thread> | undefined {
 		return this.#patches.get(id);
+	}
+	get leaving(): Set<string> {
+		return this.#leaving;
 	}
 
 	/** Apply an action to one or more threads with instant optimistic feedback. */
@@ -75,15 +82,27 @@ export class ActionManager {
 			patch.provider_op !== 'read' &&
 			patch.provider_op !== 'unread';
 
-		// Optimistic local update.
-		if (patch.hard_delete) this.#hide(ids);
-		else if (movesFolder) this.#moveLocal(ids, patch.folder as string);
-		else this.#patchFlags(ids, patch);
+		// Fire the authoritative call immediately (provider write-back +
+		// per-message fields) — the exit animation must never delay it.
+		const posted = this.#post(ids, action, opts).then(
+			() => null,
+			(err: Error) => err,
+		);
 
-		// Authoritative call (provider write-back + per-message fields).
-		try {
-			await this.#post(ids, action, opts);
-		} catch (err) {
+		// Optimistic local update. Rows that leave the list play a short exit
+		// first — an archived mail should visibly GO somewhere, not blink out.
+		if (patch.hard_delete) {
+			await this.#exit(ids);
+			this.#hide(ids);
+		} else if (movesFolder) {
+			await this.#exit(ids);
+			this.#moveLocal(ids, patch.folder as string);
+		} else {
+			this.#patchFlags(ids, patch);
+		}
+
+		const err = await posted;
+		if (err) {
 			// Roll back the optimistic change — and register NO undo entry, so a
 			// later `z` can't fire an inverse action for something that never happened.
 			if (patch.hard_delete) this.#unhide(ids);
@@ -151,6 +170,24 @@ export class ActionManager {
 		for (const id of ids) {
 			void this.#db.applyLocalPatch('thread', id, { folder } as never).catch(() => {});
 		}
+	}
+
+	/** Play the exit animation on the given rows, resolving when it's done.
+	 *  Skipped entirely (resolves immediately) under prefers-reduced-motion. */
+	async #exit(ids: string[]): Promise<void> {
+		if (
+			typeof matchMedia !== 'undefined' &&
+			matchMedia('(prefers-reduced-motion: reduce)').matches
+		) {
+			return;
+		}
+		const leaving = new Set(this.#leaving);
+		for (const id of ids) leaving.add(id);
+		this.#leaving = leaving;
+		await new Promise((r) => setTimeout(r, EXIT_MS));
+		const done = new Set(this.#leaving);
+		for (const id of ids) done.delete(id);
+		this.#leaving = done;
 	}
 
 	#hide(ids: string[]): void {

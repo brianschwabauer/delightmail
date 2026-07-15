@@ -680,12 +680,39 @@
 </div>
 
 <style>
-	/* Instant, snappy open/close: kill the Modal's built-in Svelte transitions
-	   (they apply via inline `animation`, which a stylesheet `!important` beats)
-	   on both the dialog panel and its backdrop. */
-	:global(.compose-host .modal),
+	/* Fast, not absent: replace the Modal's built-in transitions (inline
+	   `animation`, which a stylesheet `!important` beats) with a 120ms
+	   fade + settle. Instant-but-easing reads as QUICK; a zero-frame appear
+	   reads as a glitch. */
+	:global(.compose-host .modal) {
+		animation: dm-compose-in 120ms var(--ease-out, ease) !important;
+	}
 	:global(.compose-host .modal-bg) {
-		animation: none !important;
+		animation: dm-fade-in 120ms var(--ease-out, ease) !important;
+	}
+	@keyframes -global-dm-compose-in {
+		from {
+			opacity: 0;
+			transform: scale(0.985);
+		}
+		to {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+	@keyframes -global-dm-fade-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		:global(.compose-host .modal),
+		:global(.compose-host .modal-bg) {
+			animation: none !important;
+		}
 	}
 
 	/* The editor's block menus — the slash "/" menu, the "+" add-block menu, the

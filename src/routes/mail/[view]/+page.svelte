@@ -916,6 +916,7 @@
 			{cursor}
 			{selected}
 			{density}
+			leaving={actions.leaving}
 			loading={results.loading}
 			onOpen={(i) => {
 				cursor = i;

@@ -687,6 +687,22 @@
 		overflow: hidden;
 		background: var(--color-bg-0);
 		box-shadow: 0 1px 2px color-mix(in oklab, black 6%, transparent);
+		/* Thread switches breathe in (90ms) instead of teleporting — the card is
+		   recreated per message, so scrolling never replays this. */
+		animation: body-in 90ms var(--ease-out, ease);
+	}
+	@keyframes body-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.body-surface {
+			animation: none;
+		}
 	}
 	.triage-note {
 		display: flex;
