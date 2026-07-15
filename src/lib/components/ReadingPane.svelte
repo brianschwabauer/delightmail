@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Avatar, Button } from '@delightstack/components';
+	import { Avatar, Button, toast } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
@@ -95,6 +95,62 @@
 		if (b < 1024) return `${b} B`;
 		if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
 		return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	// --- AI triage receipt (quarantined threads) ---
+	// The audit row is the trust loop: the quarantine must say WHY something is
+	// here, and offer the one-key way out ("never filter this sender").
+	interface AiVerdict {
+		category?: string;
+		summary?: string;
+		confidence?: number;
+	}
+	let aiReview = $state<AiVerdict | null>(null);
+	let reviewThread = $state<string | null>(null);
+	$effect(() => {
+		const tid = threadId;
+		if (!tid || folder !== 'quarantine' || docs.length === 0) {
+			if (untrack(() => aiReview)) aiReview = null;
+			return;
+		}
+		if (untrack(() => reviewThread) === tid) return;
+		const ids = docs.map((m) => String(m.id));
+		untrack(() => {
+			reviewThread = tid;
+			void loadReview(ids);
+		});
+	});
+	async function loadReview(ids: string[]) {
+		try {
+			const res = (await db.list('ai_review', {
+				where: { message_id: ids },
+				sparse: false,
+				limit: 10,
+			} as never)) as unknown as { hits?: Array<{ document?: { verdict?: AiVerdict } }> };
+			const rows = (res.hits ?? []).map((h) => h.document).filter(Boolean);
+			aiReview = rows.length ? (rows[rows.length - 1]?.verdict ?? null) : null;
+		} catch {
+			aiReview = null;
+		}
+	}
+	async function neverFilterSender() {
+		const m = docs.find((x) => !x.is_outbound) ?? docs[0];
+		const from = m?.from?.email ?? parseParticipantText(m?.from_text)[0]?.email;
+		if (!from) {
+			toast('Could not determine the sender.');
+			return;
+		}
+		try {
+			await db.create('sender_rule', {
+				matcher: { from_address: from.toLowerCase() },
+				action: 'inbox',
+				source: 'user',
+			} as never);
+			onAct?.('move', { folder: 'inbox' });
+			toast(`${from} will always land in your inbox.`);
+		} catch (e) {
+			toast((e as Error).message);
+		}
 	}
 	// Hand the loaded thread up to the page so reply/forward can act on messages
 	// already in memory instead of issuing a fresh (possibly hanging) query.
@@ -338,6 +394,27 @@
 				{/if}
 			</div>
 		</header>
+
+		{#if folder === 'quarantine' && showMessages}
+			<div class="triage-note" role="note">
+				<Icon name="shield-check" size={15} />
+				<span class="tn-text">
+					AI filed this{aiReview?.category ? ` as ${aiReview.category}` : ''}{aiReview?.summary
+						? ` — ${aiReview.summary}`
+						: ''}
+					{#if aiReview?.confidence != null}
+						<span class="tn-conf"
+							>{Math.round(
+								aiReview.confidence <= 1 ? aiReview.confidence * 100 : aiReview.confidence,
+							)}% sure</span>
+					{/if}
+				</span>
+				{#if onAct}
+					<Button size="0" outline onclick={() => onAct('move', { folder: 'inbox' })}>Move to Inbox</Button>
+				{/if}
+				<Button size="0" outline onclick={neverFilterSender}>Never filter this sender</Button>
+			</div>
+		{/if}
 
 		{#if showMessages}
 			{#each docs as m (m.id)}
@@ -610,6 +687,27 @@
 		overflow: hidden;
 		background: var(--color-bg-0);
 		box-shadow: 0 1px 2px color-mix(in oklab, black 6%, transparent);
+	}
+	.triage-note {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		margin: var(--space-3) var(--space-4) 0;
+		padding: var(--space-2) var(--space-3);
+		border: 1px solid color-mix(in oklab, var(--color-primary) 25%, var(--color-border));
+		border-radius: var(--radius-md);
+		background: color-mix(in oklab, var(--color-primary) 6%, var(--color-bg-1));
+		font-size: var(--font-size-0);
+	}
+	.tn-text {
+		flex: 1;
+		min-width: 200px;
+	}
+	.tn-conf {
+		color: var(--color-text-disabled);
+		font-variant-numeric: tabular-nums;
+		margin-left: 4px;
 	}
 	.attachments {
 		display: flex;

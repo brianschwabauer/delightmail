@@ -292,9 +292,11 @@ export const senderRuleTable = Database.table('sender_rule', (s) => ({
 // ---------------------------------------------------------------------------
 export const aiReviewTable = Database.table('ai_review', (s) => ({
 	id: s.primaryKey(),
+	// searchable: the reading pane's triage receipt looks verdicts up by message.
 	message_id: s
 		.foreignKey({ type: 'string', table: 'message', column: 'id' })
-		.onDelete('CASCADE'),
+		.onDelete('CASCADE')
+		.searchable(),
 	model: s.string().optional(),
 	verdict: s.object({
 		category: s.string().optional(),
