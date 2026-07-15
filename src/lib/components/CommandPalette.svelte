@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { CommandPalette as DSCommandPalette } from '@delightstack/components';
 	import type { CommandOption } from '@delightstack/components';
-	import type { ComposeInit } from './Compose.svelte';
+	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 
-	const compose = getContext<{ open: (init?: ComposeInit) => void }>('mail:compose');
+	const kb = useKeyboard();
 
 	interface Props {
 		/** Two-way bound so the palette's own Ctrl/Cmd+K toggle stays in sync with
@@ -14,23 +13,55 @@
 	}
 	let { open = $bindable(false) }: Props = $props();
 
-	const commands: CommandOption[] = [
-		{ id: 'inbox', title: 'Go to Inbox', category: 'Navigate', shortcut: ['g', 'i'], onselect: () => goto('/mail/inbox') },
-		{ id: 'filtered', title: 'Go to AI Filtered', category: 'Navigate', shortcut: ['g', 'f'], onselect: () => goto('/mail/filtered') },
-		{ id: 'starred', title: 'Go to Starred', category: 'Navigate', shortcut: ['g', 's'], onselect: () => goto('/mail/starred') },
-		{ id: 'sent', title: 'Go to Sent', category: 'Navigate', shortcut: ['g', 't'], onselect: () => goto('/mail/sent') },
-		{ id: 'drafts', title: 'Go to Drafts', category: 'Navigate', shortcut: ['g', 'd'], onselect: () => goto('/mail/drafts') },
-		{ id: 'archive', title: 'Go to Archive', category: 'Navigate', shortcut: ['g', 'a'], onselect: () => goto('/mail/archive') },
-		{ id: 'spam', title: 'Go to Spam', category: 'Navigate', onselect: () => goto('/mail/spam') },
-		{ id: 'trash', title: 'Go to Trash', category: 'Navigate', onselect: () => goto('/mail/trash') },
-		{ id: 'compose', title: 'Compose new message', category: 'Actions', shortcut: ['n'], keywords: ['new', 'write', 'email'], onselect: () => compose.open() },
+	// The palette is the discoverability layer for the keyboard: every actionable
+	// binding (archive, snooze, go-to folder, search, undo…) is listed straight
+	// from the live registry — new bindings appear here for free, user key
+	// overrides included. Pure-motion groups (j/k, pane hops, selection sweeps)
+	// stay out; they make no sense as one-shot commands.
+	const ACTION_GROUPS: Record<string, string> = {
+		Actions: 'Actions',
+		'Go to': 'Navigate',
+		Global: 'Actions',
+		Find: 'Find',
+		Scope: 'Scope',
+	};
+	const EXCLUDE_KEYS = new Set(['Ctrl+k', 'Escape']);
+
+	const SETTINGS: CommandOption[] = [
 		{ id: 'settings-accounts', title: 'Settings: Accounts', category: 'Settings', onselect: () => goto('/settings/accounts') },
+		{ id: 'settings-identities', title: 'Settings: Identities & signatures', category: 'Settings', onselect: () => goto('/settings/identities') },
 		{ id: 'settings-ai', title: 'Settings: AI Triage', category: 'Settings', onselect: () => goto('/settings/ai') },
 		{ id: 'settings-appearance', title: 'Settings: Appearance', category: 'Settings', onselect: () => goto('/settings/appearance') },
 		{ id: 'settings-keyboard', title: 'Settings: Keyboard', category: 'Settings', onselect: () => goto('/settings/keyboard') },
 		{ id: 'settings-subscriptions', title: 'Settings: Subscriptions', category: 'Settings', onselect: () => goto('/settings/subscriptions') },
 		{ id: 'settings-rules', title: 'Settings: Rules', category: 'Settings', onselect: () => goto('/settings/rules') },
 	];
+
+	const commands = $derived.by((): CommandOption[] => {
+		if (!open) return SETTINGS;
+		const seen = new Set<string>();
+		const dynamic: CommandOption[] = [];
+		for (const b of kb.activeBindings()) {
+			const category = ACTION_GROUPS[b.group];
+			if (!category || EXCLUDE_KEYS.has(b.keys)) continue;
+			const dedupe = `${b.group}:${b.description}`;
+			if (seen.has(dedupe)) continue; // n and c are both Compose — list once
+			seen.add(dedupe);
+			dynamic.push({
+				id: `kb:${b.keys}`,
+				title: b.description,
+				category,
+				shortcut: b.keys.split(' '),
+				onselect: () => {
+					// Close first so the layout's overlay gating releases the keyboard,
+					// then run the binding's handler exactly as the key would have.
+					open = false;
+					setTimeout(() => b.handler(new KeyboardEvent('keydown', { key: '' })), 0);
+				},
+			});
+		}
+		return [...dynamic, ...SETTINGS];
+	});
 </script>
 
 <DSCommandPalette bind:open {commands} placeholder="Type a command…" />
