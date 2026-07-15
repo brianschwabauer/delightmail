@@ -36,6 +36,10 @@ in the loop.
   and can't send or permanently delete anything.
 - **One-click unsubscribe.** RFC 8058 one-click where the sender supports it,
   with the list of what you're still subscribed to in one place.
+- **Daily-driver muscle.** Snooze (`b`), undo send, full-text body search with
+  `from:` / `has:attachment` / `is:unread` operators, attachments and inline
+  images in the reader, and one-key "never filter this sender" rescue rules
+  for anything the AI quarantines.
 - **You own the archive.** Every message is mirrored to your own R2 bucket and
   SQLite. If a Gmail account vanishes tomorrow, your mail doesn't.
 - **An app, not a tab.** Installable PWA: offline reading, web-push notifications,
