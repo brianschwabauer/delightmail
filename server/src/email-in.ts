@@ -10,7 +10,7 @@
 import type { Env } from './index';
 import { parseEmail } from '../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
-import { messagePrefix, writeBodies, writeAttachments } from './body-store';
+import { messagePrefix, writeBodies, writeAttachments, buildCidMap } from './body-store';
 import type { NormalizedMessage } from './ingest';
 
 interface CfDomainMailbox {
@@ -71,10 +71,13 @@ export async function handleInboundEmail(
 		await mailbox.ensureIdentity(account_id, to.toLowerCase());
 
 		const parsed = await parseEmail(rawBytes);
-		const html = parsed.html
-			? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' })
-			: '';
 		const prefix = await messagePrefix(org_id, parsed.rfc822_message_id);
+		const html = parsed.html
+			? sanitizeEmailHtml(parsed.html, {
+					cidBase: '/api/attachments',
+					cidMap: buildCidMap(prefix, parsed.attachments),
+				})
+			: '';
 		const body_keys = await writeBodies(env.R2, prefix, {
 			raw: rawBytes,
 			html: html || undefined,

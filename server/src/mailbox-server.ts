@@ -14,7 +14,7 @@ import { applyThreadActionLocal } from './actions';
 import { runTriageJob } from './triage';
 import { parseEmail } from '../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
-import { messagePrefix, writeBodies, writeAttachments } from './body-store';
+import { messagePrefix, writeBodies, writeAttachments, buildCidMap } from './body-store';
 
 export interface MailboxEnv {
 	MAILBOX: DurableObjectNamespace;
@@ -940,8 +940,13 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		await this.ensureIdentity(account_id, to.toLowerCase());
 
 		const parsed = await parseEmail(rawBytes);
-		const html = parsed.html ? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' }) : '';
 		const prefix = await messagePrefix(this.#orgName, parsed.rfc822_message_id);
+		const html = parsed.html
+			? sanitizeEmailHtml(parsed.html, {
+					cidBase: '/api/attachments',
+					cidMap: buildCidMap(prefix, parsed.attachments),
+				})
+			: '';
 		const body_keys = await writeBodies(this.#menv.R2, prefix, {
 			raw: rawBytes,
 			html: html || undefined,

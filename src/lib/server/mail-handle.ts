@@ -18,6 +18,7 @@ import {
 	handleMessageBody,
 	handleMessageRaw,
 	handleAttachment,
+	handleAttachmentByCid,
 	handleAttachmentUpload,
 } from './body-endpoint';
 import { handleOrgConsolidate } from './orgs';
@@ -92,6 +93,11 @@ async function route(event: RequestEvent): Promise<Response> {
 	// --- attachments ---
 	if (pathname === '/api/attachments/upload' && method === 'POST') {
 		return handleAttachmentUpload(event);
+	}
+	// cid: inline images — deterministic {hash}/{index} path baked into sanitized
+	// bodies at ingest (attachment row ids don't exist yet at sanitize time).
+	if (parts[1] === 'attachments' && parts[2] === 'cid' && parts[3] && parts[4] && method === 'GET') {
+		return handleAttachmentByCid(event, parts[3], parts[4]);
 	}
 	if (parts[1] === 'attachments' && parts[2] && method === 'GET') {
 		return handleAttachment(event, decodeURIComponent(parts[2]));

@@ -62,6 +62,27 @@ export async function writeBodies(
 	return keys;
 }
 
+/**
+ * contentId → URL path segment for `sanitizeEmailHtml`'s cidMap. Inline
+ * (`cid:`) images resolve to `/api/attachments/cid/{hash}/{i}` — computable at
+ * sanitize time because attachment R2 keys (`{org}/msg/{hash}/att/{i}`) are
+ * deterministic, unlike attachment ROW ids which don't exist until ingest.
+ * The org prefix comes from the caller's session at read time, never from the
+ * URL, so the scheme stays tenant-safe.
+ */
+export function buildCidMap(
+	prefix: string,
+	attachments: Array<{ content_id?: string }>,
+): Record<string, string> {
+	const hash = prefix.split('/').pop() ?? '';
+	const map: Record<string, string> = {};
+	attachments.forEach((a, i) => {
+		if (!a.content_id) return;
+		map[a.content_id.replace(/[<>]/g, '')] = `cid/${hash}/${i}`;
+	});
+	return map;
+}
+
 export interface StoredAttachment {
 	filename: string;
 	mime_type: string;

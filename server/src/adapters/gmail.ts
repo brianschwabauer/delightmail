@@ -9,6 +9,7 @@ import {
 	messagePrefix,
 	writeBodies,
 	writeAttachments,
+	buildCidMap,
 	type BodyKeys,
 	type StoredAttachment,
 } from '../body-store';
@@ -284,8 +285,13 @@ export async function gmailToNormalized(
 		.filter((id) => !SYSTEM_LABELS.has(id) && ctx.labelMap?.[id])
 		.map((id) => ({ name: ctx.labelMap![id], provider_id: id }));
 
-	const html = parsed.html ? sanitizeEmailHtml(parsed.html, { cidBase: '/api/attachments' }) : '';
 	const prefix = await messagePrefix(ctx.org_id, parsed.rfc822_message_id);
+	const html = parsed.html
+		? sanitizeEmailHtml(parsed.html, {
+				cidBase: '/api/attachments',
+				cidMap: buildCidMap(prefix, parsed.attachments),
+			})
+		: '';
 	// R2 writes are the transient-failure surface here. Wrap them as RetryableError
 	// so a storage blip retries the whole page instead of dropping the message and
 	// letting the sync cursor advance past it (never silently lose mail).

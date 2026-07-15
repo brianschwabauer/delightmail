@@ -117,6 +117,44 @@ export async function handleAttachment(event: RequestEvent, id: string): Promise
 	});
 }
 
+/**
+ * GET /api/attachments/cid/:hash/:i → stream inline (cid:) image bytes.
+ * Sanitized bodies reference attachments by the deterministic R2 layout
+ * (`{org}/msg/{hash}/att/{i}`) because attachment row ids don't exist at
+ * sanitize time. The org prefix ALWAYS comes from the caller's session — the
+ * URL can only ever address objects inside the caller's own mailbox.
+ */
+export async function handleAttachmentByCid(
+	event: RequestEvent,
+	hash: string,
+	index: string,
+): Promise<Response> {
+	const { r2, org_id } = ctx(event);
+	if (!r2 || !org_id) return DelightError.badRequest('No mailbox').toResponse();
+	if (!/^[0-9a-f]{1,64}$/.test(hash) || !/^\d{1,4}$/.test(index)) {
+		return DelightError.notFound('Attachment not found').toResponse();
+	}
+	const obj = await r2.get(`${org_id}/msg/${hash}/att/${index}`);
+	if (!obj) return DelightError.notFound('Attachment not found').toResponse();
+	// Same stored-XSS containment as handleAttachment: only render safe raster
+	// images inline; everything else downloads.
+	const mime = (obj.httpMetadata?.contentType ?? 'application/octet-stream').replace(
+		/[\r\n]/g,
+		'',
+	);
+	const baseType = mime.split(';')[0].trim().toLowerCase();
+	const disposition = INLINE_SAFE_TYPES.has(baseType) ? 'inline' : 'attachment';
+	return new Response(obj.body, {
+		headers: {
+			'content-type': mime,
+			'content-disposition': contentDisposition(disposition),
+			'x-content-type-options': 'nosniff',
+			'content-security-policy': "default-src 'none'; sandbox",
+			'cache-control': IMMUTABLE,
+		},
+	});
+}
+
 /** Every R2 key is `{org_id}/…` — reject anything outside the caller's org. */
 function ownsKey(key: string, org_id: string): boolean {
 	return key.startsWith(`${org_id}/`);
