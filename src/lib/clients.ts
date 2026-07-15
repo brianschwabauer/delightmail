@@ -48,7 +48,20 @@ export async function createClients(options: {
 		db_name: `delightmail:${auth.org_id}`,
 		fetch,
 		hooks: ws.databaseHooks(),
-		entities,
+		// `thread` and `message` are unbounded — a real mailbox grows past the local
+		// index's practical ceiling. A large Gmail backfill (≈1.4k threads) made the
+		// in-browser Orama index silently truncate to ~1k docs AND mark itself fully
+		// synced, dropping whole folders: the inbox (a handful of older threads) fell
+		// out entirely while archive/sent filled the cap, so the inbox rendered empty
+		// even though the server had it. Search these two server-side so results always
+		// reflect the full mailbox regardless of size. Smaller bounded entities
+		// (accounts, identities, labels, settings…) keep the instant client-side index.
+		// A caller-supplied override still wins.
+		entities: {
+			thread: { search_mode: 'server' },
+			message: { search_mode: 'server' },
+			...entities,
+		},
 		dev,
 	});
 
