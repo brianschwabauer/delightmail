@@ -710,6 +710,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		return delay;
 	}
 
+	/** Buckets whose options this instance already pushed — setOptions is
+	 *  idempotent config, not per-consume state, so one cross-DO RPC per bucket
+	 *  per DO lifetime is enough (was 2 extra RPCs on every send). */
+	#configuredBuckets = new Set<string>();
+
 	async #consumeBucket(
 		key: string,
 		opts: { max_tokens: number; refill_every_seconds: number },
@@ -721,7 +726,10 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			consume(k: string, cost: number): Promise<boolean>;
 			getStatus(k: string): Promise<{ reset_in_ms: number }>;
 		};
-		await stub.setOptions(opts);
+		if (!this.#configuredBuckets.has(key)) {
+			await stub.setOptions(opts);
+			this.#configuredBuckets.add(key);
+		}
 		if (await stub.consume('send', 1)) return 0;
 		const status = await stub.getStatus('send');
 		return status.reset_in_ms ?? 0;

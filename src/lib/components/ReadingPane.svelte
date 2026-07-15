@@ -146,22 +146,33 @@
 		// (cursor move with focus still in the list) must leave mail untouched.
 		if (!tid || docs.length === 0 || !markReadActive) return;
 		if (untrack(() => markedThread) === tid) return;
-		const unread = docs.filter((m) => !m.is_read);
+		const anyUnread = docs.some((m) => !m.is_read);
 		untrack(() => {
 			markedThread = tid;
-			if (unread.length) void markRead(unread);
+			if (anyUnread) void markRead(tid);
 		});
 	});
 
-	async function markRead(unread: Message[]) {
-		for (const m of unread) {
-			try {
-				const e = db.entity('message', m.id);
-				await e.load();
-				await e.save({ is_read: true });
-			} catch {
-				/* ignore */
-			}
+	/**
+	 * ONE thread-level action instead of a serial load+save per unread message
+	 * (opening a 6-unread thread used to cost 12 sequential round trips). The
+	 * server marks every message, recounts thread.unread_count (which the old
+	 * path never touched — the list badge stayed bold), and enqueues the Gmail
+	 * write-back (which the generic PATCH path never did — reading here never
+	 * marked the thread read in Gmail).
+	 */
+	async function markRead(tid: string) {
+		// Optimistic: clear the list's unread badge within a frame.
+		void db.applyLocalPatch('thread', tid, { unread_count: 0 } as never).catch(() => {});
+		try {
+			const res = await fetch('/api/threads/actions', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ thread_ids: [tid], action: 'read' }),
+			});
+			if (!res.ok) throw new Error(String(res.status));
+		} catch {
+			/* next open retries; the ws echo reconciles the overlay either way */
 		}
 	}
 

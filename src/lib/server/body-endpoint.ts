@@ -19,6 +19,19 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	const { db, r2, kv, org_id } = ctx(event);
 	if (!db || !r2 || !org_id) return DelightError.badRequest('No mailbox').toResponse();
 
+	const format = event.url.searchParams.get('format');
+	const contentType = format === 'text' ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8';
+
+	// KV first: the cache key is computable from request context alone (and the
+	// org prefix comes from the session, so a hit is tenant-safe by
+	// construction). Probing after the db.get meant every KV-warm request still
+	// paid a MailboxServer DO wake for a row it didn't need.
+	const cacheKey = `body:${org_id}:${id}:${format ?? 'html'}`;
+	if (kv) {
+		const cached = await kv.get(cacheKey);
+		if (cached !== null) return bodyResponse(cached, contentType);
+	}
+
 	let msg: MessageRow;
 	try {
 		msg = (await db.get('message', id)) as unknown as MessageRow;
@@ -26,9 +39,7 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 		return DelightError.notFound('Message not found').toResponse();
 	}
 
-	const format = event.url.searchParams.get('format');
 	const key = format === 'text' ? msg.body_keys?.text : msg.body_keys?.html;
-	const contentType = format === 'text' ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8';
 	if (!key) {
 		// No stored HTML — fall back to the plain excerpt so the pane isn't blank.
 		return new Response('', { headers: { 'content-type': contentType } });
@@ -38,10 +49,12 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	// caller's org, even if a tampered body_keys points elsewhere (IDOR).
 	if (!ownsKey(key, org_id)) return DelightError.notFound('Body not found').toResponse();
 
-	const cacheKey = `body:${org_id}:${id}:${format ?? 'html'}`;
 	const body = await readCached(r2, kv, key, cacheKey);
 	if (body === null) return DelightError.notFound('Body not found').toResponse();
+	return bodyResponse(body, contentType);
+}
 
+function bodyResponse(body: string, contentType: string): Response {
 	return new Response(body, {
 		headers: {
 			'content-type': contentType,
