@@ -133,7 +133,10 @@
 	class:focused={focus.is('folders')}
 	aria-label="Folders"
 	onmousedowncapture={() => focus.set('folders')}>
-	<div class="brand"><span class="brand-mark"></span>Mail</div>
+	<div class="brand">
+		<span class="brand-mark" aria-hidden="true"><Icon name="send" size={15} /></span>
+		DelightMail
+	</div>
 
 	<List type="button" dense class="rail-list">
 		{#each FOLDERS as f (f.id)}
@@ -195,7 +198,9 @@
 		flex-direction: column;
 		gap: 1px;
 		padding: var(--space-2);
-		background: var(--color-bg-2);
+		/* A whisper of brand in the rail so the three panes stop being gray
+		   triplets — the list stays neutral, the reader stays paper. */
+		background: color-mix(in oklab, var(--color-primary) 6%, var(--color-bg-2));
 		border-right: 1px solid var(--color-border);
 		overflow-y: auto;
 	}
@@ -219,11 +224,13 @@
 		font-size: var(--font-size-2);
 	}
 	.brand-mark {
-		width: 10px;
-		height: 10px;
-		border-radius: var(--radius-sm);
-		background: var(--color-primary);
-		box-shadow: 0 0 0 3px var(--dm-accent-soft);
+		display: grid;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		border-radius: var(--radius-md);
+		color: var(--color-primary);
+		background: var(--dm-accent-soft);
 	}
 	/* The rail's folder/account/footer lists are delightstack <List>s. Tighten
 	   their spacing to the rail and lay each row's content out as an icon + label

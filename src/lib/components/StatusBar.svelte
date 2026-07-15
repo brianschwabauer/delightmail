@@ -11,6 +11,7 @@
 
 	const online = $derived(ws.connected);
 	const focus = useFocus();
+	const PANES = ['folders', 'list', 'reading'] as const;
 	const paneLabel = $derived(
 		focus.is('folders') ? 'Folders' : focus.is('reading') ? 'Reading' : 'List',
 	);
@@ -20,7 +21,13 @@
 	<span class="pill" class:offline={!online}>
 		<span class="led" aria-hidden="true"></span>{online ? 'Live' : 'Offline'}
 	</span>
-	<span class="pane" aria-label="Focused pane">{paneLabel}</span>
+	<!-- A three-cell mini-map of the yazi panes — glanceable, wordless; the
+	     filled cell is where the keyboard lives right now. -->
+	<span class="pane" aria-label="Focused pane: {paneLabel}" title={paneLabel}>
+		{#each PANES as p (p)}
+			<span class="cell" class:on={focus.is(p)}></span>
+		{/each}
+	</span>
 	<span class="hints">
 		<span class="hk"><kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> Move</span>
 		<span class="hk"><kbd>x</kbd> Select</span>
@@ -59,9 +66,21 @@
 		box-shadow: 0 0 0 2px color-mix(in oklab, currentColor 25%, transparent);
 	}
 	.pane {
-		color: var(--color-text-muted, var(--color-text-disabled));
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
 		border-left: 1px solid var(--color-border);
 		padding-left: var(--space-3);
+	}
+	.cell {
+		width: 10px;
+		height: 6px;
+		border-radius: 2px;
+		background: color-mix(in oklab, var(--color-text-disabled) 30%, transparent);
+		transition: background var(--duration-fast, 120ms) var(--ease-out, ease);
+	}
+	.cell.on {
+		background: var(--color-primary);
 	}
 	.hints {
 		margin-left: auto;

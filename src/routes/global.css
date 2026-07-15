@@ -12,7 +12,7 @@
 	/* --- App semantic tokens (all derived from real delightstack tokens) --- */
 
 	/* The keyboard cursor row + a stronger variant for the open thread. */
-	--dm-cursor-bg: color-mix(in oklab, var(--color-primary) 9%, var(--color-bg-1));
+	--dm-cursor-bg: color-mix(in oklab, var(--color-primary) 12%, var(--color-bg-1));
 	--dm-cursor-bar: var(--color-primary);
 
 	/* Multi-selection fill (Shift+arrow / x). */

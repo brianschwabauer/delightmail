@@ -379,7 +379,7 @@
 	}
 	.row.cursor {
 		background: var(--dm-cursor-bg);
-		box-shadow: inset 2px 0 0 var(--dm-cursor-bar);
+		box-shadow: inset 3px 0 0 var(--dm-cursor-bar);
 	}
 	.row.selected {
 		background: var(--dm-selection-bg);

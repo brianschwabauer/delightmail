@@ -1020,6 +1020,13 @@
 	.pane.active {
 		background: var(--dm-focus-tint);
 	}
+	/* One live cursor at a time (vim-split style): when the list pane doesn't
+	   hold focus, its cursor row dims to a ghost bar so "where am I" always has
+	   exactly one answer. */
+	.pane:not(.active) :global(.row.cursor) {
+		background: transparent;
+		box-shadow: inset 3px 0 0 color-mix(in oklab, var(--dm-cursor-bar) 35%, transparent);
+	}
 
 	.list-pane {
 		width: 400px;
