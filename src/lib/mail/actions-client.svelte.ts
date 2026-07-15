@@ -139,14 +139,17 @@ export class ActionManager {
 		}
 	}
 
-	/** Move threads to a folder in the LOCAL MIRROR (optimistic reindex + server
-	 *  sync via the generic entity endpoint). This is what makes them leave the
-	 *  current folder and show up in the target folder without a reload; the
-	 *  authoritative `/api/threads/actions` call still drives provider write-back
-	 *  and per-message fields. */
+	/** Move threads to a folder in the LOCAL MIRROR ONLY — an index-overlay
+	 *  patch with zero network. The thread leaves its old folder and shows up
+	 *  in the target folder within a frame; `/api/threads/actions` is the ONLY
+	 *  server write (its websocket echo replaces the overlay with real data).
+	 *  The previous `db.update` here PATCHed the server too, which (a) doubled
+	 *  every archive into two server writes + two echoes and (b) raced the
+	 *  actions endpoint's archive TOGGLE — if the PATCH landed first, `archive`
+	 *  read folder='archive' and flipped the thread straight back to inbox. */
 	#moveLocal(ids: string[], folder: string): void {
 		for (const id of ids) {
-			void this.#db.update('thread', id, { folder } as never).catch(() => {});
+			void this.#db.applyLocalPatch('thread', id, { folder } as never).catch(() => {});
 		}
 	}
 
