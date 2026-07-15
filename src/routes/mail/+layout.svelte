@@ -10,7 +10,6 @@
 	import KeyboardHelp from '$lib/components/KeyboardHelp.svelte';
 	import ChordHint from '$lib/components/ChordHint.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
-	import Compose from '$lib/components/Compose.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import type { ComposeInit } from '$lib/components/Compose.svelte';
 	import { provideKeyboard } from '$lib/keyboard/keyboard.svelte';
@@ -46,6 +45,15 @@
 	let paletteOpen = $state(false);
 	let composeInit = $state<ComposeInit | null>(null);
 
+	// Compose pulls in the whole rich-text editor (ProseMirror — the single
+	// largest chunk in the app). Load it on first open — preloaded during idle
+	// below, so by the time a human presses `c` it's almost always warm.
+	const importCompose = () => import('$lib/components/Compose.svelte').then((m) => m.default);
+	let ComposeComponent = $state<Awaited<ReturnType<typeof importCompose>> | null>(null);
+	async function loadCompose() {
+		if (!ComposeComponent) ComposeComponent = await importCompose();
+	}
+
 	// Mobile: the folder rail lives in a slide-in drawer (opened by the list
 	// header's ☰). On desktop the drawer state is inert — the rail is a fixed column.
 	let drawerOpen = $state(false);
@@ -66,6 +74,7 @@
 
 	function openCompose(init: ComposeInit = {}) {
 		composeInit = init;
+		void loadCompose();
 	}
 	setContext('mail:compose', { open: openCompose });
 
@@ -101,6 +110,11 @@
 	onMount(() => {
 		composeFromUrl();
 		void applyKeyboardOverrides();
+		// Warm the compose (editor) chunk once the main thread is idle.
+		const idle =
+			'requestIdleCallback' in window
+				? window.requestIdleCallback(() => void loadCompose())
+				: setTimeout(() => void loadCompose(), 2000);
 		const onKey = (e: KeyboardEvent) => {
 			// Help closes on Esc; every other key is swallowed while it's open.
 			if (helpOpen) {
@@ -153,6 +167,8 @@
 		return () => {
 			window.removeEventListener('keydown', onKey);
 			off();
+			if ('requestIdleCallback' in window) window.cancelIdleCallback(idle as number);
+			else clearTimeout(idle as ReturnType<typeof setTimeout>);
 		};
 	});
 </script>
@@ -180,8 +196,8 @@
 <ChordHint {kb} />
 <KeyboardHelp {kb} open={helpOpen} onClose={() => (helpOpen = false)} />
 <CommandPalette bind:open={paletteOpen} />
-{#if composeInit}
-	<Compose {db} init={composeInit} onClose={() => (composeInit = null)} />
+{#if composeInit && ComposeComponent}
+	<ComposeComponent {db} init={composeInit} onClose={() => (composeInit = null)} />
 {/if}
 
 <style>
