@@ -430,16 +430,59 @@
 				const err = (await res.json().catch(() => ({}))) as { message?: string };
 				throw new Error(err.message || `Send failed (${res.status})`);
 			}
+			const { message_id } = (await res.json().catch(() => ({}))) as { message_id?: string };
 			// The sent message supersedes the draft — stop autosaving and drop it,
 			// waiting for any in-flight save first so it can't re-create an orphan.
 			sent = true;
 			void saver.discardAfterSend();
-			toast('Sending… (undo from the outbox within your undo window)');
+
+			// A REAL undo button for the whole undo window (the server holds the
+			// message in the outbox until it expires). The toast lives exactly as
+			// long as undo is possible, so its presence == "you can still stop it".
+			const undoSeconds = await undoWindowSeconds();
+			if (message_id) {
+				toast('Sent.', {
+					duration: undoSeconds * 1000,
+					action: {
+						label: 'Undo',
+						onclick: () => void undoSend(message_id),
+					},
+				});
+			} else {
+				toast('Sent.');
+			}
 			onClose();
 		} catch (e) {
 			toast((e as Error).message);
 		} finally {
 			sending = false;
+		}
+	}
+
+	async function undoWindowSeconds(): Promise<number> {
+		try {
+			const e = db.entity('settings', 'main');
+			await e.load();
+			const s = e.loaded ? (e.value as { undo_send_seconds?: number }).undo_send_seconds : undefined;
+			return Math.max(1, s ?? 10);
+		} catch {
+			return 10;
+		}
+	}
+
+	async function undoSend(message_id: string): Promise<void> {
+		try {
+			const res = await fetch(`/api/send/${encodeURIComponent(message_id)}/undo`, {
+				method: 'POST',
+			});
+			const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
+			if (res.ok && body.ok) {
+				toast('Send undone — the message is back in Drafts.');
+			} else {
+				toast('Too late to undo — the message already left the outbox.');
+			}
+		} catch {
+			toast('Could not reach the outbox to undo.');
 		}
 	}
 

@@ -110,6 +110,15 @@
 	onMount(() => {
 		composeFromUrl();
 		void applyKeyboardOverrides();
+		// Failed sends were silent: the outbox flipped send_status to 'failed'
+		// and broadcast it, but nothing listened. Losing a send silently is the
+		// one thing a mail client must never do.
+		const offSend = ws.on('send:status', (msg) => {
+			const e = msg as unknown as { status?: string | number; error?: string };
+			if (e.status === 'failed') {
+				toast(`Send failed${e.error ? `: ${e.error}` : ''} — the message stays in your outbox.`);
+			}
+		});
 		// Warm the compose (editor) chunk once the main thread is idle.
 		const idle =
 			'requestIdleCallback' in window
@@ -167,6 +176,7 @@
 		return () => {
 			window.removeEventListener('keydown', onKey);
 			off();
+			offSend?.();
 			if ('requestIdleCallback' in window) window.cancelIdleCallback(idle as number);
 			else clearTimeout(idle as ReturnType<typeof setTimeout>);
 		};
