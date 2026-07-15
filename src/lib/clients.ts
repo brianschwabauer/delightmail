@@ -45,23 +45,20 @@ export async function createClients(options: {
 
 	const db = new DatabaseClient({
 		tables,
-		db_name: `delightmail:${auth.org_id}`,
+		// v2: the 2026-07 "empty inbox" incident left some devices with a truncated
+		// client index that believed it was fully synced (docs silently dropped by
+		// insert failures the library used to swallow — fixed in
+		// @delightstack/database). A new IDB name abandons any such index and
+		// resyncs from scratch; the old `delightmail:<org>` database is unused.
+		db_name: `delightmail:v2:${auth.org_id}`,
 		fetch,
 		hooks: ws.databaseHooks(),
-		// `thread` and `message` are unbounded — a real mailbox grows past the local
-		// index's practical ceiling. A large Gmail backfill (≈1.4k threads) made the
-		// in-browser Orama index silently truncate to ~1k docs AND mark itself fully
-		// synced, dropping whole folders: the inbox (a handful of older threads) fell
-		// out entirely while archive/sent filled the cap, so the inbox rendered empty
-		// even though the server had it. Search these two server-side so results always
-		// reflect the full mailbox regardless of size. Smaller bounded entities
-		// (accounts, identities, labels, settings…) keep the instant client-side index.
-		// A caller-supplied override still wins.
-		entities: {
-			thread: { search_mode: 'server' },
-			message: { search_mode: 'server' },
-			...entities,
-		},
+		// `thread` and `message` stay in CLIENT search mode: every keystroke and
+		// folder switch renders from the local index with zero network round trips,
+		// which is the app's core promise (offline lists included). The library's
+		// per-entity threshold still switches an enormous mailbox to server search
+		// automatically — but based on the real index size, not inflated counters.
+		entities,
 		dev,
 	});
 

@@ -4,6 +4,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@delightstack/database': file:./vendor/delightstack-database.tgz
+  '@delightstack/websocket': file:./vendor/delightstack-websocket.tgz
+
 importers:
 
   .:
@@ -18,8 +22,8 @@ importers:
         specifier: ^1.0.1
         version: 1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4)
       '@delightstack/database':
-        specifier: ^1.0.0
-        version: 1.0.0(svelte@5.56.4)
+        specifier: file:vendor/delightstack-database.tgz
+        version: file:vendor/delightstack-database.tgz(svelte@5.56.4)
       '@delightstack/editor':
         specifier: ^1.0.0
         version: 1.0.0(@delightstack/components@1.0.1(@delightstack/styles@1.0.0)(svelte@5.56.4))(svelte@5.56.4)
@@ -36,8 +40,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(svelte@5.56.4)
       '@delightstack/websocket':
-        specifier: ^1.0.0
-        version: 1.0.0(svelte@5.56.4)
+        specifier: file:vendor/delightstack-websocket.tgz
+        version: file:vendor/delightstack-websocket.tgz(svelte@5.56.4)
       hast-util-sanitize:
         specifier: ^5.0.2
         version: 5.0.2
@@ -202,8 +206,9 @@ packages:
       three:
         optional: true
 
-  '@delightstack/database@1.0.0':
-    resolution: {integrity: sha512-9EhDaARQ0MegRel2qnJ5IU5bvRusSgAt7Oz/tUCNgfalU23wuwZFlLZCsglhy5SHxNk5d3qKVhG7oB9gDIeDzg==}
+  '@delightstack/database@file:vendor/delightstack-database.tgz':
+    resolution: {integrity: sha512-K0AgwWYhpqfpVJNmjjM2+ArFpmZ5jDvp+MjyjzRu7DRJn7eV8Lg93xLLWBg8aTlB/nFz4iLQCcU8SXYwMUH19Q==, tarball: file:vendor/delightstack-database.tgz}
+    version: 1.0.0
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
@@ -233,8 +238,9 @@ packages:
     peerDependencies:
       svelte: ^5.36.0
 
-  '@delightstack/websocket@1.0.0':
-    resolution: {integrity: sha512-7mmBLHJOaOXHVy1Vfx8rZqF+JNQfZn0BbvLu/VrppUqnpngqg0I/4a6MJnwCEvnCzcon5sPTs2ueoyUlRyRg0g==}
+  '@delightstack/websocket@file:vendor/delightstack-websocket.tgz':
+    resolution: {integrity: sha512-bpQYsrFsLwQ/URhJncx8LtnlNhUwMKQXoK2KWeZ6F5SInJY/7xVjxvgkROJrrk57yH7ku4r/hYbRFThqTkbfvA==, tarball: file:vendor/delightstack-websocket.tgz}
+    version: 1.0.1
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
@@ -1047,8 +1053,8 @@ packages:
   extend@3.0.2:
     resolution: {integrity: sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==}
 
-  fast-equals@6.0.0:
-    resolution: {integrity: sha512-PFhhIGgdM79r5Uztdj9Zb6Tt1zKafqVfdMGwVca1z5z6fbX7DmsySSuJd8HiP6I1j505DCS83cLxo5rmSNeVEA==}
+  fast-equals@6.0.2:
+    resolution: {integrity: sha512-sAjhj9ZhOxYCGiNMnZLaucOqf5ZeFnHNoKoAZiD9thhJ0N8RP85qJK759/97C/3L7NzzmGVB5uiX9AUpySZmUQ==}
     engines: {node: '>=6.0.0'}
 
   fdir@6.5.0:
@@ -1600,15 +1606,15 @@ snapshots:
 
   '@delightstack/ai@1.0.0(svelte@5.56.4)':
     dependencies:
-      '@delightstack/database': 1.0.0(svelte@5.56.4)
+      '@delightstack/database': file:vendor/delightstack-database.tgz(svelte@5.56.4)
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
-      '@delightstack/websocket': 1.0.0(svelte@5.56.4)
+      '@delightstack/websocket': file:vendor/delightstack-websocket.tgz(svelte@5.56.4)
     optionalDependencies:
       svelte: 5.56.4
 
   '@delightstack/auth@1.0.0(@sveltejs/kit@2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6))(svelte@5.56.4)':
     dependencies:
-      '@delightstack/database': 1.0.0(svelte@5.56.4)
+      '@delightstack/database': file:vendor/delightstack-database.tgz(svelte@5.56.4)
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
       '@simplewebauthn/browser': 13.3.0
       '@simplewebauthn/server': 13.3.2
@@ -1625,13 +1631,13 @@ snapshots:
       svelte: 5.56.4
       thumbhash: 0.1.1
 
-  '@delightstack/database@1.0.0(svelte@5.56.4)':
+  '@delightstack/database@file:vendor/delightstack-database.tgz(svelte@5.56.4)':
     dependencies:
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
       '@msgpack/msgpack': 3.1.3
       '@orama/orama': 3.1.18
       comlink: 4.4.2
-      fast-equals: 6.0.0
+      fast-equals: 6.0.2
       zod: 4.4.3
     optionalDependencies:
       svelte: 5.56.4
@@ -1656,7 +1662,7 @@ snapshots:
   '@delightstack/images@1.0.0(svelte@5.56.4)':
     dependencies:
       '@cloudflare/containers': 0.1.1
-      '@delightstack/database': 1.0.0(svelte@5.56.4)
+      '@delightstack/database': file:vendor/delightstack-database.tgz(svelte@5.56.4)
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
       thumbhash: 0.1.1
       zod: 4.4.3
@@ -1676,7 +1682,7 @@ snapshots:
       svelte: 5.56.4
       zod: 4.4.3
 
-  '@delightstack/websocket@1.0.0(svelte@5.56.4)':
+  '@delightstack/websocket@file:vendor/delightstack-websocket.tgz(svelte@5.56.4)':
     dependencies:
       '@delightstack/utilities': 1.0.0(svelte@5.56.4)
       comlink: 4.4.2
@@ -2357,7 +2363,7 @@ snapshots:
 
   extend@3.0.2: {}
 
-  fast-equals@6.0.0: {}
+  fast-equals@6.0.2: {}
 
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
