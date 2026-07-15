@@ -388,11 +388,28 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				participants: payload.to,
 				participant_text: payload.to.map((a) => a.email).join(', '),
 				account_ids: [identity.account_id],
-				message_count: 0,
+				message_count: 1,
 				folder: 'sent',
 				last_message_at: now,
 			} as never) as Thread;
 			thread_id = String(thread.id);
+		} else {
+			// Replying into an existing thread must update the thread row too —
+			// otherwise the thread keeps its old list position (sorted by
+			// last_message_at), a stale snippet, and an undercounted
+			// message_count. The Gmail sent-copy sync-back can't repair this:
+			// ingest dedupes it by rfc822 id and only patches flags.
+			try {
+				const t = this.get('thread', thread_id) as Thread;
+				this.update('thread', thread_id, {
+					snippet: payload.text.slice(0, 120),
+					last_message_at: now,
+					message_count: ((t.message_count as number) ?? 0) + 1,
+					account_ids: [...new Set([...((t.account_ids as string[]) ?? []), identity.account_id])],
+				} as never);
+			} catch {
+				/* thread deleted since compose opened — the message still sends */
+			}
 		}
 
 		const msg = this.create('message', {
@@ -475,6 +492,24 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				row.message_id,
 			) as Array<{ filename: string; mime_type: string; r2_key: string }>;
 
+			// The Gmail thread mapping lives on the THREAD (written by ingest) —
+			// a brand-new outbound message has no provider_ids at flush time, so
+			// reading it there sent every reply without a threadId and Gmail
+			// started a new conversation instead of joining the thread.
+			let gmail_thread_id = (msg.provider_ids as { gmail_thread_id?: string } | undefined)
+				?.gmail_thread_id;
+			if (!gmail_thread_id && msg.thread_id) {
+				try {
+					const thread = this.get('thread', msg.thread_id) as Thread;
+					gmail_thread_id = (
+						(thread.gmail_thread_ids as Array<{ account_id: string; thread_id: string }>) ??
+						[]
+					).find((g) => g.account_id === identity.account_id)?.thread_id;
+				} catch {
+					/* thread gone — send unthreaded */
+				}
+			}
+
 			const stub = this.#menv.SYNC.get(
 				this.#menv.SYNC.idFromName(identity.account_id),
 			) as unknown as { enqueueSendJob(payload: unknown): Promise<void> };
@@ -491,8 +526,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 					in_reply_to: msg.in_reply_to,
 					references: msg.references,
 					attachments,
-					gmail_thread_id: (msg.provider_ids as { gmail_thread_id?: string } | undefined)
-						?.gmail_thread_id,
+					gmail_thread_id,
 				});
 				this.delete('outbox', row.id);
 			} catch (err) {
@@ -856,7 +890,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
 		// Quiet hours: suppress non-digest pushes inside the window.
 		const settings = await this.ensureSettings();
-		if (withinQuietHours(settings.quiet_hours ?? undefined)) return;
+		if (withinQuietHours(settings.quiet_hours ?? undefined, settings.timezone ?? undefined))
+			return;
 		const { sendWebPush } = await import('./webpush');
 		const subs = this.exec(`SELECT id, json FROM push_subscription`) as Array<{
 			id: string;
@@ -1059,18 +1094,35 @@ function safeParse(json: string | null): unknown {
 }
 
 /**
- * True if the current UTC time falls within a "HH:MM-HH:MM" quiet-hours window
- * Handles windows that wrap past midnight (e.g. 22:00-07:00). Uses UTC
- * since the DO has no user timezone; deployers document this in settings.
+ * True if the current time falls within a "HH:MM-HH:MM" quiet-hours window.
+ * Handles windows that wrap past midnight (e.g. 22:00-07:00). The window is
+ * LOCAL time (that's what the settings UI promises), evaluated in the user's
+ * stored IANA timezone — falling back to UTC only when none is set. Evaluating
+ * in UTC for a US-Pacific user suppressed pushes 3PM–midnight and fired them
+ * all night.
  */
-function withinQuietHours(window: string | undefined): boolean {
+export function withinQuietHours(window: string | undefined, timezone?: string): boolean {
 	if (!window) return false;
 	const m = window.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
 	if (!m) return false;
 	const start = Number(m[1]) * 60 + Number(m[2]);
 	const end = Number(m[3]) * 60 + Number(m[4]);
-	const now = new Date();
-	const cur = now.getUTCHours() * 60 + now.getUTCMinutes();
+	if (start === end) return false; // zero-length window
+	let cur: number;
+	try {
+		const parts = new Intl.DateTimeFormat('en-GB', {
+			timeZone: timezone || 'UTC',
+			hour: '2-digit',
+			minute: '2-digit',
+			hourCycle: 'h23',
+		}).format(new Date());
+		const [h, min] = parts.split(':').map(Number);
+		cur = h * 60 + min;
+	} catch {
+		// Unknown timezone string — fall back to UTC rather than never pushing.
+		const now = new Date();
+		cur = now.getUTCHours() * 60 + now.getUTCMinutes();
+	}
 	return start <= end ? cur >= start && cur < end : cur >= start || cur < end;
 }
 

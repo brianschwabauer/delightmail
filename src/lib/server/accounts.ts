@@ -141,13 +141,24 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 		}));
 	const account_id = String((account as { id: string }).id);
 
-	// Ensure a default identity exists.
-	await db.create('identity', {
-		account_id,
-		email,
-		name: email.split('@')[0],
-		is_default: (await accountCount(db)) <= 1,
+	// Ensure a default identity exists — but only one. Reconnecting an expired
+	// account re-runs this callback; unconditionally creating minted a duplicate
+	// identity (including a second is_default) on every reconnect.
+	const identities = await listDocs<{ email?: string }>(db, 'identity', {
+		where: { account_id: { eq: account_id } },
+		limit: 100,
 	});
+	const hasIdentity = identities.some(
+		(i) => (i.email ?? '').toLowerCase() === email.toLowerCase(),
+	);
+	if (!hasIdentity) {
+		await db.create('identity', {
+			account_id,
+			email,
+			name: email.split('@')[0],
+			is_default: (await accountCount(db)) <= 1,
+		});
+	}
 
 	// Hand the refresh token to the account's SyncEngine and start syncing.
 	const sync = penv.SYNC.get(penv.SYNC.idFromName(account_id)) as unknown as {
@@ -417,6 +428,19 @@ export async function handleAccountDelete(
 	if (account.kind === 'gmail' && account.email && penv.KV) {
 		try {
 			await penv.KV.delete(`gmail-route:${account.email.toLowerCase()}`);
+		} catch {
+			/* ignore */
+		}
+	}
+	// Drop the inbound-domain route for cf_domain accounts (account.email holds
+	// the domain). Leaving it meant this org kept receiving the domain's mail
+	// forever — ensureCfDomainAccount silently recreated the account row on the
+	// next message — while handleDomainRegister refused the domain to every
+	// other org as "already registered".
+	if (account.kind === 'cf_domain' && account.email && penv.KV) {
+		try {
+			const mapped = await penv.KV.get(`domain:${account.email.toLowerCase()}`);
+			if (mapped === org_id) await penv.KV.delete(`domain:${account.email.toLowerCase()}`);
 		} catch {
 			/* ignore */
 		}

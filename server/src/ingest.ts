@@ -370,6 +370,12 @@ function updateThreadCounters(
 		gmailIds.push({ account_id: msg.account_id, thread_id: msg.gmail_thread_id });
 	}
 
+	// The list preview (snippet/subject) must come from the thread's NEWEST
+	// message. Gmail backfill ingests newest→oldest, so writing them
+	// unconditionally left every imported multi-message thread previewing its
+	// FIRST-ever message until new mail arrived.
+	const is_newest = msg.date >= (thread.last_message_at ?? 0);
+
 	db.update('thread', thread_id, {
 		message_count: (thread.message_count ?? 0) + 1,
 		unread_count: (thread.unread_count ?? 0) + (inbound && !(msg.is_read ?? false) ? 1 : 0),
@@ -378,12 +384,12 @@ function updateThreadCounters(
 		account_ids: [...accountIds],
 		folder: nextFolder,
 		last_message_at: Math.max(thread.last_message_at ?? 0, msg.date),
-		snippet: msg.snippet ?? msg.text_excerpt?.slice(0, 120),
+		snippet: is_newest ? (msg.snippet ?? msg.text_excerpt?.slice(0, 120)) : undefined,
 		starred: thread.starred || (msg.is_starred ?? false),
 		label_ids: mergedLabels.length ? mergedLabels : undefined,
 		has_attachments: thread.has_attachments || (msg.attachment_count ?? 0) > 0,
-		subject: msg.subject ?? undefined,
-		subject_normalized: normalizeSubject(msg.subject),
+		subject: is_newest ? (msg.subject ?? undefined) : undefined,
+		subject_normalized: is_newest ? normalizeSubject(msg.subject) : undefined,
 		gmail_thread_ids: gmailIds.length ? gmailIds : undefined,
 	});
 }

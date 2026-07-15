@@ -473,13 +473,21 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	}
 
 	async #recoverFromStaleCursor(gmail: GmailClient): Promise<void> {
-		// Re-list the most recent messages and reconcile flags.
-		const list = await gmail.listMessageIds(undefined, 'newer_than:30d');
-		const ids = (list.messages ?? []).map((m) => m.id);
-		for (let i = 0; i < ids.length; i += RAW_BATCH) {
-			const batch = await this.#fetchAndNormalize(gmail, ids.slice(i, i + RAW_BATCH));
-			if (batch.length) await this.#mailbox().ingestMessages(batch);
-		}
+		// Re-list the most recent messages and reconcile flags. MUST page through
+		// the whole window: one 500-id page followed by jumping the cursor to
+		// "now" permanently skipped messages 501+ for an account that was offline
+		// long enough to accumulate them (they'd never be revisited by history
+		// sync either).
+		let pageToken: string | undefined;
+		do {
+			const list = await gmail.listMessageIds(pageToken, 'newer_than:30d');
+			const ids = (list.messages ?? []).map((m) => m.id);
+			for (let i = 0; i < ids.length; i += RAW_BATCH) {
+				const batch = await this.#fetchAndNormalize(gmail, ids.slice(i, i + RAW_BATCH));
+				if (batch.length) await this.#mailbox().ingestMessages(batch);
+			}
+			pageToken = list.nextPageToken;
+		} while (pageToken);
 		const profile = await gmail.getProfile();
 		this.#saveState({ gmail_history_id: profile.historyId });
 	}
@@ -693,8 +701,17 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		payload: SendPayload,
 		cfg: { host: string; port: number; user?: string; pass?: string },
 	): Promise<void> {
-		const recipients = this.#recipients(payload);
-		if (!recipients.length) throw new Error('No recipients');
+		// Same per-recipient ledger as the EMAIL-binding path: if a prior attempt
+		// already delivered (DO evicted between the relay accepting the message
+		// and #recordSendResult), the retry must not deliver the whole recipient
+		// list a second time.
+		const recipients = this.#recipients(payload).filter(
+			(to) => !this.#recipientSent(payload.message_id, to),
+		);
+		if (!recipients.length) {
+			if (this.#recipients(payload).length) return; // every recipient already reached
+			throw new Error('No recipients');
+		}
 		const mod: unknown = await import(/* @vite-ignore */ 'worker-mailer').catch(() => null);
 		const WorkerMailer = (
 			mod as {
@@ -716,6 +733,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		// Bcc is delivered via the `to` envelope list above; strip it from the
 		// header so recipients never see the blind-copy list.
 		await mailer.send({ from: fromEmail, to: recipients, raw: stripBccHeader(raw) });
+		for (const to of recipients) this.#recordRecipientSent(payload.message_id, to);
 		await mailer.close();
 	}
 

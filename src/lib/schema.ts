@@ -380,6 +380,12 @@ export const settingsTable = Database.table('settings', (s) => ({
 		.default('important'),
 	// Local-time window during which pushes are suppressed, "HH:MM-HH:MM".
 	quiet_hours: s.string().optional(),
+	// IANA timezone (e.g. "America/Los_Angeles") the quiet-hours window is
+	// evaluated in. Auto-persisted by the client so travel/DST stay correct;
+	// absent → UTC.
+	timezone: s.string().optional(),
+	// Play a subtle synthesized tick on archive/trash actions.
+	sounds: s.boolean().default(false),
 }));
 
 // ---------------------------------------------------------------------------
