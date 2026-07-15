@@ -5,6 +5,7 @@ const VIEWS = new Set([
 	'inbox',
 	'filtered',
 	'starred',
+	'snoozed',
 	'sent',
 	'drafts',
 	'archive',
