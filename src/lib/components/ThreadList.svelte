@@ -446,7 +446,7 @@
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
+		gap: 3px;
 	}
 	.line1 {
 		display: flex;
@@ -467,8 +467,10 @@
 		white-space: nowrap;
 		color: var(--color-text-muted, var(--color-text-disabled));
 	}
+	/* Unread: the SUBJECT carries the weight (it's what you triage by); the
+	   sender just steps up to full-strength text. */
 	.row.unread .from {
-		font-weight: var(--font-weight-semibold, 600);
+		font-weight: var(--font-weight-medium, 500);
 		color: var(--color-text);
 	}
 	.clip {
@@ -488,13 +490,15 @@
 		flex-shrink: 0;
 		color: var(--color-text-disabled);
 		font-variant-numeric: tabular-nums;
-		font-size: var(--font-size-00);
+		font-size: 0.72rem;
 	}
+	/* The subject line is what you scan — it was 0.65rem (~10.4px), below any
+	   legibility floor while the sender sat above it. */
 	.line2 {
 		display: flex;
 		align-items: baseline;
 		gap: 6px;
-		font-size: var(--font-size-00);
+		font-size: var(--font-size-0);
 		color: var(--color-text-disabled);
 		min-width: 0;
 	}
@@ -508,7 +512,7 @@
 	}
 	.row.unread .subject {
 		color: var(--color-text);
-		font-weight: var(--font-weight-medium, 500);
+		font-weight: var(--font-weight-semibold, 600);
 	}
 	.snippet {
 		overflow: hidden;
