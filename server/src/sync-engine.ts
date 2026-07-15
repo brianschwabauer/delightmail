@@ -461,10 +461,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				if (batch.length) await this.#mailbox().ingestMessages(batch);
 			}
 			// Flag/label changes on existing messages: re-fetch authoritative labels.
-			for (const id of labelChanged) {
-				if (added.has(id)) continue; // already ingested with fresh labels
-				await this.#applyLabelChange(id);
-			}
+			// Bounded-parallel: a bulk archive done in the Gmail app replays here as
+			// one getMetadata + one mailbox RPC per message — serially that made a
+			// 200-message sweep take minutes of DO wall-clock.
+			const changed = [...labelChanged].filter((id) => !added.has(id));
+			await mapBounded(changed, 6, (id) => this.#applyLabelChange(id));
 			if (res.historyId) latestHistoryId = res.historyId;
 			pageToken = res.nextPageToken;
 		} while (pageToken);
@@ -941,8 +942,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #fetchAndNormalize(gmail: GmailClient, ids: string[]): Promise<NormalizedMessage[]> {
 		const state = this.#state();
 		const labelMap = await this.#labelMap(gmail);
-		const out: NormalizedMessage[] = [];
-		for (const id of ids) {
+		// Bounded-parallel fetch: messages.get costs 5 quota units of a 250/s
+		// budget, so 6-way concurrency stays far inside quota while cutting a
+		// page's wall-clock (and DO duration billing) ~6× vs the old strictly
+		// serial loop — a large mailbox import spent hours mostly waiting on RTTs.
+		const out = await mapBounded(ids, 6, async (id): Promise<NormalizedMessage | null> => {
 			let msg: GmailMessage;
 			try {
 				msg = await gmail.getRaw(id);
@@ -961,17 +965,15 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 					throw err;
 				}
 				console.error(`[SyncEngine] getRaw ${id}: message gone at Gmail, skipping:`, err);
-				continue;
+				return null;
 			}
 			try {
-				out.push(
-					await gmailToNormalized(msg, {
-						account_id: state.account_id!,
-						org_id: state.org_id!,
-						r2: this.env.R2,
-						labelMap,
-					}),
-				);
+				return await gmailToNormalized(msg, {
+					account_id: state.account_id!,
+					org_id: state.org_id!,
+					r2: this.env.R2,
+					labelMap,
+				});
 			} catch (err) {
 				// Retryable (incl. R2 write blips) → bubble up so the whole page retries
 				// and the cursor is NOT advanced past this message.
@@ -980,9 +982,10 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				// before moving on, so the message is recoverable rather than silently
 				// lost when the sync cursor advances.
 				await this.#deadLetterRawMessage(state, id, msg.raw ?? '', err);
+				return null;
 			}
-		}
-		return out;
+		});
+		return out.filter((m): m is NormalizedMessage => m !== null);
 	}
 
 	/**
@@ -1103,6 +1106,40 @@ function safeParse(json: string | null): unknown {
 	} catch {
 		return {};
 	}
+}
+
+/**
+ * Map items with at most `limit` in flight, preserving input order in the
+ * result. The FIRST error aborts scheduling of new work and rejects (in-flight
+ * items settle first) — matching the "whole page retries" error model.
+ */
+async function mapBounded<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const out = new Array<R>(items.length);
+	let next = 0;
+	let failure: unknown;
+	let failed = false;
+	const worker = async () => {
+		for (;;) {
+			const i = next++;
+			if (i >= items.length || failed) return;
+			try {
+				out[i] = await fn(items[i]);
+			} catch (err) {
+				if (!failed) {
+					failed = true;
+					failure = err;
+				}
+				return;
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	if (failed) throw failure;
+	return out;
 }
 
 function sleep(ms: number): Promise<void> {
