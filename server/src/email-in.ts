@@ -39,7 +39,12 @@ export async function handleInboundEmail(
 		});
 	} catch (err) {
 		console.error('[email] R2 capture failed:', err);
-		return; // let Cloudflare retry delivery
+		// MUST throw: Email Workers only signal a transient failure (so the
+		// sending server retries delivery) when the handler throws. A clean
+		// return ACKs and consumes the message — a transient R2 blip would
+		// silently and permanently lose the mail, with no R2 copy, no DB row,
+		// and no replay job.
+		throw err;
 	}
 
 	// 2. Resolve the owning org by recipient domain.

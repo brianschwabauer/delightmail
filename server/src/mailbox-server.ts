@@ -273,21 +273,33 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				is_read: payload.state.is_read,
 				is_starred: payload.state.is_starred,
 			} as never);
-			// Reflect the message's folder onto the thread's primary location.
-			try {
-				this.update('thread', thread_id, { folder: payload.state.folder } as never);
-			} catch {
-				/* ignore */
-			}
+			// Roll the thread up from its messages. Setting thread.folder directly
+			// from this one message was wrong twice over: archiving a single OLD
+			// message in Gmail yanked the whole thread out of the inbox, and
+			// reading a message in Gmail never cleared the thread's unread badge
+			// (unread_count was never recomputed, so the thread stayed bold on
+			// every device forever).
+			this.#recountThread(thread_id);
 		}
 	}
 
+	/**
+	 * Recompute a thread's derived rollups (message/unread counts, starred,
+	 * folder) from its message rows. The thread lives in the folder of its
+	 * newest INCOMING message (sent/draft copies never move a thread — replying
+	 * must not pull it out of the inbox) — the same way Gmail surfaces a
+	 * conversation: archiving an older message doesn't move the thread,
+	 * archiving the latest one does, and a new inbox message resurfaces an
+	 * archived thread.
+	 */
 	#recountThread(thread_id: string): void {
 		const rows = this.exec(
-			`SELECT COUNT(*) AS n, SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread
+			`SELECT COUNT(*) AS n,
+			        SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread,
+			        MAX(is_starred) AS starred
 			 FROM message WHERE thread_id = ?`,
 			thread_id,
-		) as Array<{ n: number; unread: number }>;
+		) as Array<{ n: number; unread: number; starred: number }>;
 		const n = rows[0]?.n ?? 0;
 		if (n === 0) {
 			try {
@@ -297,11 +309,20 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			}
 			return;
 		}
+		const newest = this.exec(
+			`SELECT folder FROM message
+			 WHERE thread_id = ? AND folder NOT IN ('sent', 'drafts')
+			 ORDER BY date DESC LIMIT 1`,
+			thread_id,
+		) as Array<{ folder: string }>;
 		try {
-			this.update('thread', thread_id, {
+			const update: Record<string, unknown> = {
 				message_count: n,
 				unread_count: rows[0]?.unread ?? 0,
-			} as never);
+				starred: !!rows[0]?.starred,
+			};
+			if (newest[0]?.folder) update.folder = newest[0].folder;
+			this.update('thread', thread_id, update as never);
 		} catch {
 			/* ignore */
 		}
