@@ -25,6 +25,13 @@ export function currentTheme(): Theme {
 	if (typeof localStorage === 'undefined') return 'system';
 	return (localStorage.getItem('dm-theme') as Theme) ?? 'system';
 }
+
+/** The theme actually in effect right now ('system' resolved via media query). */
+export function resolvedScheme(): 'light' | 'dark' {
+	if (typeof document === 'undefined') return 'light';
+	// data-theme is stamped by applyTheme at boot — the cheapest truthful source.
+	return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
 export function currentDensity(): Density {
 	if (typeof localStorage === 'undefined') return 'comfortable';
 	return (localStorage.getItem('dm-density') as Density) ?? 'comfortable';

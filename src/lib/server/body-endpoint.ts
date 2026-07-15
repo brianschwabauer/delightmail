@@ -20,16 +20,20 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	if (!db || !r2 || !org_id) return DelightError.badRequest('No mailbox').toResponse();
 
 	const format = event.url.searchParams.get('format');
+	const scheme = event.url.searchParams.get('scheme') === 'dark' ? 'dark' : 'light';
 	const contentType = format === 'text' ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8';
 
 	// KV first: the cache key is computable from request context alone (and the
 	// org prefix comes from the session, so a hit is tenant-safe by
 	// construction). Probing after the db.get meant every KV-warm request still
-	// paid a MailboxServer DO wake for a row it didn't need.
+	// paid a MailboxServer DO wake for a row it didn't need. (KV stores the RAW
+	// sanitized body; typography wraps at response time, so no cache versioning.)
 	const cacheKey = `body:${org_id}:${id}:${format ?? 'html'}`;
 	if (kv) {
 		const cached = await kv.get(cacheKey);
-		if (cached !== null) return bodyResponse(cached, contentType);
+		if (cached !== null) {
+			return bodyResponse(format === 'text' ? cached : typeset(cached, scheme), contentType);
+		}
 	}
 
 	let msg: MessageRow;
@@ -51,7 +55,40 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 
 	const body = await readCached(r2, kv, key, cacheKey);
 	if (body === null) return DelightError.notFound('Body not found').toResponse();
-	return bodyResponse(body, contentType);
+	return bodyResponse(format === 'text' ? body : typeset(body, scheme), contentType);
+}
+
+/**
+ * Serve-time typography for the reading pane. Plain and lightly-formatted
+ * email otherwise renders at browser defaults inside the iframe — Times New
+ * Roman, black-on-white, line-height 1.2 — the worst-typeset surface in the
+ * app. Heavily-designed HTML mail overrides all of this with its own inline
+ * styles/tables and is unharmed. The dark palette applies only when the email
+ * paints no background of its own, so newsletters keep their white sheet and
+ * plain text stops strobing you at night.
+ */
+function typeset(html: string, scheme: 'light' | 'dark'): string {
+	const paintsOwnBackground = /bgcolor\s*=|background(?:-color)?\s*:/i.test(html);
+	const dark = scheme === 'dark' && !paintsOwnBackground;
+	const palette = dark
+		? 'color:#dde1e6;background:#16181c;'
+		: 'color:#1f2328;background:#ffffff;';
+	const link = dark ? '#8ab0ff' : '#3b5fc9';
+	const quote = dark ? '#3a4048' : '#d0d4da';
+	const quoteText = dark ? '#9aa4b0' : '#57606a';
+	return (
+		`<style>` +
+		`body{margin:0;padding:20px 24px;${palette}` +
+		`font:15px/1.65 system-ui,-apple-system,'Segoe UI',sans-serif;` +
+		`overflow-wrap:break-word;-webkit-text-size-adjust:100%}` +
+		`a{color:${link}}` +
+		`img{max-width:100%;height:auto}` +
+		`blockquote{margin:0 0 0 2px;padding-left:12px;border-left:2px solid ${quote};color:${quoteText}}` +
+		`pre{overflow-x:auto;font-size:0.9em}` +
+		`table{max-width:100%}` +
+		`</style>` +
+		html
+	);
 }
 
 function bodyResponse(body: string, contentType: string): Response {

@@ -17,6 +17,10 @@
 	}
 	const { messageId, excerpt, hasHtml = false }: Props = $props();
 
+	import { resolvedScheme } from '$lib/theme';
+	// Captured once per mount — a theme flip re-renders the whole app anyway.
+	const scheme = resolvedScheme();
+
 	let iframe = $state<HTMLIFrameElement>();
 	let frameHeight = $state(120);
 	let failed = $state(false);
@@ -40,7 +44,8 @@
 	<iframe
 		bind:this={iframe}
 		title="Message body"
-		src="/api/messages/{encodeURIComponent(messageId)}/body"
+		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}"
+		class:dark={scheme === 'dark'}
 		sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 		referrerpolicy="no-referrer"
 		style:height="{frameHeight}px"
@@ -54,11 +59,20 @@
 		background: white;
 		display: block;
 	}
+	/* Match the endpoint's dark palette so the frame never flashes white while
+	   loading. Emails that paint their own background stay on their white sheet
+	   (the endpoint only darkens unstyled mail — a brief white flash is correct
+	   for those). */
+	iframe.dark {
+		background: #16181c;
+	}
 	.excerpt {
-		padding: var(--space-3);
+		padding: var(--space-4);
 		white-space: pre-wrap;
 		font-family: inherit;
 		margin: 0;
-		font-size: var(--font-size-0);
+		font-size: 0.9375rem;
+		line-height: 1.65;
+		overflow-wrap: break-word;
 	}
 </style>
