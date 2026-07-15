@@ -3,6 +3,7 @@
 	import { Button, ButtonGroup, toast } from '@delightstack/components';
 	import { applyTheme, applyDensity, currentTheme, currentDensity, type Theme, type Density } from '$lib/theme';
 	import { enablePush, isPushSupported } from '$lib/push-client';
+	import { soundsEnabled, setSoundsEnabled, playTick } from '$lib/mail/sound';
 
 	const { data } = $props();
 	const { db } = $derived(data);
@@ -13,10 +14,19 @@
 	let enablingPush = $state(false);
 	let quietStart = $state('');
 	let quietEnd = $state('');
+	let sounds = $state(false);
+
+	function setSounds(on: boolean) {
+		sounds = on;
+		setSoundsEnabled(on);
+		if (on) playTick('archive'); // preview the tick right away
+		persist({ sounds: on });
+	}
 
 	onMount(async () => {
 		theme = currentTheme();
 		density = currentDensity();
+		sounds = soundsEnabled();
 		pushSupported = await isPushSupported();
 		try {
 			const e = db.entity('settings', 'main');
@@ -103,6 +113,15 @@
 		{/each}
 	</ButtonGroup>
 	<p class="muted">Compact fits more conversations per screen.</p>
+</section>
+
+<section>
+	<h3>Sounds</h3>
+	<ButtonGroup outline>
+		<Button active={!sounds} onclick={() => setSounds(false)}>Silent</Button>
+		<Button active={sounds} onclick={() => setSounds(true)}>Subtle sounds</Button>
+	</ButtonGroup>
+	<p class="muted">A ~45ms synthesized tick on archive and trash. No assets, no volume war.</p>
 </section>
 
 <section>

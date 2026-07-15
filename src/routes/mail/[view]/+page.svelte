@@ -662,6 +662,31 @@
 		else void act('archive');
 	}
 
+	// The inbox-zero ceremony triggers only when an ACTION empties the inbox in
+	// this session — a cold-loaded empty inbox stays quiet. The action marks its
+	// intent; the ceremony arms when the list actually reaches zero (the row
+	// exit + local reindex land asynchronously after apply()).
+	let clearedByAction = $state(false);
+	let pendingClear = 0;
+	$effect(() => {
+		void view;
+		untrack(() => {
+			clearedByAction = false;
+			pendingClear = 0;
+		});
+	});
+	$effect(() => {
+		const n = docs.length;
+		untrack(() => {
+			if (n === 0 && pendingClear && Date.now() - pendingClear < 5000) {
+				clearedByAction = true;
+				pendingClear = 0;
+			} else if (n > 0) {
+				clearedByAction = false;
+			}
+		});
+	});
+
 	async function act(
 		action: ThreadActionName,
 		opts: { folder?: string; snooze_until?: number } = {},
@@ -669,6 +694,8 @@
 		const ts = targets();
 		if (!ts.length) return;
 		const isOut = ['archive', 'trash', 'delete', 'spam', 'move', 'snooze'].includes(action);
+		const willClear = isOut && view === 'inbox' && ts.length >= docs.length;
+		if (willClear) pendingClear = Date.now();
 		await actions.apply(ts, action, opts);
 		clearSelection();
 		// Auto-advance past a removed cursor thread.
@@ -916,6 +943,8 @@
 			{cursor}
 			{selected}
 			{density}
+			{view}
+			celebrate={clearedByAction}
 			leaving={actions.leaving}
 			loading={results.loading}
 			onOpen={(i) => {

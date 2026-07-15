@@ -29,6 +29,11 @@
 		selecting?: boolean;
 		/** Rows playing their exit animation (archived/trashed, about to leave). */
 		leaving?: Set<string>;
+		/** The current view — drives the per-folder empty-state copy. */
+		view?: string;
+		/** The user just cleared the last inbox thread THIS session — the empty
+		 *  state earns a small ceremony instead of appearing cold. */
+		celebrate?: boolean;
 	}
 	let {
 		docs,
@@ -44,7 +49,27 @@
 		onLongPress,
 		selecting = false,
 		leaving = new Set(),
+		view = 'inbox',
+		celebrate = false,
 	}: Props = $props();
+
+	// Ten minutes of copywriting is the cheapest personality an app can buy.
+	const EMPTY_COPY: Record<string, { title: string; sub: string }> = {
+		inbox: { title: 'Inbox zero', sub: 'Nothing needs you.' },
+		filtered: { title: 'The filter is holding', sub: 'Nothing quarantined for review.' },
+		starred: { title: 'No stars', sub: 'Press s on anything worth keeping close.' },
+		snoozed: { title: 'Nothing sleeping', sub: 'b snoozes a thread until it matters.' },
+		sent: { title: 'Nothing sent yet', sub: 'c starts a message.' },
+		drafts: { title: 'Nothing half-written', sub: 'Drafts autosave as you type.' },
+		archive: { title: 'The archive is empty', sub: 'e files things away, out of sight.' },
+		spam: { title: 'No spam', sub: 'As it should be.' },
+		trash: { title: 'Empty', sub: 'As it should be.' },
+		search: { title: 'No matches', sub: 'Try from:, has:attachment, is:unread…' },
+	};
+	const empty = $derived(EMPTY_COPY[view] ?? { title: 'All clear', sub: 'Nothing here right now.' });
+	// A quiet moment of ceremony for the celebratory case only.
+	const ZERO_LINES = ['All clear.', 'Nothing needs you.', 'Enjoy the quiet.', 'Go touch grass.'];
+	const zeroLine = ZERO_LINES[new Date().getDate() % ZERO_LINES.length];
 
 	// --- touch gestures (mobile): swipe-to-act + long-press-to-select ---
 	// One gesture at a time. Its axis is decided by the FIRST dominant movement:
@@ -284,15 +309,27 @@
 		</div>
 	</div>
 	{#if total === 0}
-		<div class="empty">
-			{#if loading}
-				<span class="empty-title">Loading…</span>
-			{:else}
+		{#if loading}
+			<!-- Skeleton rows, not a string: the shape of the list arrives before
+			     its content, so the paint never "jumps" from a label to rows. -->
+			<div class="skeleton-rows" aria-hidden="true">
+				{#each { length: 6 } as _, i (i)}
+					<div class="sk-row" style:height="{ROW_H}px" style:opacity={1 - i * 0.13}>
+						<span class="sk-avatar"></span>
+						<span class="sk-lines">
+							<span class="sk-bar" style:width="{38 + ((i * 13) % 28)}%"></span>
+							<span class="sk-bar dim" style:width="{58 + ((i * 19) % 34)}%"></span>
+						</span>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<div class="empty" class:celebrate>
 				<span class="empty-mark" aria-hidden="true"><Icon name="sparkles" size={34} stroke={1.5} /></span>
-				<span class="empty-title">All clear</span>
-				<span class="empty-sub">Nothing here right now.</span>
-			{/if}
-		</div>
+				<span class="empty-title">{celebrate ? zeroLine : empty.title}</span>
+				<span class="empty-sub">{celebrate ? 'Inbox zero — you earned it.' : empty.sub}</span>
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -565,6 +602,89 @@
 	.empty-mark {
 		display: inline-flex;
 		color: var(--color-primary);
+		opacity: 0.6;
+	}
+	/* The inbox-zero ceremony: only when the LAST inbox thread was cleared this
+	   session — never on a cold load. A barely-there radial wash blooms and the
+	   sparkles pop once. Earned, then quiet. */
+	.empty.celebrate::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: radial-gradient(
+			circle at 50% 42%,
+			color-mix(in oklab, var(--color-primary) 10%, transparent),
+			transparent 55%
+		);
+		animation: zero-wash 900ms var(--ease-out, ease) both;
+		pointer-events: none;
+	}
+	.empty.celebrate .empty-mark {
+		opacity: 1;
+		animation: zero-pop 500ms var(--ease-spring, cubic-bezier(0.2, 1.4, 0.4, 1)) both;
+	}
+	.empty.celebrate .empty-title {
+		color: var(--color-text);
+	}
+	@keyframes zero-pop {
+		from {
+			transform: scale(0.4) rotate(-12deg);
+			opacity: 0;
+		}
+		to {
+			transform: scale(1) rotate(0);
+			opacity: 1;
+		}
+	}
+	@keyframes zero-wash {
+		from {
+			opacity: 0;
+		}
+		30% {
+			opacity: 1;
+		}
+		to {
+			opacity: 0.5;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.empty.celebrate::before,
+		.empty.celebrate .empty-mark {
+			animation: none;
+		}
+	}
+
+	/* Loading skeleton rows */
+	.skeleton-rows {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+	}
+	.sk-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		padding: 0 var(--space-3);
+	}
+	.sk-avatar {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		background: var(--color-bg-3, var(--color-bg-2));
+		flex-shrink: 0;
+	}
+	.sk-lines {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+	}
+	.sk-bar {
+		height: 0.7em;
+		border-radius: var(--radius-sm, 4px);
+		background: var(--color-bg-3, var(--color-bg-2));
+	}
+	.sk-bar.dim {
 		opacity: 0.6;
 	}
 	.empty-title {

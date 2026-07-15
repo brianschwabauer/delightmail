@@ -21,6 +21,7 @@ import { toast } from '@delightstack/components';
 import type { Thread } from '$lib/schema';
 import type { MailDatabaseClient } from '$lib/clients';
 import { computeThreadPatch, type ThreadActionName, type ThreadStateForAction } from './actions';
+import { playTick } from './sound';
 
 const OVERLAY_TTL = 4000;
 
@@ -81,6 +82,11 @@ export class ActionManager {
 			!patch.hard_delete &&
 			patch.provider_op !== 'read' &&
 			patch.provider_op !== 'unread';
+
+		// Opt-in tactile tick, exactly at the keypress (Settings › Appearance).
+		if (action === 'archive' || action === 'trash') {
+			playTick(action === 'trash' ? 'trash' : 'archive');
+		}
 
 		// Fire the authoritative call immediately (provider write-back +
 		// per-message fields) — the exit animation must never delay it.
