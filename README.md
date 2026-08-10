@@ -82,7 +82,7 @@ wrangler kv namespace create CACHE     # put the id in both wrangler configs
 # set your hostname in wrangler.jsonc (route + PUBLIC_APP_URL)
 pnpm run secrets secrets.env           # JWT / encryption key / OWNER_EMAIL / …
 
-wrangler deploy --config server/wrangler.toml   # the server worker, FIRST
+wrangler deploy --config server/wrangler.jsonc   # the server worker, FIRST
 pnpm build && wrangler deploy                    # then the app
 ```
 

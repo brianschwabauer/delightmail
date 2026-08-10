@@ -57,7 +57,7 @@ for (const req of REQUIRED) {
 
 const targets = [
 	{ label: 'app', args: [] },
-	{ label: 'server', args: ['--config', 'server/wrangler.toml'] },
+	{ label: 'server', args: ['--config', 'server/wrangler.jsonc'] },
 ];
 
 for (const [key, value] of entries) {

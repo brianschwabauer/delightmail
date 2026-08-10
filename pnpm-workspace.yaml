@@ -1,3 +1,9 @@
+# This repo is a single package; the file exists for the pnpm settings below.
+# pnpm 10 (Cloudflare Builds' default) hard-errors on a workspace file with no
+# `packages` field, so declare the root explicitly.
+packages:
+  - "."
+
 allowBuilds:
   core-js-pure: false
   esbuild: true

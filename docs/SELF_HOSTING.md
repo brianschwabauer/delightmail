@@ -30,7 +30,7 @@ wrangler kv namespace create CACHE      # copy the id into BOTH wrangler configs
 ```
 
 Put the KV namespace id in `wrangler.jsonc` (`kv_namespaces`) and
-`server/wrangler.toml` (`[[kv_namespaces]]`), replacing `REPLACE_WITH_KV_NAMESPACE_ID`.
+`server/wrangler.jsonc` (`kv_namespaces`), replacing `REPLACE_WITH_KV_NAMESPACE_ID`.
 
 Then set your own hostname in `wrangler.jsonc` — both the `routes` pattern and
 `PUBLIC_APP_URL` (they must match; magic links, the Gmail OAuth redirect URI, and
@@ -70,7 +70,7 @@ first:
 # The server MUST be deployed with an explicit --config: wrangler's autoconfig
 # otherwise walks up and picks the root app config (wrangler.jsonc), deploying
 # the wrong worker under the wrong name.
-wrangler deploy --config server/wrangler.toml   # delightmail-server, FIRST
+wrangler deploy --config server/wrangler.jsonc   # delightmail-server, FIRST
 pnpm build && wrangler deploy                    # then delightmail (the app)
 ```
 

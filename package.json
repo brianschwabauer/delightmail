@@ -5,9 +5,10 @@
 	"type": "module",
 	"license": "MIT",
 	"private": true,
+	"packageManager": "pnpm@11.3.0",
 	"scripts": {
 		"dev": "vite dev --port 5174",
-		"dev:worker": "cd server && wrangler dev --config wrangler.toml --persist-to ./../.wrangler/state",
+		"dev:worker": "cd server && wrangler dev --config wrangler.jsonc --persist-to ./../.wrangler/state",
 		"build": "vite build",
 		"preview": "vite preview",
 		"deploy": "wrangler deploy",

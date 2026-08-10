@@ -4,8 +4,8 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"deploy": "wrangler deploy --config wrangler.toml",
-		"dev": "wrangler dev --config wrangler.toml --persist-to ./../.wrangler/state"
+		"deploy": "wrangler deploy --config wrangler.jsonc",
+		"dev": "wrangler dev --config wrangler.jsonc --persist-to ./../.wrangler/state"
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20260401.1",

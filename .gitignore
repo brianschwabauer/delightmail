@@ -13,7 +13,7 @@ TODO.md
 # Private deploy configs — the committed wrangler configs carry placeholders, so
 # a real hostname / KV namespace id never lands in the public repo.
 wrangler.prod.jsonc
-server/wrangler.prod.toml
+server/wrangler.prod.jsonc
 .wrangler
 /.turbo
 *.log
