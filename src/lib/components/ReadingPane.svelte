@@ -57,7 +57,48 @@
 		limit: 200,
 	}));
 
-	const docs = $derived(threadId ? ((messages.docs ?? []) as Message[]) : []);
+	// Server fallback for the open thread. In client search mode the reactive
+	// query above only sees the locally-synced window — a thread older than the
+	// backfill's progress answers EMPTY even though it exists, so the reader sat
+	// on its skeleton forever ("the body sometimes doesn't load"). When the local
+	// query settles empty, fetch the thread's messages from the server one-shot.
+	let fallbackDocs = $state<Message[]>([]);
+	let fallbackThread = $state<string | null>(null);
+	$effect(() => {
+		const tid = threadId;
+		if (!tid || messages.loading || messages.searching) return;
+		if ((messages.docs ?? []).length > 0) return;
+		if (untrack(() => fallbackThread) === tid) return;
+		untrack(() => {
+			fallbackThread = tid;
+			fallbackDocs = [];
+			void loadFallback(tid);
+		});
+	});
+	async function loadFallback(tid: string) {
+		try {
+			const res = (await db.list('message', {
+				where: { thread_id: tid },
+				order: [{ key: 'date', direction: 'ASC' }],
+				sparse: false,
+				limit: 200,
+			} as never)) as unknown as { hits?: Array<{ document?: Message }> };
+			const rows = (res.hits ?? [])
+				.map((h) => h.document)
+				.filter((m): m is Message => m != null);
+			// The user may have moved on while the fetch was in flight.
+			if (fallbackThread === tid) fallbackDocs = rows;
+		} catch {
+			/* offline / server error — the skeleton stays, same as before */
+		}
+	}
+
+	const docs = $derived.by(() => {
+		if (!threadId) return [];
+		const local = (messages.docs ?? []) as Message[];
+		if (local.length) return local;
+		return fallbackThread === threadId ? fallbackDocs : [];
+	});
 
 	// Attachment chips for every message in the open thread (one live query;
 	// filename/mime/size are all in the local index so this renders instantly,

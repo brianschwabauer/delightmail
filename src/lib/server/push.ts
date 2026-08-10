@@ -31,11 +31,12 @@ export async function handlePushSubscribe(event: RequestEvent): Promise<Response
 		return DelightError.badRequest('Invalid subscription').toResponse();
 	}
 
-	// Upsert on endpoint (unique).
-	const [existing] = await listDocs<{ id: string }>(db, 'push_subscription', {
-		where: { endpoint: body.endpoint },
-		limit: 1,
-	});
+	// Upsert on endpoint (unique). No `where`: endpoint is `.indexable()` but not
+	// `.searchable()`, so the DO's list() rejects it as an unknown filter property —
+	// filter the (small, per-mailbox) list in JS.
+	const existing = (
+		await listDocs<{ id: string; endpoint?: string }>(db, 'push_subscription', { limit: 100 })
+	).find((s) => s.endpoint === body.endpoint);
 	if (existing) return Response.json({ ok: true, id: existing.id });
 	const row = await db.create('push_subscription', {
 		endpoint: body.endpoint,
@@ -52,10 +53,9 @@ export async function handlePushUnsubscribe(event: RequestEvent): Promise<Respon
 	if (!db) return DelightError.badRequest('No mailbox').toResponse();
 	const body = (await event.request.json().catch(() => null)) as { endpoint?: string } | null;
 	if (!body?.endpoint) return DelightError.badRequest('Missing endpoint').toResponse();
-	const [existing] = await listDocs<{ id: string }>(db, 'push_subscription', {
-		where: { endpoint: body.endpoint },
-		limit: 1,
-	});
+	const existing = (
+		await listDocs<{ id: string; endpoint?: string }>(db, 'push_subscription', { limit: 100 })
+	).find((s) => s.endpoint === body.endpoint);
 	if (existing) await db.delete('push_subscription', existing.id);
 	return Response.json({ ok: true });
 }

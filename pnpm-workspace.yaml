@@ -1,12 +1,3 @@
-# TEMPORARY: sync-durability fixes (silent client-index doc loss) are vendored
-# as tarballs (pnpm pack of the local delightstack checkout) until
-# @delightstack/database + websocket publish the next patch release. After
-# `pnpm changeset publish` in the delightstack repo: delete these overrides and
-# the vendor/ directory, then `pnpm install`.
-overrides:
-  "@delightstack/database": "file:./vendor/delightstack-database.tgz"
-  "@delightstack/websocket": "file:./vendor/delightstack-websocket.tgz"
-
 allowBuilds:
   core-js-pure: false
   esbuild: true

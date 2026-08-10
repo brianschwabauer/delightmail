@@ -565,7 +565,9 @@ function rejectClientWrite(): never {
 // 5. AI — /api/ai/* (streaming summaries / smart replies), org-authorized
 // ---------------------------------------------------------------------------
 const aiHandle = createAiHandle({
-	getAi: (event) => (event.locals.db as unknown as { ai?: never })?.ai,
+	// The handle's event is typed as the library's minimal RequestEventLike
+	// (locals: { session?: unknown }), so reach for db through a cast.
+	getAi: (event) => (event.locals as { db?: { ai?: never } }).db?.ai,
 	authorize: (event) => !!event.locals.session,
 });
 

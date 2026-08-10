@@ -144,12 +144,14 @@ export async function handleGoogleCallback(event: RequestEvent): Promise<Respons
 	// Ensure a default identity exists — but only one. Reconnecting an expired
 	// account re-runs this callback; unconditionally creating minted a duplicate
 	// identity (including a second is_default) on every reconnect.
-	const identities = await listDocs<{ email?: string }>(db, 'identity', {
-		where: { account_id: { eq: account_id } },
+	// No `where` here: identity.account_id isn't `.searchable()`, so the DO's
+	// list() rejects it as an unknown filter property — filter the (tiny) list in JS.
+	const identities = await listDocs<{ email?: string; account_id?: string }>(db, 'identity', {
 		limit: 100,
 	});
 	const hasIdentity = identities.some(
-		(i) => (i.email ?? '').toLowerCase() === email.toLowerCase(),
+		(i) =>
+			i.account_id === account_id && (i.email ?? '').toLowerCase() === email.toLowerCase(),
 	);
 	if (!hasIdentity) {
 		await db.create('identity', {

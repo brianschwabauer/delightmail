@@ -118,7 +118,11 @@ export const threadTable = Database.table('thread', (s) => ({
 	subject: s.string().searchable(),
 	// Re:/Fwd:/[list]-stripped, lowercased subject — the threading match key.
 	subject_normalized: s.string().optional().indexable(),
-	snippet: s.string().optional(),
+	// searchable so it enters the Orama index: sparse docs (client index + server
+	// search hits) are index projections, so a non-indexed snippet NEVER reached
+	// the thread list — rows rendered without preview text. Searching snippets is
+	// a bonus (matches how Gmail treats them).
+	snippet: s.string().searchable().optional(),
 	participants: s.array(s.object(addressShape(s))).optional(),
 	participant_text: s.string().searchable().optional(),
 	account_ids: s.array(s.string()).searchable().optional(),
