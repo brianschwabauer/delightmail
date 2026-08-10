@@ -8,7 +8,7 @@
 	import { viewToQuery, viewTitle, folderOfView } from '$lib/mail/views';
 	import { parseSearchInput } from '$lib/mail/search-operators';
 	import { snoozeOptions, fmtWake } from '$lib/mail/snooze';
-	import { currentDensity, type Density } from '$lib/theme';
+	import { currentDensity, resolvedScheme, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
 	import { useScope } from '$lib/mail/scope.svelte';
@@ -304,6 +304,57 @@
 			openId = id;
 		}, PREVIEW_SETTLE_MS);
 	}
+	// Boot preview: on first load the reader rendered the cursor thread's instant
+	// header (previewThread) but nothing ever committed `openId` — previewCursor()
+	// only runs on cursor MOVES — so the first email sat on its body skeleton
+	// forever until an explicit click. Once the list first has docs, commit the
+	// cursor thread as a preview. One-shot: after boot, a null openId is a
+	// deliberate state (Escape closes the reader) and must stay closed.
+	// Focus stays in the list, so this never marks the thread read.
+	let bootPreviewed = false;
+	$effect(() => {
+		if (bootPreviewed || !docs.length) return;
+		untrack(() => {
+			bootPreviewed = true;
+			if (isMobile.current || openId || deepLinkPending) return;
+			const t = docs[cursor] ?? docs[0];
+			if (t) commit(String(t.id));
+		});
+	});
+
+	// Body prefetch: opening a thread used to pay its whole chain on click — the
+	// local message query, THEN the iframe's network fetch (KV-cold that means a
+	// MailboxServer DO wake + an R2 read). Bodies are immutable (max-age=1y), so
+	// warming the top threads' latest bodies right after the list loads turns the
+	// reader's iframe load into a disk-cache hit — and warms the server's KV body
+	// cache for everything else. Serial and low-priority so it never competes
+	// with an actual open.
+	const PREFETCH_COUNT = 8;
+	const prefetched = new Set<string>();
+	$effect(() => {
+		const top = docs.slice(0, PREFETCH_COUNT).map((t) => String(t.id));
+		untrack(() => {
+			if (!top.length || isMobile.current) return;
+			void prefetchBodies(top);
+		});
+	});
+	async function prefetchBodies(thread_ids: string[]) {
+		for (const tid of thread_ids) {
+			if (prefetched.has(tid)) continue;
+			prefetched.add(tid);
+			// Latest message only — that's the one the reader expands.
+			const m = await latestMessage(tid);
+			if (!m?.id) continue;
+			// EXACTLY the iframe's URL (scheme included) so the cache key matches.
+			const url = `/api/messages/${encodeURIComponent(String(m.id))}/body?scheme=${resolvedScheme()}`;
+			try {
+				await fetch(url, { priority: 'low' } as RequestInit);
+			} catch {
+				/* prefetch is best-effort; the iframe fetch remains the source of truth */
+			}
+		}
+	}
+
 	/** Plain page move / next-thread step — clamps at the ends (no wrap). */
 	function move(delta: number) {
 		if (!docs.length) return;
