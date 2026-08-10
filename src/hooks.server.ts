@@ -576,6 +576,26 @@ const aiHandle = createAiHandle({
 // ---------------------------------------------------------------------------
 const mailHandle = createMailHandle();
 
+// Settings singleton: the generic CRUD get throws before the row exists, and
+// the DO's 404 loses its status across the RPC boundary — so a fresh mailbox
+// answered EVERY app load's GET /api/settings/main with a 500. Route the read
+// through ensureSettings (creates the row on first use) ahead of the generic
+// database handle.
+const settingsHandle: Handle = async ({ event, resolve }) => {
+	if (event.url.pathname !== '/api/settings/main' || event.request.method !== 'GET') {
+		return resolve(event);
+	}
+	if (!event.locals.session) return DelightError.unauthorized('Sign in required').toResponse();
+	if (!event.locals.db) {
+		return DelightError.badRequest('No mailbox for this session').toResponse();
+	}
+	try {
+		return Response.json(await event.locals.db.ensureSettings());
+	} catch (err) {
+		return DelightError.from(err).toResponse();
+	}
+};
+
 // The delightstack factory handles are typed against their own bundled
 // @sveltejs/kit; cast to the local Handle so sequence() accepts them (they are
 // structurally identical at runtime).
@@ -587,6 +607,7 @@ export const handle = sequence(
 	orgHandle,
 	appHandle,
 	websocketHandle as unknown as Handle,
+	settingsHandle,
 	databaseHandle as unknown as Handle,
 	aiHandle as unknown as Handle,
 	mailHandle,
