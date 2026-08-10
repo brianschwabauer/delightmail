@@ -473,8 +473,13 @@ interface DbLite extends ListableDb {
 }
 
 async function findAccountByEmail(db: DbLite, email: string): Promise<unknown | undefined> {
-	const [account] = await listDocs<unknown>(db, 'account', { where: { email }, limit: 1 });
-	return account;
+	// EXACT match in JS — never an Orama `where` on a searchable string: those are
+	// token-based, so `brian@brianschwabauer.com` matched `brianschwabauer1@gmail.com`
+	// (shared token) and the OAuth callback "reused" the wrong account — attaching the
+	// new identity to it and overwriting its SyncEngine credentials with the other
+	// mailbox's refresh token.
+	const accounts = await listDocs<{ email?: string }>(db, 'account', { limit: 100 });
+	return accounts.find((a) => (a.email ?? '').toLowerCase() === email.toLowerCase());
 }
 
 async function accountCount(db: DbLite): Promise<number> {

@@ -946,7 +946,7 @@
 			{view}
 			celebrate={clearedByAction}
 			leaving={actions.leaving}
-			loading={results.loading}
+			loading={results.loading || (docs.length === 0 && !db.synced)}
 			onOpen={(i) => {
 				cursor = i;
 				openCursor();

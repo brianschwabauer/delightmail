@@ -190,6 +190,10 @@
 			</li>
 		{/each}
 	</ul>
+{:else if !db.synced}
+	<!-- The local index answers instantly with zero rows before the initial sync
+	     lands — "no accounts" is only a fact once the sync has completed. -->
+	<div class="empty"><p class="muted">Loading accounts…</p></div>
 {:else}
 	<div class="empty"><p class="muted">No accounts connected yet.</p></div>
 {/if}
