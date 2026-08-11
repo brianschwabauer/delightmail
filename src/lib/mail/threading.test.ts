@@ -150,6 +150,68 @@ describe('resolveThread', () => {
 		expect(res.thread_id).toBeUndefined();
 	});
 
+	it('does NOT subject-merge when Gmail already decided this is a new thread', () => {
+		// Gmail supplied a threadId that matched no local thread → the provider
+		// says "new conversation"; a same-subject candidate must not override it
+		// (distinct GitHub/npm notifications share normalized subjects).
+		const candidate: ThreadCandidate = {
+			id: 'thread-8',
+			subject_normalized: 'run failed: ci',
+			participant_emails: ['notifications@github.com'],
+			last_message_at: 1_000_000,
+		};
+		const res = resolveThread(
+			{
+				gmail_thread_id: 'g-unseen',
+				subject: 'Run failed: CI',
+				participant_emails: ['notifications@github.com', 'me@gmail.com'],
+				date: 1_000_100,
+			},
+			lookups({ bySubject: () => [candidate] }),
+		);
+		expect(res.reason).toBe('new');
+	});
+
+	it('ignores the user\'s own address in the participant-overlap test', () => {
+		// The user is on EVERY message; counting them made the overlap guard
+		// vacuous — same subject + only the user in common must NOT merge.
+		const candidate: ThreadCandidate = {
+			id: 'thread-9',
+			subject_normalized: 'release v1.2.3',
+			participant_emails: ['bot-a@service-a.com', 'me@mydomain.com'],
+			last_message_at: 1_000_000,
+		};
+		const res = resolveThread(
+			{
+				subject: 'Release v1.2.3',
+				participant_emails: ['bot-b@service-b.com', 'me@mydomain.com'],
+				self_emails: ['me@mydomain.com'],
+				date: 1_000_100,
+			},
+			lookups({ bySubject: () => [candidate] }),
+		);
+		expect(res.reason).toBe('new');
+	});
+
+	it('still subject-merges when a real (non-self) participant overlaps', () => {
+		const candidate: ThreadCandidate = {
+			id: 'thread-10',
+			subject_normalized: 'quarterly plan',
+			participant_emails: ['sarah@example.com', 'me@mydomain.com'],
+			last_message_at: 1_000_000,
+		};
+		const res = resolveThread(
+			{
+				subject: 'Re: Quarterly plan',
+				participant_emails: ['sarah@example.com', 'me@mydomain.com'],
+				self_emails: ['me@mydomain.com'],
+				date: 1_000_100,
+			},
+			lookups({ bySubject: () => [candidate] }),
+		);
+		expect(res).toMatchObject({ thread_id: 'thread-10', reason: 'subject' });
+	});
+
 	it('picks the most recent candidate when several match', () => {
 		const candidates: ThreadCandidate[] = [
 			{ id: 'old', subject_normalized: 'hi', participant_emails: ['a@x'], last_message_at: 100 },

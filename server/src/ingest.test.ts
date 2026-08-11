@@ -203,6 +203,53 @@ describe('ingestBatch', () => {
 		expect(Object.keys(threads)).toHaveLength(1);
 	});
 
+	it('wakes a trashed/spammed/quarantined thread when new inbox mail arrives on it', () => {
+		for (const parked of ['trash', 'spam', 'quarantine', 'archive', 'snoozed']) {
+			const { db, threads } = fakeDb();
+			ingestBatch(db, [
+				msg({
+					rfc822_message_id: `<${parked}-1@x>`,
+					gmail_thread_id: 'T1',
+					provider_ids: { gmail_thread_id: 'T1' },
+				}),
+			]);
+			const tid = Object.keys(threads)[0];
+			db.update('thread', tid, { folder: parked });
+			ingestBatch(db, [
+				msg({
+					rfc822_message_id: `<${parked}-2@x>`,
+					gmail_thread_id: 'T1',
+					provider_ids: { gmail_thread_id: 'T1' },
+					date: 1_000_500,
+				}),
+			]);
+			expect(threads[tid].folder, `waking from ${parked}`).toBe('inbox');
+		}
+	});
+
+	it('does not wake a parked thread for a message that itself lands outside the inbox', () => {
+		const { db, threads } = fakeDb();
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<pk1@x>',
+				gmail_thread_id: 'T1',
+				provider_ids: { gmail_thread_id: 'T1' },
+			}),
+		]);
+		const tid = Object.keys(threads)[0];
+		db.update('thread', tid, { folder: 'trash' });
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<pk2@x>',
+				gmail_thread_id: 'T1',
+				provider_ids: { gmail_thread_id: 'T1' },
+				folder: 'spam',
+				date: 1_000_500,
+			}),
+		]);
+		expect(threads[tid].folder).toBe('trash');
+	});
+
 	it('increments unread_count only for unread inbound messages', () => {
 		const { db, threads } = fakeDb();
 		ingestBatch(db, [msg({ rfc822_message_id: '<u1@x>', is_read: false })]);

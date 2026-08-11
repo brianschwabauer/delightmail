@@ -759,6 +759,47 @@
 		});
 	});
 
+	/** Where focus should land after a removal: the cursor thread itself when it
+	 *  survives the action (its index just shifts up), otherwise the next
+	 *  surviving thread below the cursor (falling back to the nearest one above).
+	 *  Computed BEFORE the optimistic patch, by id — the list reindexes
+	 *  asynchronously, so an index alone would drift. */
+	function postRemovalFocusId(removed: Set<string>): string | null {
+		const cur = docs[cursor];
+		if (cur && !removed.has(String(cur.id))) return String(cur.id);
+		for (let i = cursor + 1; i < docs.length; i++) {
+			const id = String(docs[i].id);
+			if (!removed.has(id)) return id;
+		}
+		for (let i = Math.min(cursor, docs.length - 1); i >= 0; i--) {
+			const id = String(docs[i].id);
+			if (!removed.has(id)) return id;
+		}
+		return null;
+	}
+	/** A focus re-anchor waiting for the removed rows to actually leave `docs`. */
+	let pendingFocus = $state<{ id: string | null; removed: Set<string>; at: number } | null>(null);
+	$effect(() => {
+		void docs;
+		untrack(() => {
+			if (!pendingFocus) return;
+			const { id, removed, at } = pendingFocus;
+			// Expire instead of pinning forever — a rolled-back action leaves the
+			// "removed" rows in place, and later list changes (new mail) must not
+			// yank the cursor back to a stale anchor.
+			if (Date.now() - at > 3000) {
+				pendingFocus = null;
+				return;
+			}
+			if (id) {
+				const i = docs.findIndex((d) => String(d.id) === id);
+				if (i >= 0) cursor = i;
+			}
+			// Done once the acted-on rows have left the list.
+			if (!docs.some((d) => removed.has(String(d.id)))) pendingFocus = null;
+		});
+	});
+
 	async function act(
 		action: ThreadActionName,
 		opts: { folder?: string; snooze_until?: number; animate?: boolean } = {},
@@ -766,14 +807,18 @@
 		const ts = targets();
 		if (!ts.length) return;
 		const isOut = ['archive', 'trash', 'delete', 'spam', 'move', 'snooze'].includes(action);
+		const removedIds = new Set(ts.map((t) => String(t.id)));
+		const focusId = isOut ? postRemovalFocusId(removedIds) : null;
 		const willClear = isOut && view === 'inbox' && ts.length >= docs.length;
 		if (willClear) pendingClear = Date.now();
 		await actions.apply(ts, action, opts);
 		clearSelection();
-		// Auto-advance past a removed cursor thread.
+		// Keep focus anchored: same thread if it survived, else the next in the list.
 		if (isOut) {
 			const removedOpen = !!openId && ts.some((t) => String(t.id) === openId);
-			cursor = Math.min(cursor, Math.max(0, docs.length - 1));
+			pendingFocus = { id: focusId, removed: removedIds, at: Date.now() };
+			const i = focusId ? docs.findIndex((d) => String(d.id) === focusId) : -1;
+			cursor = i >= 0 ? i : Math.min(cursor, Math.max(0, docs.length - 1));
 			// If the thread being read was archived/trashed, slide the reader onto the
 			// thread now under the cursor (previewed instantly, body settles in) rather
 			// than dropping to an empty pane.

@@ -121,6 +121,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 				references: msg.references,
 				subject: msg.subject,
 				participant_emails,
+				self_emails: msg.identity_email ? [msg.identity_email] : [],
 				date: msg.date,
 			},
 			lookups,
@@ -359,10 +360,20 @@ function updateThreadCounters(
 	const mergedParticipants = dedupeAddresses([...(thread.participants ?? []), ...participants]);
 	const accountIds = new Set([...(thread.account_ids ?? []), msg.account_id]);
 	const inbound = !msg.is_outbound;
-	const wasAsleep = thread.folder === 'archive' || thread.folder === 'snoozed';
+	// Any parked thread wakes — not just archive/snoozed. A thread sitting in
+	// trash, spam, or AI quarantine otherwise swallows every future inbound
+	// message silently: the message row lands with folder inbox, but the UI
+	// lists THREADS by folder, so it's invisible everywhere (GitHub sends one
+	// long-lived thread per issue — trash it once and the issue goes dark).
+	const wasAsleep =
+		thread.folder === 'archive' ||
+		thread.folder === 'snoozed' ||
+		thread.folder === 'trash' ||
+		thread.folder === 'spam' ||
+		thread.folder === 'quarantine';
 
-	// A new inbound message promotes an archived OR snoozed thread back to
-	// inbox — a reply is exactly what a snooze is waiting for.
+	// A new inbound message promotes a parked thread back to inbox — a reply is
+	// exactly what a snooze is waiting for.
 	const wakes = inbound && wasAsleep && (msg.folder ?? 'inbox') === 'inbox';
 	const nextFolder = wakes ? 'inbox' : thread.folder;
 

@@ -2,7 +2,7 @@
 	import { Avatar, Checkbox } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
-	import { contactAvatarUrl } from '$lib/mail/avatar';
+	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
 	import { threadSenderLabel, threadParticipants } from '$lib/mail/participants';
 	import { useScope } from '$lib/mail/scope.svelte';
 	import type { Thread } from '$lib/schema';
@@ -218,7 +218,7 @@
 	// participants[0] is the message's `from` (ingest pushes it first), so it's
 	// the sender whose favicon/Gravatar we want on the row.
 	function senderAvatar(t: Thread): string | undefined {
-		return contactAvatarUrl(threadParticipants(t)[0]?.email ?? undefined);
+		return verifiedAvatarUrl(threadParticipants(t)[0]?.email ?? undefined);
 	}
 </script>
 
@@ -335,6 +335,10 @@
 
 <style>
 	.viewport {
+		/* Containing block for the absolutely-positioned skeleton/empty states —
+		   without it they resolve against the whole pane and paint over the list
+		   header (visible on SSR, where the skeleton shows first). */
+		position: relative;
 		height: 100%;
 		overflow-y: auto;
 		overscroll-behavior-y: contain;

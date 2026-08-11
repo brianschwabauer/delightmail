@@ -149,9 +149,13 @@ export class GmailClient {
 	}
 
 	watch(topicName: string): Promise<{ historyId: string; expiration: string }> {
+		// No labelIds filter: an INBOX-only watch never fires for mail that a
+		// Gmail filter files past the inbox ("Skip the Inbox" on GitHub/npm
+		// notifications is common) — history_sync then never runs and that mail
+		// simply never syncs. Watch everything; history_sync sorts out folders.
 		return this.call('/watch', {
 			method: 'POST',
-			body: JSON.stringify({ topicName, labelIds: ['INBOX'] }),
+			body: JSON.stringify({ topicName }),
 		});
 	}
 

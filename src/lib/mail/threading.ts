@@ -50,6 +50,11 @@ export interface ResolveThreadInput {
 	references?: string[];
 	subject?: string;
 	participant_emails: string[];
+	/** The user's own address(es) on this account. Excluded from the subject
+	 *  fallback's participant-overlap test — the user is on EVERY message, so
+	 *  counting them makes the guard vacuous and merges unrelated mail that
+	 *  happens to share a subject (GitHub "Run failed: CI" across repos). */
+	self_emails?: string[];
 	date: number;
 }
 
@@ -96,8 +101,15 @@ export function resolveThread(
 	}
 
 	// 3. Subject + overlapping participant within the window.
-	if (subject_normalized) {
-		const incoming = new Set(input.participant_emails.map((e) => e.toLowerCase()));
+	// Skipped when the provider supplied its own thread id that matched nothing:
+	// Gmail already decided this starts a NEW conversation, and overriding that
+	// by subject merges unrelated notification mail (same-subject GitHub/npm
+	// messages across different issues/repos) into one mega-thread.
+	if (subject_normalized && !input.gmail_thread_id) {
+		const self = new Set((input.self_emails ?? []).map((e) => e.toLowerCase()));
+		const incoming = new Set(
+			input.participant_emails.map((e) => e.toLowerCase()).filter((e) => !self.has(e)),
+		);
 		const candidates = lookups.bySubject(subject_normalized);
 		let best: ThreadCandidate | undefined;
 		for (const c of candidates) {

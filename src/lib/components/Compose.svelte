@@ -16,7 +16,7 @@
 	import Icon from './Icon.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Address, Identity } from '$lib/schema';
-	import { contactAvatarUrl } from '$lib/mail/avatar';
+	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
 	import { mergeSignatureDoc, docToText } from '$lib/mail/compose';
 	import { DraftAutosaver } from '$lib/mail/draft-autosave';
 
@@ -535,7 +535,7 @@
      `opt.description` the display name. -->
 {#snippet contactOption(opt: InputOption)}
 	<span class="ac-opt">
-		<Avatar name={opt.description || opt.label} src={contactAvatarUrl(opt.label)} size="0" />
+		<Avatar name={opt.description || opt.label} src={verifiedAvatarUrl(opt.label)} size="0" />
 		<span class="ac-text">
 			{#if opt.description}<span class="ac-name">{opt.description}</span>{/if}
 			<span class="ac-email">{opt.label}</span>

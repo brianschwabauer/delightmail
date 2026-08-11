@@ -87,6 +87,10 @@ const RAW_BATCH = 20; // messages.get chunk size
 // ~20 msg/s throttle (Gmail per-user quota is 250 units/s; messages.get = 5
 // units). Pause this long after each RAW_BATCH so backfill can't outrun it.
 const RAW_BATCH_PAUSE_MS = 1_000;
+/** Slow-poll interval that backstops Gmail push notifications (see
+ *  #scheduleBackstopSync) — cheap (one /history call when idle) but bounds how
+ *  stale a silently-broken push chain can leave the mailbox. */
+const PUSH_BACKSTOP_SYNC_MS = 10 * 60 * 1000;
 function retryBackoffMs(attempts: number): number {
 	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 }
@@ -428,7 +432,23 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		}
 	}
 
+	/** With Pub/Sub configured, history_sync normally runs on pushes — but the
+	 *  push chain has several silent failure modes (rejected webhook, stale KV
+	 *  route, expired watch), and without a backstop those mean NO sync, forever,
+	 *  while the account still reads "live". Keep one slow self-rescheduling
+	 *  poll pending at all times so a broken push chain degrades to delayed
+	 *  sync instead of silence. Deduped: pushes must not stack extra polls. */
+	async #scheduleBackstopSync(): Promise<void> {
+		if (!this.env.GMAIL_PUBSUB_TOPIC) return; // polling mode has its own cadence
+		this.#sql.exec(
+			`DELETE FROM job WHERE type = 'history_sync' AND status = 'pending' AND run_at > ?`,
+			Date.now(),
+		);
+		await this.scheduleJob('history_sync', {}, PUSH_BACKSTOP_SYNC_MS);
+	}
+
 	async #historySync(): Promise<void> {
+		await this.#scheduleBackstopSync();
 		const state = this.#state();
 		if (!state.gmail_history_id) return this.#backfillPage({ page_token: null });
 		const gmail = await this.#gmail();
@@ -506,6 +526,9 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		this.#saveState({ gmail_watch_expiry: Number(res.expiration) });
 		// Re-arm 6 days out (watches expire after 7).
 		await this.scheduleJob('renew_watch', {}, 6 * 24 * 60 * 60 * 1000);
+		// (Re)start the slow polling backstop — also resurrects the chain if a
+		// backstop job ever failed out.
+		await this.#scheduleBackstopSync();
 	}
 
 	// -- send idempotency helpers --

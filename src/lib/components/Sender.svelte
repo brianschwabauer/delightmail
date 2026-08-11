@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Avatar, Popover } from '@delightstack/components';
-	import { contactAvatarUrl } from '$lib/mail/avatar';
+	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
 
 	/** The sender name in a message head, with a hover popover revealing who it
 	 *  actually is — display name plus the real address (selectable, so a
@@ -23,7 +23,7 @@
 		disable_initial_focus
 		hover_delay={250}>
 		<span class="card">
-			<Avatar {name} src={contactAvatarUrl(email)} size="3" />
+			<Avatar {name} src={verifiedAvatarUrl(email)} size="3" />
 			<span class="meta">
 				<span class="name">{name}</span>
 				{#if email}
@@ -40,6 +40,15 @@
 	.from {
 		font-weight: var(--font-weight-semibold, 600);
 		font-size: var(--font-size-0);
+		/* This span is the popover's anchor. As a flex item in the message head's
+		   .meta column it would stretch to the full column width, parking the
+		   popover arrow at the row's center instead of under the name — size it
+		   to its text (ellipsized when the column is narrower). */
+		align-self: flex-start;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.card {
 		display: flex;
