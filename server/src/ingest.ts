@@ -6,6 +6,7 @@
  *
  * The pure threading algorithm lives in src/lib/mail/threading.ts.
  */
+import { z } from 'zod';
 import type { Address } from '../../src/lib/schema';
 import {
 	resolveThread,
@@ -469,6 +470,12 @@ export function maintainContacts(db: DbLike, msg: NormalizedMessage): void {
 function upsertContact(db: DbLike, a: Address, sent: boolean, now: number): void {
 	const email = (a.email ?? '').toLowerCase();
 	if (!email) return;
+	// contact.email is the ONE ingest-written field with `.email()` schema
+	// validation. A malformed address (spam senders, mangled headers) must skip
+	// the contact upsert, not throw — the throw failed the whole ingest batch,
+	// the page retried 7× against the same message, and the backfill then gave
+	// up with all older mail permanently missing ("Field 'email' is invalid").
+	if (!z.email().safeParse(email).success) return;
 	const rows = db.exec(
 		`SELECT id, send_count, receive_count FROM contact WHERE email = ? LIMIT 1`,
 		email,

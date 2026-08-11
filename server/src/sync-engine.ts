@@ -243,6 +243,9 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		await this.scheduleJob('backfill_page', { page_token: null }, 0);
 	}
 	async destroyAccount(): Promise<void> {
+		// deleteAll() does NOT clear the alarm — without deleteAlarm() a removed
+		// account's engine keeps firing as a zombie against empty state.
+		await this.ctx.storage.deleteAlarm();
 		await this.ctx.storage.deleteAll();
 	}
 
@@ -319,7 +322,15 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			.toArray()[0] as unknown as { next: number | null };
 		if (row?.next == null) return;
 		const current = await this.ctx.storage.getAlarm();
-		if (current == null || row.next < current) await this.ctx.storage.setAlarm(row.next);
+		// Re-set not only when the new job is earlier, but ALSO when the stored
+		// alarm is already in the past: after the runtime abandons an alarm whose
+		// handler kept crashing (e.g. OOM isolate resets), getAlarm() still
+		// returns that stale past timestamp — the old `next < current` test was
+		// then always false, so every scheduleJob silently failed to arm and the
+		// engine slept forever while its RPCs kept answering fine.
+		if (current == null || row.next < current || current <= Date.now()) {
+			await this.ctx.storage.setAlarm(row.next);
+		}
 	}
 
 	async alarm(): Promise<void> {
@@ -334,6 +345,12 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			if (!job) break;
 
 			try {
+				// Which engine is doing what — DO ids in the tail are opaque, and a
+				// zombie engine (removed account whose alarm survived) looks identical
+				// to a live one without this line.
+				console.log(
+					`[SyncEngine] job ${job.type} account=${this.#state().account_email ?? '(no state)'} attempts=${job.attempts}`,
+				);
 				await this.#runJob(job.type as JobType, safeParse(job.payload));
 				this.#sql.exec(`DELETE FROM job WHERE id = ?`, job.id);
 			} catch (err) {
@@ -401,6 +418,9 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 
 		const list = await gmail.listMessageIds(payload.page_token ?? undefined);
 		const ids = (list.messages ?? []).map((m) => m.id);
+		console.log(
+			`[SyncEngine] backfill ${payload.page_token ? 'page(cont)' : 'page(first)'} account=${state.account_email} ids=${ids.length} ingested_so_far=${state.backfill_ingested ?? 0}`,
+		);
 
 		// Record the total estimate on the first page so progress is real, not 50/100.
 		let total = state.backfill_total;
