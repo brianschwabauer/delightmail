@@ -2,7 +2,7 @@
  * Client-side optimistic action manager ("optimistic everything").
  * Actions apply to the local view within one frame, fire the authoritative
  * /api/threads/actions endpoint (which updates messages + provider write-back),
- * and are reversible via the undo stack (z).
+ * and are reversible via the undo stack (Ctrl+z).
  *
  * Optimism model:
  * - Folder MOVES (archive/trash/spam/move) relocate the thread IN THE LOCAL
@@ -121,7 +121,7 @@ export class ActionManager {
 		// Register undo only after the action actually succeeded, and show
 		// the undo toast the plan requires where undo is possible. The toast's Undo
 		// button reverses THIS entry (not whatever is on top of the stack) — it's
-		// the only undo affordance on touch, where `z` doesn't exist.
+		// the only undo affordance on touch, where `Ctrl+z` doesn’t exist.
 		if (isUndoable(action)) {
 			const restore = async () => {
 				if (movesFolder) for (const [id, s] of prev) this.#moveLocal([id], s.folder);

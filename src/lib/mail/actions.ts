@@ -109,7 +109,7 @@ export function computeThreadPatch(
 	}
 }
 
-/** The inverse patch for undo (z). */
+/** The inverse patch for undo (Ctrl+z). */
 export function invertPatch(before: ThreadStateForAction, patch: ThreadPatch): ThreadPatch {
 	return {
 		folder: patch.folder !== undefined ? before.folder : undefined,

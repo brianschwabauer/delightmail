@@ -7,7 +7,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { viewToQuery, viewTitle, folderOfView } from '$lib/mail/views';
 	import { parseSearchInput } from '$lib/mail/search-operators';
-	import { snoozeOptions, fmtWake } from '$lib/mail/snooze';
+	import SnoozeChordMenu from '$lib/components/SnoozeChordMenu.svelte';
 	import { currentDensity, resolvedScheme, type Density } from '$lib/theme';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
@@ -304,18 +304,37 @@
 			openId = id;
 		}, PREVIEW_SETTLE_MS);
 	}
-	// Boot preview: on first load the reader rendered the cursor thread's instant
-	// header (previewThread) but nothing ever committed `openId` — previewCursor()
-	// only runs on cursor MOVES — so the first email sat on its body skeleton
-	// forever until an explicit click. Once the list first has docs, commit the
-	// cursor thread as a preview. One-shot: after boot, a null openId is a
+	// Auto preview: whenever a view's list (first) becomes available — boot AND
+	// every folder switch — commit the cursor thread as a preview. Without the
+	// per-view reset this only ran once, so switching folders left the reader on
+	// the new first email's skeleton forever (previewCursor() only runs on cursor
+	// MOVES). Within a view it stays one-shot: a null openId after boot is a
 	// deliberate state (Escape closes the reader) and must stay closed.
-	// Focus stays in the list, so this never marks the thread read.
-	let bootPreviewed = false;
+	// The reader only marks-read once the list or reading pane holds focus, so
+	// browsing folders from the rail never silently reads mail.
+	let previewedView: string | null = null;
 	$effect(() => {
-		if (bootPreviewed || !docs.length) return;
+		const v = view;
 		untrack(() => {
-			bootPreviewed = true;
+			if (previewedView === null || previewedView === v) return;
+			// Folder switched: drop the previous folder's open thread and cursor so
+			// the new folder previews from its top row.
+			previewedView = null;
+			cursor = 0;
+			selected = new Set();
+			anchor = null;
+			commit(null);
+		});
+	});
+	$effect(() => {
+		const v = view;
+		// While the search is (re)running, `docs` can still be the PREVIOUS
+		// folder's rows for a beat — committing one of those would preview the
+		// wrong thread, so wait until the new query settles.
+		if (results.loading || results.searching || !docs.length) return;
+		untrack(() => {
+			if (previewedView === v) return;
+			previewedView = v;
 			if (isMobile.current || openId || deepLinkPending) return;
 			const t = docs[cursor] ?? docs[0];
 			if (t) commit(String(t.id));
@@ -552,8 +571,10 @@
 		await act('move', { folder });
 	}
 
-	// b → snooze picker ("boomerang"). The thread hides in Snoozed and the
-	// server's wake job returns it to the inbox at the chosen time.
+	// z → snooze chord menu. The thread hides in Snoozed and the server's wake
+	// job returns it to the inbox at the chosen time. The menu is a which-key
+	// overlay: z z snoozes the default, z 1..6 pick presets — fast chords
+	// resolve before the panel ever paints.
 	function openSnooze() {
 		if (targets().length) snoozing = true;
 	}
@@ -858,7 +879,7 @@
 			{ keys: '!', description: 'Mark spam', group: 'Actions', context: 'list', handler: () => act('spam') },
 			{ keys: 'v', description: 'Move to…', group: 'Actions', context: 'list', handler: openMove },
 			{ keys: 'm', description: 'Move to…', group: 'Actions', context: 'list', handler: openMove },
-			{ keys: 'b', description: 'Snooze…', group: 'Actions', context: 'list', handler: openSnooze },
+			{ keys: 'z', description: 'Snooze… (z z default, z 1–6 presets)', group: 'Actions', context: 'list', handler: openSnooze },
 			{ keys: 'e', description: 'Unsubscribe', group: 'Actions', context: 'list', handler: () => void unsubscribeCursor() },
 			{ keys: 'r', description: 'Reply', group: 'Actions', context: 'list', handler: () => reply('reply') },
 			{ keys: 'R', description: 'Reply all', group: 'Actions', context: 'list', handler: () => reply('reply_all') },
@@ -977,15 +998,10 @@
 		</div>
 	{/if}
 	{#if snoozing}
-		<div class="bar" role="menu" aria-label="Snooze until">
-			<span class="bar-msg"><Icon name="clock" size={14} /> Snooze until</span>
-			{#each snoozeOptions() as o (o.key)}
-				<Button size="0" outline onclick={() => snoozeUntil(o.at)}>
-					{o.label} <span class="wake">{fmtWake(o.at)}</span>
-				</Button>
-			{/each}
-			<Button size="0" transparent onclick={() => (snoozing = false)}><kbd>Esc</kbd></Button>
-		</div>
+		<SnoozeChordMenu
+			count={targets().length}
+			onPick={(at) => void snoozeUntil(at)}
+			onClose={() => (snoozing = false)} />
 	{/if}
 
 	<div class="list-body">
@@ -1039,7 +1055,7 @@
 		threadId={openId}
 		{previewThread}
 		folder={((previewThread?.folder ?? openThread?.folder) as string | undefined) ?? null}
-		markReadActive={focus.is('reading')}
+		markReadActive={focus.is('list') || focus.is('reading')}
 		onDocs={(m) => (openMessages = m)}
 		onReply={reply}
 		onAct={act}
@@ -1192,12 +1208,6 @@
 	.bar-msg {
 		flex: 1;
 		min-width: 0;
-	}
-	.wake {
-		color: var(--color-text-disabled);
-		font-size: 0.72rem;
-		font-variant-numeric: tabular-nums;
-		margin-left: 4px;
 	}
 	.bar.danger {
 		background: var(--color-error-bg, color-mix(in oklab, var(--color-error) 12%, var(--color-bg-2)));

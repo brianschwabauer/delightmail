@@ -152,7 +152,7 @@
 			// a global listener and toggles `paletteOpen`); we only list it for the help
 			// overlay + command palette registry — no handler, so it can't double-fire.
 			{ keys: 'Ctrl+k', description: 'Command palette', group: 'Global', context: 'global', when: () => false, handler: () => {} },
-			{ keys: 'z', description: 'Undo last action', group: 'Global', context: 'global', when: free, handler: () => actions.undo() },
+			{ keys: 'Ctrl+z', description: 'Undo last action', group: 'Global', context: 'global', when: free, handler: () => actions.undo() },
 			{ keys: 'n', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
 			{ keys: 'c', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
 			{ keys: 'g i', description: 'Go to Inbox', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/inbox') },

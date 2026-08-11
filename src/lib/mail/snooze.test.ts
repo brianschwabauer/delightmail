@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { snoozeOptions, fmtWake } from './snooze';
+import { snoozeOptions, snoozeChordOptions, nextWeekdayMorning, fmtWake } from './snooze';
 
 // Tuesday 2026-07-14 10:00 local
 const TUE_MORNING = new Date(2026, 6, 14, 10, 0, 0);
@@ -46,6 +46,53 @@ describe('snoozeOptions', () => {
 		const d = new Date(m.at);
 		expect(d.getDay()).toBe(1);
 		expect(d.getHours()).toBe(8);
+	});
+});
+
+describe('nextWeekdayMorning', () => {
+	it('a Tuesday wakes Wednesday 8:00', () => {
+		const d = new Date(nextWeekdayMorning(TUE_MORNING));
+		expect([d.getDay(), d.getDate(), d.getHours()]).toEqual([3, 15, 8]);
+	});
+	it('a Friday skips the weekend to Monday', () => {
+		const friday = new Date(2026, 6, 17, 10, 0, 0);
+		const d = new Date(nextWeekdayMorning(friday));
+		expect([d.getDay(), d.getDate()]).toEqual([1, 20]);
+	});
+	it('a Saturday wakes Monday', () => {
+		const d = new Date(nextWeekdayMorning(SATURDAY));
+		expect([d.getDay(), d.getDate()]).toEqual([1, 20]);
+	});
+});
+
+describe('snoozeChordOptions', () => {
+	it('always offers the fixed 1–6 keys', () => {
+		for (const base of [TUE_MORNING, TUE_NIGHT, SATURDAY]) {
+			expect(snoozeChordOptions(base).map((o) => o.key)).toEqual(['1', '2', '3', '4', '5', '6']);
+		}
+	});
+	it('every option is strictly in the future', () => {
+		for (const base of [TUE_MORNING, TUE_NIGHT, SATURDAY]) {
+			for (const o of snoozeChordOptions(base)) {
+				expect(o.at).toBeGreaterThan(base.getTime());
+			}
+		}
+	});
+	it('later today late at night rolls to the next weekday morning', () => {
+		const later = snoozeChordOptions(TUE_NIGHT).find((o) => o.key === '1')!;
+		expect(later.at).toBe(nextWeekdayMorning(TUE_NIGHT));
+	});
+	it('a couple of weekdays skips the weekend', () => {
+		// Friday +2 weekdays = Tuesday
+		const friday = new Date(2026, 6, 17, 10, 0, 0);
+		const d = new Date(snoozeChordOptions(friday).find((o) => o.key === '3')!.at);
+		expect([d.getDay(), d.getDate()]).toEqual([2, 21]);
+	});
+	it('week after next is 7 days past next week', () => {
+		const opts = snoozeChordOptions(TUE_MORNING);
+		const next = opts.find((o) => o.key === '4')!.at;
+		const after = opts.find((o) => o.key === '5')!.at;
+		expect(after - next).toBe(7 * 24 * 60 * 60_000);
 	});
 });
 
