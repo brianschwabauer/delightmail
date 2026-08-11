@@ -26,6 +26,7 @@
 		| 'menu'
 		| 'chevron-left'
 		| 'chevron-right'
+		| 'chevron-down'
 		| 'arrow-left'
 		| 'file'
 		| 'image'
@@ -70,6 +71,7 @@
 		menu: '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
 		'chevron-left': '<path d="m15 18-6-6 6-6"/>',
 		'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+		'chevron-down': '<path d="m6 9 6 6 6-6"/>',
 		'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
 		file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
 		image:

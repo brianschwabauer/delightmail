@@ -36,17 +36,28 @@
 		window.location.href = '/signin';
 	}
 
-	const FOLDERS: Array<{ id: string; label: string; icon: IconName }> = [
+	const ALL_FOLDERS: Array<{ id: string; label: string; icon: IconName }> = [
 		{ id: 'inbox', label: 'Inbox', icon: 'inbox' },
 		{ id: 'filtered', label: 'AI Filtered', icon: 'sparkles' },
 		{ id: 'starred', label: 'Starred', icon: 'star' },
 		{ id: 'snoozed', label: 'Snoozed', icon: 'clock' },
+		{ id: 'archive', label: 'Archive', icon: 'archive' },
 		{ id: 'sent', label: 'Sent', icon: 'send' },
 		{ id: 'drafts', label: 'Drafts', icon: 'pencil' },
-		{ id: 'archive', label: 'Archive', icon: 'archive' },
 		{ id: 'spam', label: 'Spam', icon: 'ban' },
 		{ id: 'trash', label: 'Trash', icon: 'trash' },
 	];
+	// The long tail stays behind "View more" until asked for — reveal is one-way
+	// (a refresh re-hides; no "view less" clutter). Deep-linking straight into a
+	// hidden folder reveals the group so the active row is actually visible.
+	const HIDDEN_BY_DEFAULT = new Set(['sent', 'drafts', 'spam', 'trash']);
+	let showAll = $state(HIDDEN_BY_DEFAULT.has(view));
+	const FOLDERS = $derived(
+		showAll ? ALL_FOLDERS : ALL_FOLDERS.filter((f) => !HIDDEN_BY_DEFAULT.has(f.id)),
+	);
+	$effect(() => {
+		if (HIDDEN_BY_DEFAULT.has(view)) untrack(() => (showAll = true));
+	});
 
 	// Live account list drives the per-account scope switcher.
 	const accounts = db.search('account', { limit: 20 });
@@ -154,6 +165,12 @@
 				{/if}
 			</ListItem>
 		{/each}
+		{#if !showAll}
+			<ListItem class="quiet" onclick={() => (showAll = true)}>
+				<span class="glyph"><Icon name="chevron-down" size={17} /></span>
+				<span class="label">View more</span>
+			</ListItem>
+		{/if}
 	</List>
 
 	<div class="section">Accounts</div>
