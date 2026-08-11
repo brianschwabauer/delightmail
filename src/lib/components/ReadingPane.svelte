@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { Avatar, Button, toast } from '@delightstack/components';
+	import { Avatar, Button, Popover, toast } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
+	import Hint from './Hint.svelte';
+	import Sender from './Sender.svelte';
 	import type { MailDatabaseClient } from '$lib/clients';
 	import type { Message, Thread } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
@@ -23,9 +25,10 @@
 		previewThread?: Thread | null;
 		/** The open thread's folder — drives the Archive ↔ Unarchive toggle. */
 		folder?: string | null;
-		/** Whether the reader currently owns focus (i.e. the thread was actually
-		 *  opened, not just previewed by moving the list cursor). Marking-read is
-		 *  gated on this so scrolling the list with j/k never silently reads mail. */
+		/** Whether the user is actually engaging with mail (focus in the list or
+		 *  reading pane). Marking-read is gated on this so browsing folders from
+		 *  the rail — which previews each folder's top thread — never silently
+		 *  reads mail. */
 		markReadActive?: boolean;
 		/** Surfaces the loaded messages of the open thread so the page can reply/
 		 *  forward from data already in hand — no extra round-trip that could hang. */
@@ -277,8 +280,8 @@
 	let markedThread = $state<string | null>(null);
 	$effect(() => {
 		const tid = threadId;
-		// Only mark-read once the reader is actually focused — a mere preview
-		// (cursor move with focus still in the list) must leave mail untouched.
+		// Only mark-read while the list/reader is engaged — previewing from the
+		// folder rail must leave mail untouched.
 		if (!tid || docs.length === 0 || !markReadActive) return;
 		if (untrack(() => markedThread) === tid) return;
 		const anyUnread = docs.some((m) => !m.is_read);
@@ -319,6 +322,11 @@
 		if (from) return from;
 		const parsed = parseParticipantText(m.from_text)[0];
 		return parsed?.name || parsed?.email || '(unknown)';
+	}
+	/** The sender's actual address (for the hover popover) — structured when
+	 *  loaded locally, parsed from the indexed from_text otherwise. */
+	function whoEmail(m: Message): string | undefined {
+		return m.from?.email ?? parseParticipantText(m.from_text)[0]?.email ?? undefined;
 	}
 	/** Empty when the recipients aren't loaded — better to omit the line than to
 	 *  assert "to me" for a message that might be a cc or a list. */
@@ -418,18 +426,30 @@
 				{#if onReply || onAct}
 					<div class="toolbar">
 						{#if onReply}
-							<Button size="0" transparent onclick={() => onReply('reply')}><Icon name="reply" size={15} /> Reply</Button>
-							<Button size="0" transparent onclick={() => onReply('reply_all')}><Icon name="reply-all" size={15} /> Reply all</Button>
-							<Button size="0" transparent onclick={() => onReply('forward')}><Icon name="forward" size={15} /> Forward</Button>
+							<Hint label="Reply" keys={['r']}>
+								<Button size="0" transparent onclick={() => onReply('reply')}><Icon name="reply" size={15} /> Reply</Button>
+							</Hint>
+							<Hint label="Reply all" keys={['R']}>
+								<Button size="0" transparent onclick={() => onReply('reply_all')}><Icon name="reply-all" size={15} /> Reply all</Button>
+							</Hint>
+							<Hint label="Forward" keys={['w']}>
+								<Button size="0" transparent onclick={() => onReply('forward')}><Icon name="forward" size={15} /> Forward</Button>
+							</Hint>
 						{/if}
 						{#if onAct}
 							<span class="tb-gap"></span>
 							{#if folder === 'archive'}
-								<Button size="0" transparent onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={15} /> Unarchive</Button>
+								<Hint label="Unarchive" keys={['a']}>
+									<Button size="0" transparent onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={15} /> Unarchive</Button>
+								</Hint>
 							{:else}
-								<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+								<Hint label="Archive" keys={['a']}>
+									<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+								</Hint>
 							{/if}
-							<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
+							<Hint label="Trash" keys={['d']}>
+								<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
+							</Hint>
 						{/if}
 					</div>
 				{/if}
@@ -463,7 +483,7 @@
 					<button class="msg-head" onclick={() => toggle(String(m.id))} {@attach ripple({ opacity: 0.08 })}>
 						<Avatar name={who(m)} size="2" />
 						<span class="meta">
-							<span class="from">{who(m)}</span>
+							<Sender name={who(m)} email={whoEmail(m)} />
 							{#if recipients(m)}
 								<span class="to">to {recipients(m)}</span>
 							{/if}
