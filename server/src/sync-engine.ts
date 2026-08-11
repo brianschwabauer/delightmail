@@ -191,6 +191,18 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		) as unknown as MailboxStub;
 	}
 
+	/** Deliver a fetched batch to the mailbox in SMALL RPC chunks. One
+	 *  20-message ingest is a single multi-second synchronous block inside the
+	 *  Mailbox DO, and the DO serializes events — interactive calls (thread
+	 *  actions, the reading pane's list fallback) queued behind a backfill's
+	 *  ingest stream for 10+ seconds. Chunk boundaries let them interleave. */
+	async #ingestChunked(batch: NormalizedMessage[]): Promise<void> {
+		const CHUNK = 5;
+		for (let i = 0; i < batch.length; i += CHUNK) {
+			await this.#mailbox().ingestMessages(batch.slice(i, i + CHUNK));
+		}
+	}
+
 	// -------------------------------------------------------------------------
 	// Account lifecycle (RPC from the app worker).
 	// -------------------------------------------------------------------------
@@ -433,7 +445,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		for (let i = 0; i < ids.length; i += RAW_BATCH) {
 			const slice = ids.slice(i, i + RAW_BATCH);
 			const batch = await this.#fetchAndNormalize(gmail, slice);
-			if (batch.length) await this.#mailbox().ingestMessages(batch);
+			if (batch.length) await this.#ingestChunked(batch);
 			ingestedSoFar += slice.length;
 			// Throttle to ~20 msg/s so a large backfill can't blow the Gmail quota.
 			if (i + RAW_BATCH < ids.length) await sleep(RAW_BATCH_PAUSE_MS);
@@ -517,7 +529,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			const addedIds = [...added];
 			for (let i = 0; i < addedIds.length; i += RAW_BATCH) {
 				const batch = await this.#fetchAndNormalize(gmail, addedIds.slice(i, i + RAW_BATCH));
-				if (batch.length) await this.#mailbox().ingestMessages(batch);
+				if (batch.length) await this.#ingestChunked(batch);
 			}
 			// Flag/label changes on existing messages: re-fetch authoritative labels.
 			// Bounded-parallel: a bulk archive done in the Gmail app replays here as
@@ -544,7 +556,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			const ids = (list.messages ?? []).map((m) => m.id);
 			for (let i = 0; i < ids.length; i += RAW_BATCH) {
 				const batch = await this.#fetchAndNormalize(gmail, ids.slice(i, i + RAW_BATCH));
-				if (batch.length) await this.#mailbox().ingestMessages(batch);
+				if (batch.length) await this.#ingestChunked(batch);
 			}
 			pageToken = list.nextPageToken;
 		} while (pageToken);
