@@ -94,11 +94,12 @@ const PUSH_BACKSTOP_SYNC_MS = 10 * 60 * 1000;
 /** Messages at/above this sizeEstimate are raw-fetched strictly serially —
  *  several large messages decoded concurrently OOM the 128MB DO isolate. */
 const LARGE_MESSAGE_BYTES = 3_000_000;
-/** Messages accumulated per ingest RPC during backfill. Each ingest pays one
- *  full-index encode in the Mailbox DO regardless of batch size, so bigger
- *  batches directly cut the DO's CPU duty cycle. Normalized messages are small
- *  (bodies live in R2; excerpts cap at 8KB), so 100 stays ~1-2MB per RPC. */
-const INGEST_BATCH = 100;
+/** Messages accumulated per ingest RPC during backfill. With journal+snapshot
+ *  persistence (@delightstack/database 1.1.0) an ingest no longer pays a
+ *  full-index encode, so the batch size only sets how LONG each synchronous
+ *  ingest block occupies the Mailbox DO — keep blocks short so interactive
+ *  RPCs (thread actions, list fallbacks) interleave promptly. */
+const INGEST_BATCH = 20;
 function retryBackoffMs(attempts: number): number {
 	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 }
