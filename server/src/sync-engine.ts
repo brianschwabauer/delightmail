@@ -94,6 +94,11 @@ const PUSH_BACKSTOP_SYNC_MS = 10 * 60 * 1000;
 /** Messages at/above this sizeEstimate are raw-fetched strictly serially —
  *  several large messages decoded concurrently OOM the 128MB DO isolate. */
 const LARGE_MESSAGE_BYTES = 3_000_000;
+/** Messages accumulated per ingest RPC during backfill. Each ingest pays one
+ *  full-index encode in the Mailbox DO regardless of batch size, so bigger
+ *  batches directly cut the DO's CPU duty cycle. Normalized messages are small
+ *  (bodies live in R2; excerpts cap at 8KB), so 100 stays ~1-2MB per RPC. */
+const INGEST_BATCH = 100;
 function retryBackoffMs(attempts: number): number {
 	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 }
@@ -429,15 +434,29 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			this.#saveState({ backfill_total: total });
 		}
 
+		// Fetch in RAW_BATCH slices (quota pacing) but DELIVER in much larger
+		// ingest RPCs. Every ingest ends in a full-index msgpack encode inside the
+		// Mailbox DO (seconds of blocking CPU once the index is large) — one
+		// encode per 20 messages saturated the DO during backfill and interactive
+		// RPCs (thread actions, list fallbacks) queued 10-20s behind the stream.
+		// Fewer, bigger batches: same wall-clock, ~5× less encode CPU, and the DO
+		// sits idle between deliveries so interactive calls stay fast.
 		let ingestedSoFar = state.backfill_ingested ?? 0;
+		let pending: NormalizedMessage[] = [];
+		const flush = async () => {
+			if (!pending.length) return;
+			await this.#mailbox().ingestMessages(pending);
+			pending = [];
+		};
 		for (let i = 0; i < ids.length; i += RAW_BATCH) {
 			const slice = ids.slice(i, i + RAW_BATCH);
-			const batch = await this.#fetchAndNormalize(gmail, slice);
-			if (batch.length) await this.#mailbox().ingestMessages(batch);
+			pending.push(...(await this.#fetchAndNormalize(gmail, slice)));
+			if (pending.length >= INGEST_BATCH) await flush();
 			ingestedSoFar += slice.length;
 			// Throttle to ~20 msg/s so a large backfill can't blow the Gmail quota.
 			if (i + RAW_BATCH < ids.length) await sleep(RAW_BATCH_PAUSE_MS);
 		}
+		await flush();
 		this.#saveState({ backfill_cursor: list.nextPageToken, backfill_ingested: ingestedSoFar });
 
 		const percent =
@@ -542,10 +561,17 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		do {
 			const list = await gmail.listMessageIds(pageToken, 'newer_than:30d');
 			const ids = (list.messages ?? []).map((m) => m.id);
+			// Same large-batch delivery as backfill — one index encode per
+			// INGEST_BATCH instead of per RAW_BATCH (see #backfillPage).
+			let pending: NormalizedMessage[] = [];
 			for (let i = 0; i < ids.length; i += RAW_BATCH) {
-				const batch = await this.#fetchAndNormalize(gmail, ids.slice(i, i + RAW_BATCH));
-				if (batch.length) await this.#mailbox().ingestMessages(batch);
+				pending.push(...(await this.#fetchAndNormalize(gmail, ids.slice(i, i + RAW_BATCH))));
+				if (pending.length >= INGEST_BATCH) {
+					await this.#mailbox().ingestMessages(pending);
+					pending = [];
+				}
 			}
+			if (pending.length) await this.#mailbox().ingestMessages(pending);
 			pageToken = list.nextPageToken;
 		} while (pageToken);
 		const profile = await gmail.getProfile();
