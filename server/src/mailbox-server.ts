@@ -193,7 +193,18 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		const op = providerOpFor(action.action);
 		const byAccount = op === 'none' ? new Map() : this.#gmailIdsByAccount(action.thread_ids);
 
-		const affected = applyThreadActionLocal(this, action);
+		let affected: string[];
+		try {
+			affected = applyThreadActionLocal(this, action);
+		} catch (err) {
+			// A bare TypeError from the local apply crosses RPC as an opaque 500 with
+			// no server trace — log the real stack before rethrowing.
+			console.error(
+				`[MailboxServer] applyThreadAction(${action.action}) failed:`,
+				err instanceof Error ? (err.stack ?? err.message) : err,
+			);
+			throw err;
+		}
 
 		// Fan out provider write-back to each owning SyncEngine. `move` carries the
 		// target folder so undo of archive/trash reaches Gmail.

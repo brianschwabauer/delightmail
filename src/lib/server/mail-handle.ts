@@ -41,6 +41,12 @@ export function createMailHandle(): Handle {
 		try {
 			return await route(event);
 		} catch (err) {
+			// Surface the real stack in `wrangler tail` — a bare TypeError here
+			// otherwise reaches the client as an opaque 500 with no server trace.
+			console.error(
+				`[mail] ${event.request.method} ${pathname} failed:`,
+				err instanceof Error ? (err.stack ?? err.message) : err,
+			);
 			return DelightError.from(err).toResponse();
 		}
 	};
