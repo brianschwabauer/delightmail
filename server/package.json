@@ -15,7 +15,7 @@
 	"dependencies": {
 		"@delightstack/ai": "^1.0.1",
 		"@delightstack/auth": "^1.1.0",
-		"@delightstack/database": "^1.0.3",
+		"@delightstack/database": "^1.0.4",
 		"@delightstack/rate-limiter": "^1.0.0",
 		"@delightstack/utilities": "^1.0.1",
 		"@delightstack/websocket": "^1.0.2",
