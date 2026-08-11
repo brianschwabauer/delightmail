@@ -34,7 +34,7 @@
 		"@delightstack/ai": "^1.0.1",
 		"@delightstack/auth": "^1.1.0",
 		"@delightstack/components": "^1.5.0",
-		"@delightstack/database": "^1.0.4",
+		"@delightstack/database": "^1.1.0",
 		"@delightstack/editor": "^1.0.2",
 		"@delightstack/images": "^1.0.1",
 		"@delightstack/rate-limiter": "^1.0.0",
