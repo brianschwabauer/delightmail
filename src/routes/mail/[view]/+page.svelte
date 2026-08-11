@@ -761,7 +761,7 @@
 
 	async function act(
 		action: ThreadActionName,
-		opts: { folder?: string; snooze_until?: number } = {},
+		opts: { folder?: string; snooze_until?: number; animate?: boolean } = {},
 	) {
 		const ts = targets();
 		if (!ts.length) return;
@@ -1039,7 +1039,9 @@
 			onSwipe={(i, dir) => {
 				cursor = i;
 				anchor = null;
-				void act(dir === 'archive' ? 'archive' : readTarget());
+				// Swipes earn the exit slide (the gesture set the row in motion);
+				// keyboard/toolbar actions skip it so the next thread appears instantly.
+				void act(dir === 'archive' ? 'archive' : readTarget(), { animate: true });
 			}} />
 	</div>
 </section>

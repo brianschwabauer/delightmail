@@ -57,11 +57,13 @@ export class ActionManager {
 		return this.#leaving;
 	}
 
-	/** Apply an action to one or more threads with instant optimistic feedback. */
+	/** Apply an action to one or more threads with instant optimistic feedback.
+	 *  `animate` plays the row exit slide (swipe gestures only — keyboard and
+	 *  toolbar actions remove the row instantly so the next thread appears fast). */
 	async apply(
 		threads: Thread[],
 		action: ThreadActionName,
-		opts: { folder?: string; label_id?: string; snooze_until?: number } = {},
+		opts: { folder?: string; label_id?: string; snooze_until?: number; animate?: boolean } = {},
 	): Promise<void> {
 		if (!threads.length) return;
 		const ids = threads.map((t) => String(t.id));
@@ -90,18 +92,19 @@ export class ActionManager {
 
 		// Fire the authoritative call immediately (provider write-back +
 		// per-message fields) — the exit animation must never delay it.
-		const posted = this.#post(ids, action, opts).then(
+		const { animate, ...postOpts } = opts;
+		const posted = this.#post(ids, action, postOpts).then(
 			() => null,
 			(err: Error) => err,
 		);
 
-		// Optimistic local update. Rows that leave the list play a short exit
-		// first — an archived mail should visibly GO somewhere, not blink out.
+		// Optimistic local update. A swiped row plays a short exit (the gesture
+		// already set it in motion); keyboard/toolbar actions remove instantly.
 		if (patch.hard_delete) {
-			await this.#exit(ids);
+			if (animate) await this.#exit(ids);
 			this.#hide(ids);
 		} else if (movesFolder) {
-			await this.#exit(ids);
+			if (animate) await this.#exit(ids);
 			this.#moveLocal(ids, patch.folder as string);
 		} else {
 			this.#patchFlags(ids, patch);
