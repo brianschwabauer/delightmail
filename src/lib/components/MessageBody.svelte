@@ -37,6 +37,12 @@
 				failed = true;
 				return;
 			}
+			// An error response (404/500) is JSON — the browser renders it as raw
+			// text in the frame. Fall back to the excerpt rather than showing it.
+			if (doc.contentType === 'application/json') {
+				failed = true;
+				return;
+			}
 			const h = doc.body?.scrollHeight ?? 0;
 			if (h > 0) frameHeight = Math.min(h + 24, 4000);
 		} catch {
