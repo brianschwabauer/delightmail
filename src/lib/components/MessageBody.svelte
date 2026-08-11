@@ -29,9 +29,16 @@
 		try {
 			const doc = iframe?.contentDocument;
 			if (!doc) return;
+			// Empty response → show the excerpt instead of a blank sheet. Checked
+			// FIRST: an empty document's body.scrollHeight is the iframe viewport
+			// height (never 0), so gating this behind `scrollHeight === 0` made the
+			// fallback unreachable and text-only mail rendered as a white void.
+			if (!doc.body?.innerHTML?.trim()) {
+				failed = true;
+				return;
+			}
 			const h = doc.body?.scrollHeight ?? 0;
 			if (h > 0) frameHeight = Math.min(h + 24, 4000);
-			else if (!doc.body?.innerHTML?.trim()) failed = true;
 		} catch {
 			// Cross-origin measurement blocked — keep a default height.
 		}

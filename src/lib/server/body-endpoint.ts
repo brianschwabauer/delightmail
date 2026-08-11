@@ -43,9 +43,19 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 		return DelightError.notFound('Message not found').toResponse();
 	}
 
-	const key = format === 'text' ? msg.body_keys?.text : msg.body_keys?.html;
+	// Text-only mail (npm/GitHub notices, most transactional mail) has no HTML
+	// body — serve the FULL stored text wrapped as minimal HTML instead of an
+	// empty response, so the reading pane renders it typeset rather than blank
+	// (the client can't always tell text-only mail apart: sparse search hits
+	// lack body_keys, so it optimistically requests the HTML body).
+	let key = format === 'text' ? msg.body_keys?.text : msg.body_keys?.html;
+	let text_as_html = false;
+	if (!key && format !== 'text' && msg.body_keys?.text) {
+		key = msg.body_keys.text;
+		text_as_html = true;
+	}
 	if (!key) {
-		// No stored HTML — fall back to the plain excerpt so the pane isn't blank.
+		// Nothing stored at all — the pane falls back to the excerpt.
 		return new Response('', { headers: { 'content-type': contentType } });
 	}
 
@@ -53,7 +63,7 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	// caller's org, even if a tampered body_keys points elsewhere (IDOR).
 	if (!ownsKey(key, org_id)) return DelightError.notFound('Body not found').toResponse();
 
-	const body = await readCached(r2, kv, key, cacheKey);
+	let body = await readCached(r2, kv, key, cacheKey, text_as_html ? textToHtml : undefined);
 	if (body === null) return DelightError.notFound('Body not found').toResponse();
 	return bodyResponse(format === 'text' ? body : typeset(body, scheme), contentType);
 }
@@ -273,6 +283,7 @@ async function readCached(
 	kv: KVNamespace | undefined,
 	key: string,
 	cacheKey: string,
+	transform?: (raw: string) => string,
 ): Promise<string | null> {
 	if (kv) {
 		const cached = await kv.get(cacheKey);
@@ -280,7 +291,18 @@ async function readCached(
 	}
 	const obj = await r2.get(key);
 	if (!obj) return null;
-	const text = await obj.text();
+	// Transform BEFORE caching so KV always holds the servable form (the KV-first
+	// fast path above returns the cached value verbatim, modulo typeset()).
+	const text = transform ? transform(await obj.text()) : await obj.text();
 	if (kv) await kv.put(cacheKey, text, { expirationTtl: 60 * 60 * 24 * 7 });
 	return text;
+}
+
+/** A stored plain-text body as minimal servable HTML (escaped, pre-wrapped). */
+function textToHtml(text: string): string {
+	const escaped = text
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;');
+	return `<div style="white-space:pre-wrap">${escaped}</div>`;
 }
