@@ -58,6 +58,31 @@ export function emailDomain(email?: string | null): string | undefined {
 	return domain || undefined;
 }
 
+// Common second-level public suffixes, so registrableDomain("bbc.co.uk") is
+// "bbc.co.uk" and not "co.uk". A shortlist, not the full PSL — wrong guesses
+// just cost one 404 and the Avatar falls back to initials.
+const SECOND_LEVEL_TLDS = new Set([
+	'co.uk', 'org.uk', 'ac.uk', 'gov.uk',
+	'com.au', 'net.au', 'org.au',
+	'co.nz', 'co.jp', 'or.jp', 'ne.jp',
+	'com.br', 'com.mx', 'com.ar',
+	'co.in', 'co.za', 'com.sg', 'com.hk', 'com.tw', 'co.kr',
+]);
+
+/**
+ * The registrable (apex) domain of a hostname: "md.getsentry.com" →
+ * "getsentry.com". Mail senders overwhelmingly send from marketing/transport
+ * subdomains (md.*, em1234.*, mail.*) that either have NO favicon or a tiny
+ * 16px one — the brand's real, larger favicon lives on the apex.
+ */
+export function registrableDomain(domain: string): string {
+	const parts = domain.split('.');
+	if (parts.length <= 2) return domain;
+	const last_two = parts.slice(-2).join('.');
+	const take = SECOND_LEVEL_TLDS.has(last_two) ? 3 : 2;
+	return parts.slice(-take).join('.');
+}
+
 /**
  * An avatar image URL for an email address, or undefined when we have nothing
  * better than initials. Safe to call every render — it only builds a string.
@@ -69,5 +94,10 @@ export function contactAvatarUrl(email?: string | null): string | undefined {
 		const hash = md5((email as string).trim().toLowerCase());
 		return `https://www.gravatar.com/avatar/${hash}?s=128&d=404`;
 	}
-	return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
+	// Look the favicon up on the APEX domain, not the sending subdomain —
+	// e.g. Sentry mails from md.getsentry.com, whose own favicon is a blurry
+	// 16px; getsentry.com serves the real 48px mark. (Google's s2 service caps
+	// most sites well below the requested 128 — see also the `sz` param.)
+	const apex = registrableDomain(domain);
+	return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(apex)}&sz=128`;
 }
