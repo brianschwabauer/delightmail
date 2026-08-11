@@ -91,6 +91,9 @@ const RAW_BATCH_PAUSE_MS = 1_000;
  *  #scheduleBackstopSync) — cheap (one /history call when idle) but bounds how
  *  stale a silently-broken push chain can leave the mailbox. */
 const PUSH_BACKSTOP_SYNC_MS = 10 * 60 * 1000;
+/** Messages at/above this sizeEstimate are raw-fetched strictly serially —
+ *  several large messages decoded concurrently OOM the 128MB DO isolate. */
+const LARGE_MESSAGE_BYTES = 3_000_000;
 function retryBackoffMs(attempts: number): number {
 	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 }
@@ -225,6 +228,12 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		await this.#rearm();
 	}
 	async resync(): Promise<void> {
+		// Drop queued/failed sync work first — a resync on top of an in-flight (or
+		// crash-looping) backfill otherwise STACKS a second full chain onto the
+		// first, multiplying memory pressure and Gmail quota burn.
+		this.#sql.exec(
+			`DELETE FROM job WHERE type IN ('backfill_page', 'history_sync')`,
+		);
 		this.#saveState({
 			backfill_cursor: undefined,
 			gmail_history_id: undefined,
@@ -450,7 +459,17 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #historySync(): Promise<void> {
 		await this.#scheduleBackstopSync();
 		const state = this.#state();
-		if (!state.gmail_history_id) return this.#backfillPage({ page_token: null });
+		if (!state.gmail_history_id) {
+			// No cursor yet → backfill instead. But only when none is queued:
+			// while a backfill chain is in flight (it re-records the cursor on its
+			// first page), every backstop tick landing here would otherwise start
+			// ANOTHER full chain from page 1.
+			const pending = this.#sql
+				.exec(`SELECT 1 FROM job WHERE type = 'backfill_page' AND status = 'pending' LIMIT 1`)
+				.toArray()[0];
+			if (!pending) return this.#backfillPage({ page_token: null });
+			return;
+		}
 		const gmail = await this.#gmail();
 
 		let pageToken: string | undefined;
@@ -965,11 +984,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async #fetchAndNormalize(gmail: GmailClient, ids: string[]): Promise<NormalizedMessage[]> {
 		const state = this.#state();
 		const labelMap = await this.#labelMap(gmail);
-		// Bounded-parallel fetch: messages.get costs 5 quota units of a 250/s
-		// budget, so 6-way concurrency stays far inside quota while cutting a
-		// page's wall-clock (and DO duration billing) ~6× vs the old strictly
-		// serial loop — a large mailbox import spent hours mostly waiting on RTTs.
-		const out = await mapBounded(ids, 6, async (id): Promise<NormalizedMessage | null> => {
+		const fetchOne = async (id: string): Promise<NormalizedMessage | null> => {
 			let msg: GmailMessage;
 			try {
 				msg = await gmail.getRaw(id);
@@ -1007,7 +1022,36 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				await this.#deadLetterRawMessage(state, id, msg.raw ?? '', err);
 				return null;
 			}
+		};
+
+		// Raw fetches are the peak-memory surface: a near-25MB email transiently
+		// costs ~100MB (base64 string + decoded bytes + parsed copies) and the DO
+		// isolate OOM-resets at 128MB — several large messages in flight at once
+		// killed the isolate, and since a reset never counts as a job attempt,
+		// the same page then relived the crash forever. Triage by size first
+		// (format=minimal is 1 quota unit vs raw's 5): small messages keep the
+		// 6-way fetch that makes big imports fast; large ones go one at a time.
+		const sizes = new Map<string, number>();
+		await mapBounded(ids, 6, async (id) => {
+			try {
+				const meta = await gmail.getMetadata(id);
+				sizes.set(id, meta.sizeEstimate ?? 0);
+			} catch (err) {
+				if (err instanceof RetryableError) throw err;
+				if (isAuthError(err)) {
+					this.#invalidateAccessToken();
+					throw err;
+				}
+				// Gone-at-Gmail (or odd) responses: mark small — the raw fetch below
+				// hits the same error and already handles skip-vs-retry correctly.
+				sizes.set(id, 0);
+			}
 		});
+		const small = ids.filter((id) => (sizes.get(id) ?? 0) < LARGE_MESSAGE_BYTES);
+		const large = ids.filter((id) => (sizes.get(id) ?? 0) >= LARGE_MESSAGE_BYTES);
+
+		const out = await mapBounded(small, 6, fetchOne);
+		for (const id of large) out.push(await fetchOne(id));
 		return out.filter((m): m is NormalizedMessage => m !== null);
 	}
 

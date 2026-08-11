@@ -84,6 +84,8 @@ export interface GmailMessage {
 	labelIds?: string[];
 	raw?: string;
 	internalDate?: string;
+	/** Approximate size in bytes (present on format=minimal responses). */
+	sizeEstimate?: number;
 }
 
 interface GmailHistoryResponse {
@@ -281,6 +283,11 @@ export async function gmailToNormalized(
 	const parsed = await parseEmail(rawBytes, {
 		receivedAt: msg.internalDate ? Number(msg.internalDate) : undefined,
 	});
+	// Drop the base64 copy the moment it's decoded + parsed — for a large email
+	// it's tens of MB of pure duplication, and the DO isolate OOM-resets at
+	// 128MB. (Kept until after parseEmail so a parse failure can still
+	// dead-letter the raw payload.)
+	msg.raw = undefined;
 	const state = gmailLabelsToState(msg.labelIds);
 
 	// User (non-system) Gmail labels → DelightMail labels, carrying the Gmail label
