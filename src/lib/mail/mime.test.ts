@@ -7,6 +7,7 @@ import {
 	htmlToPlainText,
 	normalizeDate,
 	toExcerpt,
+	stripQuotedText,
 	parseEmail,
 } from './mime';
 
@@ -103,9 +104,80 @@ describe('toExcerpt', () => {
 	it('returns short text unchanged', () => {
 		expect(toExcerpt('hello')).toBe('hello');
 	});
-	it('caps very long text near 8KB', () => {
+	it('caps very long text near 4KB', () => {
 		const long = 'x'.repeat(20000);
-		expect(toExcerpt(long).length).toBeLessThanOrEqual(8192);
+		expect(toExcerpt(long).length).toBeLessThanOrEqual(4096);
+	});
+});
+
+describe('stripQuotedText', () => {
+	it('cuts a Gmail-style reply chain at the attribution line', () => {
+		const text = [
+			'Sounds good, see you Thursday.',
+			'',
+			'On Mon, Aug 4, 2026 at 9:12 AM Sarah Chen <sarah@example.com> wrote:',
+			'> Can we move the sync to Thursday?',
+			'> It conflicts with the launch review.',
+		].join('\n');
+		expect(stripQuotedText(text)).toBe('Sounds good, see you Thursday.');
+	});
+	it('handles the attribution wrapping onto a second line', () => {
+		const text = [
+			'Works for me.',
+			'',
+			'On Mon, Aug 4, 2026 at 9:12 AM Sarah Chen',
+			'<sarah@example.com> wrote:',
+			'> Can we move the sync?',
+		].join('\n');
+		expect(stripQuotedText(text)).toBe('Works for me.');
+	});
+	it('cuts Outlook-style top-posted header blocks and separators', () => {
+		const original = 'Forwarding for visibility — see the numbers below.';
+		const text = [
+			original,
+			'',
+			'________________________________',
+			'From: Alex Kim <alex@example.com>',
+			'Sent: Tuesday, August 5, 2026 3:14 PM',
+			'To: me@example.com',
+			'Subject: Q3 numbers',
+			'',
+			'Revenue was up 12%…',
+		].join('\n');
+		expect(stripQuotedText(text)).toBe(original);
+	});
+	it('drops inline >-quoted lines but keeps interleaved replies', () => {
+		const text = [
+			'> Should we ship Friday?',
+			'Yes — pending the smoke test.',
+			'> And the changelog?',
+			'Drafted, will send tonight.',
+		].join('\n');
+		expect(stripQuotedText(text)).toBe(
+			'Yes — pending the smoke test.\nDrafted, will send tonight.',
+		);
+	});
+	it('drops everything below a signature delimiter', () => {
+		const text = ['The report is attached, forty characters+.', '-- ', 'Brian', 'CEO, Example Inc'].join(
+			'\n',
+		);
+		expect(stripQuotedText(text)).toBe('The report is attached, forty characters+.');
+	});
+	it('falls back to the full text when stripping leaves nothing meaningful', () => {
+		const text = [
+			'FYI',
+			'',
+			'---------- Forwarded message ----------',
+			'From: noreply@example.com',
+			'',
+			'Your invoice #4521 for August is ready.',
+		].join('\n');
+		// A bare forward must stay searchable by its forwarded content.
+		expect(stripQuotedText(text)).toBe(text);
+	});
+	it('leaves ordinary text untouched', () => {
+		const text = 'On Friday we ship.\nNothing quoted here, just a normal update from me.';
+		expect(stripQuotedText(text)).toBe(text);
 	});
 });
 

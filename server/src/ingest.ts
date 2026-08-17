@@ -14,6 +14,7 @@ import {
 	type ThreadCandidate,
 	type ThreadLookups,
 } from '../../src/lib/mail/threading';
+import { toExcerpt } from '../../src/lib/mail/mime';
 
 /** A source-agnostic message ready for ingest. */
 export interface NormalizedMessage {
@@ -176,7 +177,9 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 				bcc: msg.bcc,
 				reply_to: msg.reply_to,
 				subject: msg.subject,
-				text_excerpt: msg.text_excerpt?.slice(0, 8192),
+				// Already stripped + excerpted by the parse path; this is a
+				// byte-accurate clamp for any adapter that hands over raw text.
+				text_excerpt: msg.text_excerpt ? toExcerpt(msg.text_excerpt) : undefined,
 				body_keys: msg.body_keys,
 				date: msg.date,
 				is_read: msg.is_read ?? !!msg.is_outbound,

@@ -3,7 +3,7 @@
  * the mail tables, an alarm-driven job engine (triage / outbox / push), and the
  * mail-specific RPC surface the app worker calls (see src/lib/mailbox-rpc.ts).
  *
- * Storage split: SQLite holds metadata + an 8KB searchable excerpt;
+ * Storage split: SQLite holds metadata + a 4KB searchable excerpt (quoted chains stripped);
  * full HTML/raw/attachments live in R2. The search index lives in SQLite rows
  * written in the same transaction as the entity rows.
  */
@@ -14,7 +14,7 @@ import { tables, type Thread, type Message, type Settings } from '../../src/lib/
 import { ingestBatch, maintainContacts, type NormalizedMessage } from './ingest';
 import { applyThreadActionLocal } from './actions';
 import { runTriageJob } from './triage';
-import { parseEmail } from '../../src/lib/mail/mime';
+import { parseEmail, stripQuotedText, toExcerpt } from '../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
 import { messagePrefix, writeBodies, writeAttachments, buildCidMap } from './body-store';
 
@@ -70,7 +70,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	/**
-	 * Message rows are far heavier than the library default assumes (8KB
+	 * Message rows are far heavier than the library default assumes (4KB
 	 * searchable excerpts, `$derived` rewrites of large json columns) — the
 	 * default 1000-row slice measured ~30s on this corpus, i.e. the whole DO
 	 * CPU budget, so every wake died mid-slice and the DO never served a
@@ -450,7 +450,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			cc: payload.cc,
 			bcc: payload.bcc,
 			subject: payload.subject,
-			text_excerpt: payload.text.slice(0, 8192),
+			text_excerpt: toExcerpt(stripQuotedText(payload.text)),
 			body_keys: { html: `${prefix}/body.html`, text: `${prefix}/body.txt` },
 			date: now,
 			is_read: true,

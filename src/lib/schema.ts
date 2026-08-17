@@ -178,7 +178,7 @@ export const messageTable = Database.table('message', (s) => ({
 	bcc: s.array(s.object(addressShape(s))).optional(),
 	reply_to: s.array(s.object(addressShape(s))).optional(),
 	subject: s.string().searchable().optional(),
-	// First ~8KB of extracted plain text — the ONLY body content in SQLite.
+	// First ~4KB of extracted plain text (quoted reply chains stripped) — the ONLY body content in SQLite.
 	text_excerpt: s.string().searchable().optional(),
 	body_keys: s
 		.object({

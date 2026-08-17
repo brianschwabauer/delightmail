@@ -48,7 +48,7 @@ export interface ParsedEmail {
 	size_bytes: number;
 }
 
-const EXCERPT_BYTES = 8192;
+const EXCERPT_BYTES = 4096;
 
 /** Convert a postal-mime address to our `{name,email}` shape (flattening groups). */
 export function normalizeAddress(addr: PmAddress | undefined): Address | undefined {
@@ -148,13 +148,68 @@ function utf8Bytes(s: string): number {
 	return n;
 }
 
-/** First ~8 KB of plain text — the only body content that lands in SQLite. */
+/** First ~4 KB of plain text — the only body content that lands in SQLite. */
 export function toExcerpt(text: string): string {
 	if (utf8Bytes(text) <= EXCERPT_BYTES) return text;
 	// Trim to the byte budget without splitting a surrogate pair.
 	let out = text.slice(0, EXCERPT_BYTES);
 	while (utf8Bytes(out) > EXCERPT_BYTES) out = out.slice(0, -64);
 	return out;
+}
+
+/**
+ * Strip quoted reply chains and signatures from plain text before excerpting.
+ *
+ * Quoted text is duplicated into every reply in a thread, so indexing it means
+ * paying to index the same paragraphs once per message — and it drowns ranking
+ * in repeats. Everything from a reply/forward marker on is dropped, as are
+ * inline `>`-quoted lines and anything below a signature delimiter. A message
+ * that is essentially ALL quote (a bare forward, an empty "see below") falls
+ * back to the original text so it still has something searchable.
+ */
+export function stripQuotedText(text: string): string {
+	const lines = text.split('\n');
+	const kept: string[] = [];
+	let cut: 'reply' | 'forward' | undefined;
+	for (let i = 0; i < lines.length; i++) {
+		const trimmed = lines[i].trim();
+		// Signature delimiters: nothing below is original content.
+		if (/^--\s*$/.test(trimmed) || /^Sent from my /i.test(trimmed)) break;
+		// A forwarded block is the one quote whose content may exist nowhere
+		// else in the mailbox — remember the cut kind for the fallback below.
+		if (/^-{2,}\s*Forwarded message\s*-{2,}/i.test(trimmed)) {
+			cut = 'forward';
+			break;
+		}
+		// Reply markers: the quoted chain follows (it is already indexed on the
+		// thread's earlier messages). The Gmail/Apple attribution ("On <date>,
+		// <name> wrote:") may wrap onto a second line.
+		const next = lines[i + 1]?.trim() ?? '';
+		if (
+			/^-{2,}\s*Original message\s*-{2,}/i.test(trimmed) ||
+			/^_{8,}$/.test(trimmed) ||
+			(/^On /.test(trimmed) && (/wrote:$/.test(trimmed) || /wrote:$/.test(next)))
+		) {
+			cut = 'reply';
+			break;
+		}
+		// Outlook-style top-posted header block: `From:` with a Sent/Date line close by.
+		if (
+			/^From:\s/.test(trimmed) &&
+			lines.slice(i + 1, i + 4).some((line) => /^(Sent|Date):\s/.test(line.trim()))
+		) {
+			cut = 'reply';
+			break;
+		}
+		if (trimmed.startsWith('>')) continue;
+		kept.push(lines[i]);
+	}
+	const stripped = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+	// Never index nothing; and a bare forward ("FYI" + content) must stay
+	// searchable by the forwarded content itself.
+	if (!stripped) return text;
+	if (cut === 'forward' && stripped.length < 40) return text;
+	return stripped;
 }
 
 export async function parseEmail(
@@ -165,8 +220,11 @@ export async function parseEmail(
 	const receivedAt = opts.receivedAt ?? Date.now();
 
 	const text = email.text || (email.html ? htmlToPlainText(email.html) : '');
-	const excerpt = toExcerpt(text);
-	const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 120);
+	// Index (and preview) only the author's own words — quoted chains and
+	// signatures are stripped; the full text still ships to R2 for display.
+	const own_text = stripQuotedText(text);
+	const excerpt = toExcerpt(own_text);
+	const snippet = own_text.replace(/\s+/g, ' ').trim().slice(0, 120);
 
 	const attachments: ParsedAttachment[] = (email.attachments ?? []).map((a) => ({
 		filename: a.filename || 'attachment',

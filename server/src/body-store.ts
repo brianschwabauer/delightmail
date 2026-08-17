@@ -1,5 +1,5 @@
 /**
- * R2 body storage. SQLite holds only metadata + an 8KB excerpt; the raw
+ * R2 body storage. SQLite holds only metadata + a 4KB excerpt; the raw
  * MIME, sanitized HTML, and plain text live in R2 under an org-prefixed,
  * content-addressed key so it is stable before the DB row exists.
  *
