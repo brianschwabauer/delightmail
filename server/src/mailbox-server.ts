@@ -875,6 +875,10 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	}
 
 	async alarm(): Promise<void> {
+		// Run DatabaseServer's registered alarm handlers — the chunked search
+		// rebuild (`search_rebuild`) continues via these, and it re-arms its own
+		// alarm; skipping this would strand a deferred rebuild forever.
+		await super.alarm();
 		this.#ensureJobTable();
 		const now = Date.now();
 		const due = this.exec(
