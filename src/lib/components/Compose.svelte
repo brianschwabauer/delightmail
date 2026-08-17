@@ -58,7 +58,7 @@
 		uploading: boolean;
 	}
 
-	const identities = db.search('identity', { limit: 50 });
+	const identities = db.list('identity', { limit: 50 });
 
 	let identityId = $state(init.identity_id ?? '');
 	let showCc = $state((init.cc?.length ?? 0) > 0);
@@ -93,8 +93,8 @@
 	});
 
 	const fromIdentity = $derived(
-		(identities.docs as Identity[]).find((i) => String(i.id) === identityId) ??
-			(identities.docs[0] as Identity | undefined),
+		(identities.items as Identity[]).find((i) => String(i.id) === identityId) ??
+			(identities.items[0] as Identity | undefined),
 	);
 
 	// The uncommitted text sitting in each recipient field. It lives inside the
@@ -158,8 +158,8 @@
 	);
 
 	onMount(() => {
-		if (!identityId && identities.docs.length) {
-			identityId = String((identities.docs[0] as Identity).id);
+		if (!identityId && identities.items.length) {
+			identityId = String((identities.items[0] as Identity).id);
 		}
 		// Land the cursor in the first empty recipient field the moment compose
 		// opens — and, because focus is now inside the overlay, Esc reaches the
@@ -246,12 +246,14 @@
 				: null;
 		if (typedEmail && typed?.name) nameByEmail.set(typedEmail.toLowerCase(), typed.name);
 
-		const res = await db.list(
-			'contact',
-			term
-				? { term, limit: 8 }
-				: { limit: 8, order: [{ key: 'send_count', direction: 'DESC' }] },
-		);
+		const res = await db
+			.list(
+				'contact',
+				term
+					? { term, limit: 8 }
+					: { limit: 8, order: [{ field: 'send_count', direction: 'DESC' }] },
+			)
+			.load();
 		const contacts = (res.hits ?? [])
 			.map((h) => h.document as { email?: string; name?: string; send_count?: number })
 			.filter((c) => c.email && !chosen.has(c.email.toLowerCase()))
@@ -331,7 +333,7 @@
 	}
 
 	function cycleIdentity(): void {
-		const list = identities.docs as Identity[];
+		const list = identities.items as Identity[];
 		if (list.length < 2) return;
 		const idx = list.findIndex((i) => String(i.id) === identityId);
 		identityId = String(list[(idx + 1) % list.length].id);

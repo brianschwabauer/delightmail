@@ -60,36 +60,36 @@
 	});
 
 	// Live account list drives the per-account scope switcher.
-	const accounts = db.search('account', { limit: 20 });
+	const accounts = db.list('account', { limit: 20 });
 	// Every address the user sends/receives as — thread rows use it to leave the
 	// user out of the participant label (a row should name the other people).
-	const identities = db.search('identity', { limit: 50 });
+	const identities = db.list('identity', { limit: 50 });
 
 	// Unread inbox count (live). Kept cheap — a where-filtered search.
-	const inboxUnread = db.search('thread', {
+	const inboxUnread = db.list('thread', {
 		where: { folder: { eq: 'inbox' } },
 		limit: 200,
 	});
 	const unreadCount = $derived(
-		inboxUnread.docs.reduce((n, t) => n + ((t.unread_count ?? 0) > 0 ? 1 : 0), 0),
+		inboxUnread.items.reduce((n, t) => n + ((t.unread_count ?? 0) > 0 ? 1 : 0), 0),
 	);
 
 	// Feed the live account list into the scope switcher so Ctrl+1..9 maps to them.
 	$effect(() => {
-		scope.accounts = accounts.docs.map((a) => ({
+		scope.accounts = accounts.items.map((a) => ({
 			id: String(a.id),
 			label: (a.display_name || a.email) as string,
 			color: a.color as string | undefined,
 		}));
 		// A cf_domain account's `email` holds the bare domain (see schema), so every
 		// address at it is the user's; other kinds hold a single address.
-		scope.selfDomains = accounts.docs
+		scope.selfDomains = accounts.items
 			.filter((a) => a.kind === 'cf_domain')
 			.map((a) => String(a.email ?? ''))
 			.filter(Boolean);
 		scope.selfEmails = [
-			...accounts.docs.filter((a) => a.kind !== 'cf_domain').map((a) => String(a.email ?? '')),
-			...identities.docs.map((i) => String(i.email ?? '')),
+			...accounts.items.filter((a) => a.kind !== 'cf_domain').map((a) => String(a.email ?? '')),
+			...identities.items.map((i) => String(i.email ?? '')),
 		].filter(Boolean);
 	});
 

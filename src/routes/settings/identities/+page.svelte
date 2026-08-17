@@ -5,9 +5,9 @@
 	const { data } = $props();
 	const { db } = $derived(data);
 
-	const identities = db.search('identity', {
+	const identities = db.list('identity', {
 		limit: 100,
-		order: [{ key: 'email', direction: 'ASC' }],
+		order: [{ field: 'email', direction: 'ASC' }],
 	});
 
 	// Per-identity edit state, seeded lazily from the loaded docs. Identities
@@ -26,14 +26,14 @@
 		auto_created?: boolean;
 		signature_doc?: string;
 	}
-	const docs = $derived((identities.docs ?? []) as unknown as IdentityDoc[]);
+	const docs = $derived((identities.items ?? []) as unknown as IdentityDoc[]);
 
 	async function startEdit(i: IdentityDoc) {
 		editing = String(i.id);
 		editName = i.name ?? '';
 		// The sparse doc may not carry signature_doc — load the full row.
 		try {
-			const full = (await db.get('identity', i.id)) as IdentityDoc | undefined;
+			const full = (await db.get('identity', i.id).load()) as IdentityDoc | undefined;
 			editName = full?.name ?? editName;
 			editSignature = full?.signature_doc
 				? docToText(JSON.parse(full.signature_doc)).trimEnd()

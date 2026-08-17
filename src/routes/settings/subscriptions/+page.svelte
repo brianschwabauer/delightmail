@@ -5,7 +5,7 @@
 	const { data } = $props();
 	const { db } = $derived(data);
 
-	const tasks = db.search('unsubscribe_task', {
+	const tasks = db.list('unsubscribe_task', {
 		where: { status: { eq: 'suggested' } },
 		limit: 500,
 	});
@@ -13,7 +13,7 @@
 	// Group suggestions by sender domain.
 	const grouped = $derived.by(() => {
 		const map = new Map<string, UnsubscribeTask[]>();
-		for (const t of tasks.docs as UnsubscribeTask[]) {
+		for (const t of tasks.items as UnsubscribeTask[]) {
 			const list = map.get(t.sender_domain) ?? [];
 			list.push(t);
 			map.set(t.sender_domain, list);

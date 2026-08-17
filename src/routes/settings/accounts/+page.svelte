@@ -4,7 +4,7 @@
 	const { data } = $props();
 	const { db } = $derived(data);
 
-	const accounts = db.search('account', { limit: 50 });
+	const accounts = db.list('account', { limit: 50 });
 	let connecting = $state(false);
 	let domain = $state('');
 	let addingDomain = $state(false);
@@ -154,9 +154,9 @@
 <h2>Mail accounts</h2>
 <p class="muted">Connect Gmail, a custom domain, or an IMAP mailbox.</p>
 
-{#if accounts.docs.length}
+{#if accounts.items.length}
 	<ul class="accounts">
-		{#each accounts.docs as a (a.id)}
+		{#each accounts.items as a (a.id)}
 			<li>
 				<div class="acct-row">
 					<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>

@@ -4,14 +4,14 @@
  */
 export interface ThreadQuery {
 	where?: Record<string, unknown>;
-	order?: Array<{ key: string; direction: 'ASC' | 'DESC' }>;
+	order?: Array<{ field: string; direction: 'ASC' | 'DESC' }>;
 	term?: string;
 	limit?: number;
 }
 
-const BY_LAST_MESSAGE: ThreadQuery['order'] = [{ key: 'last_message_at', direction: 'DESC' }];
+const BY_LAST_MESSAGE: ThreadQuery['order'] = [{ field: 'last_message_at', direction: 'DESC' }];
 
-/** Orama enum `where` uses `{ eq }`; string[] fields take a plain string. */
+/** Enum `where` uses `{ eq }`; string[] fields take a plain string. */
 function folderIs(folder: string) {
 	return { folder: { eq: folder } };
 }
@@ -34,7 +34,7 @@ export function viewToQuery(
 			// Soonest wake first — the top row is the next thing coming back.
 			return {
 				where: { ...folderIs('snoozed'), ...account },
-				order: [{ key: 'snoozed_until', direction: 'ASC' }],
+				order: [{ field: 'snoozed_until', direction: 'ASC' }],
 				limit: 100,
 			};
 		case 'sent':

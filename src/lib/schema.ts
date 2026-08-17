@@ -7,7 +7,7 @@
  *
  * DSL notes (verified against @delightstack/database):
  * - Auto `id` (string PK) + `created_at`/`updated_at` (epoch-ms numbers).
- * - `.searchable()` puts a field in the Orama index → it is both fuzzy-searchable
+ * - `.searchable()` puts a field in the search index → it is both fuzzy-searchable
  *   AND usable in a `where` filter, and is mirrored to clients. Keep the set
  * small. Enums/booleans/arrays/FKs support `.searchable()` but NOT
  *   `.indexable()`; `.indexable()` (strings/numbers) only adds a SQLite index for
@@ -118,7 +118,7 @@ export const threadTable = Database.table('thread', (s) => ({
 	subject: s.string().searchable(),
 	// Re:/Fwd:/[list]-stripped, lowercased subject — the threading match key.
 	subject_normalized: s.string().optional().indexable(),
-	// searchable so it enters the Orama index: sparse docs (client index + server
+	// searchable so it enters the search index: sparse docs (client index + server
 	// search hits) are index projections, so a non-indexed snippet NEVER reached
 	// the thread list — rows rendered without preview text. Searching snippets is
 	// a bonus (matches how Gmail treats them).
@@ -128,7 +128,7 @@ export const threadTable = Database.table('thread', (s) => ({
 	account_ids: s.array(s.string()).searchable().optional(),
 	// sortable/searchable: these drive the LIST UI (unread dot, count pill,
 	// paperclip) and search operators (is:unread, has:attachment) — a field
-	// must be in the Orama index to appear in sparse docs or be filterable.
+	// must be in the search index to appear in sparse docs or be filterable.
 	message_count: s.number().sortable().default(0),
 	unread_count: s.number().sortable().default(0),
 	starred: s.boolean().searchable().default(false),

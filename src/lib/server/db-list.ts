@@ -1,7 +1,7 @@
 /**
  * Reading rows out of the mailbox DO.
  *
- * `DatabaseServer.list()` answers in Orama's shape — `{ count, elapsed, facets, hits,
+ * `DatabaseServer.list()` answers in the search engine's shape — `{ count, elapsed, facets, hits,
  * cursor }`, where each hit wraps the row in `.document`. It does **not** return `docs`.
  * `docs` exists only on the *client's* reactive search, and every server-side caller here
  * had copied that field name across, reaching for `res.docs` and silently getting
@@ -16,7 +16,7 @@ export interface ListableDb {
 	list(entity_type: string, query: Record<string, unknown>): Promise<unknown> | unknown;
 }
 
-interface OramaResults {
+interface ListResults {
 	count?: number;
 	hits?: { document?: unknown }[];
 }
@@ -33,7 +33,7 @@ export async function listDocs<T>(
 	entity_type: string,
 	query: Record<string, unknown> = {},
 ): Promise<T[]> {
-	const res = (await db.list(entity_type, { sparse: false, ...query })) as OramaResults | undefined;
+	const res = (await db.list(entity_type, { sparse: false, ...query })) as ListResults | undefined;
 	return (res?.hits ?? []).map((hit) => hit.document as T).filter((doc) => doc != null);
 }
 
@@ -44,7 +44,7 @@ export async function countDocs(
 	query: Record<string, unknown> = {},
 ): Promise<number> {
 	const res = (await db.list(entity_type, { limit: 100, sparse: true, ...query })) as
-		| OramaResults
+		| ListResults
 		| undefined;
 	// `count` is the total match count, independent of the page size — but fall back to the
 	// page length if a DO answers without it.

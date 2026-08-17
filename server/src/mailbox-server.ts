@@ -4,9 +4,11 @@
  * mail-specific RPC surface the app worker calls (see src/lib/mailbox-rpc.ts).
  *
  * Storage split: SQLite holds metadata + an 8KB searchable excerpt;
- * full HTML/raw/attachments live in R2. Orama search index lives in DO memory.
+ * full HTML/raw/attachments live in R2. The search index lives in SQLite rows
+ * written in the same transaction as the entity rows.
  */
 import { DatabaseServer } from '@delightstack/database/worker';
+import type { DatabaseBroadcast } from '@delightstack/database';
 import type { WebsocketServer } from '@delightstack/websocket/worker';
 import { tables, type Thread, type Message, type Settings } from '../../src/lib/schema';
 import { ingestBatch, maintainContacts, type NormalizedMessage } from './ingest';
@@ -58,14 +60,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		// The WS DO shares the same name (the org_id) that clients connect to.
 		const ws_name = (ctx.id as unknown as { name?: string }).name ?? ctx.id.toString();
 		const getWs = () =>
-			env.WS.get(env.WS.idFromName(ws_name)) as unknown as {
-				entityChanged(
-					action: 'created' | 'updated' | 'deleted',
-					entity_type: string,
-					id: string | number,
-					data?: unknown,
-					user_id?: string,
-				): void;
+			env.WS.get(env.WS.idFromName(ws_name)) as unknown as DatabaseBroadcast & {
 				broadcast?(message: Record<string, unknown>): void;
 			};
 		super(tables, getWs, ctx, env as never);

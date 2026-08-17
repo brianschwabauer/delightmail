@@ -50,7 +50,7 @@
 	// Pass a REACTIVE query function — the search class re-queries automatically
 	// when its reactive deps (view / search state) change. (Recreating the search
 	// or setting `.query` in an effect fights the class's own reactivity.)
-	const results = db.search('thread', () => {
+	const results = db.list('thread', () => {
 		if (!(searching && searchTerm)) return viewToQuery(view);
 		const q = viewToQuery(searchScope === 'all' ? 'search' : view);
 		const where: Record<string, unknown> = { ...(q.where ?? {}) };
@@ -65,7 +65,7 @@
 	// so "find that invoice" (body text) or from:alice need the message index —
 	// text_excerpt and from_text are indexed for exactly this. Hits map back to
 	// their threads and merge into the list below.
-	const messageHits = db.search('message', () => {
+	const messageHits = db.list('message', () => {
 		const active = searching && searchTerm && (parsed.term || parsed.from);
 		if (!active) return { where: { thread_id: ['__none__'] }, limit: 1 };
 		const where: Record<string, unknown> = {};
@@ -84,14 +84,14 @@
 		if (!(searching && searchTerm)) return [] as string[];
 		const from = parsed.from;
 		const ids = new Set<string>();
-		for (const m of (messageHits.docs ?? []) as Message[]) {
+		for (const m of (messageHits.items ?? []) as Message[]) {
 			// from: post-filters the hits precisely (the term search is fuzzy).
 			if (from && !(m.from_text ?? '').toLowerCase().includes(from)) continue;
 			if (m.thread_id) ids.add(String(m.thread_id));
 		}
 		return [...ids];
 	});
-	const bodyThreads = db.search('thread', () =>
+	const bodyThreads = db.list('thread', () =>
 		bodyThreadIds.length
 			? { where: { id: bodyThreadIds }, limit: 200 }
 			: { where: { id: ['__none__'] }, limit: 1 },
@@ -100,11 +100,11 @@
 	// Apply the optimistic action overlay (hidden threads + flag patches), then
 	// the client-only yazi filter over the loaded docs.
 	const docs = $derived.by(() => {
-		let all = (results.docs ?? []) as Thread[];
+		let all = (results.items ?? []) as Thread[];
 		// Merge in body-search matches the thread index missed, newest first.
 		if (searching && searchTerm) {
 			const seen = new Set(all.map((t) => String(t.id)));
-			const extras = ((bodyThreads.docs ?? []) as Thread[]).filter((t) => {
+			const extras = ((bodyThreads.items ?? []) as Thread[]).filter((t) => {
 				if (seen.has(String(t.id))) return false;
 				// Thread-level operators still apply to body matches.
 				if (parsed.starred && !t.starred) return false;
@@ -331,7 +331,7 @@
 		// While the search is (re)running, `docs` can still be the PREVIOUS
 		// folder's rows for a beat — committing one of those would preview the
 		// wrong thread, so wait until the new query settles.
-		if (results.loading || results.searching || !docs.length) return;
+		if (results.status === 'loading' || results.status === 'refreshing' || !docs.length) return;
 		untrack(() => {
 			if (previewedView === v) return;
 			previewedView = v;
@@ -591,11 +591,13 @@
 		const domain = (m.from?.email ?? '').split('@')[1]?.toLowerCase();
 		if (!domain) return toast('No unsubscribe option for this sender.');
 		try {
-			const res = (await db.list('unsubscribe_task', {
-				where: { sender_domain: [domain], status: { eq: 'suggested' } },
-				limit: 1,
-			})) as unknown as { docs?: Array<{ id: string | number }> };
-			const task = res.docs?.[0];
+			const res = await db
+				.list('unsubscribe_task', {
+					where: { sender_domain: [domain], status: { eq: 'suggested' } },
+					limit: 1,
+				})
+				.load();
+			const task = res.items?.[0];
 			if (!task) return toast('No unsubscribe option for this sender.');
 			const r = await fetch(`/api/unsubscribe/${encodeURIComponent(String(task.id))}`, {
 				method: 'POST',
@@ -651,12 +653,14 @@
 	// --- reply / reply-all / forward ---
 	async function latestMessage(threadId: string): Promise<Message | null> {
 		try {
-			const res = (await db.list('message', {
-				where: { thread_id: threadId },
-				order: [{ key: 'date', direction: 'DESC' }],
-				limit: 1,
-			})) as unknown as { docs?: Message[] };
-			return res.docs?.[0] ?? null;
+			const res = await db
+				.list('message', {
+					where: { thread_id: threadId },
+					order: [{ field: 'date', direction: 'DESC' }],
+					limit: 1,
+				})
+				.load();
+			return (res.items?.[0] as Message | undefined) ?? null;
 		} catch {
 			return null;
 		}
@@ -1058,7 +1062,7 @@
 			{view}
 			celebrate={clearedByAction}
 			leaving={actions.leaving}
-			loading={results.loading || (docs.length === 0 && !db.synced)}
+			loading={results.status === 'loading' || (docs.length === 0 && !db.synced)}
 			onOpen={(i) => {
 				cursor = i;
 				openCursor();

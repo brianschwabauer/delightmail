@@ -30,10 +30,10 @@
 	// empty result at face value would render "no accounts" on the first frame for
 	// everyone — the wizard flashing over the mail UI on every cold load. Trust the
 	// server's answer (resolved during SSR) until the index actually answers.
-	const accounts = db.search('account', { limit: 1 });
+	const accounts = db.list('account', { limit: 1 });
 	let skippedSetup = $state(false);
 	const hasAccounts = $derived(
-		accounts.loading ? (data.has_accounts ?? true) : accounts.docs.length > 0,
+		accounts.status === 'loading' ? (data.has_accounts ?? true) : accounts.items.length > 0,
 	);
 	const needsSetup = $derived(!hasAccounts && !skippedSetup);
 

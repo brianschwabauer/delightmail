@@ -54,9 +54,9 @@
 	}: Props = $props();
 
 	// Reactive query function — the search re-queries when the open thread changes.
-	const messages = db.search('message', () => ({
+	const messages = db.list('message', () => ({
 		where: { thread_id: threadId ?? '' },
-		order: [{ key: 'date', direction: 'ASC' }],
+		order: [{ field: 'date', direction: 'ASC' }],
 		limit: 200,
 	}));
 
@@ -69,8 +69,8 @@
 	let fallbackThread = $state<string | null>(null);
 	$effect(() => {
 		const tid = threadId;
-		if (!tid || messages.loading || messages.searching) return;
-		if ((messages.docs ?? []).length > 0) return;
+		if (!tid || messages.status === 'loading' || messages.status === 'refreshing') return;
+		if ((messages.items ?? []).length > 0) return;
 		if (untrack(() => fallbackThread) === tid) return;
 		untrack(() => {
 			fallbackThread = tid;
@@ -80,12 +80,14 @@
 	});
 	async function loadFallback(tid: string) {
 		try {
-			const res = (await db.list('message', {
-				where: { thread_id: tid },
-				order: [{ key: 'date', direction: 'ASC' }],
-				sparse: false,
-				limit: 200,
-			} as never)) as unknown as { hits?: Array<{ document?: Message }> };
+			const res = (await db
+				.list('message', {
+					where: { thread_id: tid },
+					order: [{ field: 'date', direction: 'ASC' }],
+					sparse: false,
+					limit: 200,
+				} as never)
+				.load()) as unknown as { hits?: Array<{ document?: Message }> };
 			const rows = (res.hits ?? [])
 				.map((h) => h.document)
 				.filter((m): m is Message => m != null);
@@ -98,7 +100,7 @@
 
 	const docs = $derived.by(() => {
 		if (!threadId) return [];
-		const local = (messages.docs ?? []) as Message[];
+		const local = (messages.items ?? []) as Message[];
 		if (local.length) return local;
 		return fallbackThread === threadId ? fallbackDocs : [];
 	});
@@ -113,7 +115,7 @@
 		mime_type?: string;
 		size_bytes?: number;
 	}
-	const attachmentDocs = db.search('attachment', () => ({
+	const attachmentDocs = db.list('attachment', () => ({
 		where: {
 			message_id: docs.length ? docs.map((m) => String(m.id)) : ['__none__'],
 		},
@@ -121,7 +123,7 @@
 	}));
 	const attachmentsFor = $derived.by(() => {
 		const map = new Map<string, AttachmentDoc[]>();
-		for (const a of (attachmentDocs.docs ?? []) as unknown as AttachmentDoc[]) {
+		for (const a of (attachmentDocs.items ?? []) as unknown as AttachmentDoc[]) {
 			const list = map.get(String(a.message_id)) ?? [];
 			list.push(a);
 			map.set(String(a.message_id), list);
@@ -166,11 +168,13 @@
 	});
 	async function loadReview(ids: string[]) {
 		try {
-			const res = (await db.list('ai_review', {
-				where: { message_id: ids },
-				sparse: false,
-				limit: 10,
-			} as never)) as unknown as { hits?: Array<{ document?: { verdict?: AiVerdict } }> };
+			const res = (await db
+				.list('ai_review', {
+					where: { message_id: ids },
+					sparse: false,
+					limit: 10,
+				} as never)
+				.load()) as unknown as { hits?: Array<{ document?: { verdict?: AiVerdict } }> };
 			const rows = (res.hits ?? []).map((h) => h.document).filter(Boolean);
 			aiReview = rows.length ? (rows[rows.length - 1]?.verdict ?? null) : null;
 		} catch {

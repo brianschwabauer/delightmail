@@ -5,7 +5,7 @@ describe('viewToQuery', () => {
 	it('maps inbox to a folder eq filter ordered by last_message_at', () => {
 		const q = viewToQuery('inbox');
 		expect(q.where).toEqual({ folder: { eq: 'inbox' } });
-		expect(q.order).toEqual([{ key: 'last_message_at', direction: 'DESC' }]);
+		expect(q.order).toEqual([{ field: 'last_message_at', direction: 'DESC' }]);
 	});
 
 	it('maps filtered to the quarantine folder', () => {

@@ -6,7 +6,7 @@
 	const { data } = $props();
 	const { db } = $derived(data);
 
-	const rules = db.search('sender_rule', { limit: 200 });
+	const rules = db.list('sender_rule', { limit: 200 });
 
 	type MatchType = 'from_domain' | 'from_address' | 'list_id';
 	type RuleAction = 'inbox' | 'archive' | 'trash' | 'spam';
@@ -94,11 +94,11 @@
 	<Button dense disabled={adding} onclick={addRule}>{adding ? '…' : 'Add rule'}</Button>
 </form>
 
-{#if rules.docs.length === 0}
+{#if rules.items.length === 0}
 	<div class="empty muted">No rules yet. Add one above, or create one from a message's actions menu.</div>
 {:else}
 	<ul class="list">
-		{#each rules.docs as r (r.id)}
+		{#each rules.items as r (r.id)}
 			<li>
 				<div class="info">
 					<strong>{describe(r as SenderRule)}</strong>
