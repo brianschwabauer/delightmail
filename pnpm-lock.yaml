@@ -18,8 +18,8 @@ importers:
         specifier: ^1.5.1
         version: 1.5.1(@delightstack/styles@1.1.0)(svelte@5.56.4)
       '@delightstack/database':
-        specifier: ^2.2.0
-        version: 2.2.0(svelte@5.56.4)
+        specifier: ^2.2.1
+        version: 2.2.1(svelte@5.56.4)
       '@delightstack/editor':
         specifier: ^1.0.3
         version: 1.0.3(@delightstack/components@1.5.1(@delightstack/styles@1.1.0)(svelte@5.56.4))(svelte@5.56.4)
@@ -204,6 +204,14 @@ packages:
 
   '@delightstack/database@2.2.0':
     resolution: {integrity: sha512-/MUO3V4CGNgnOzPkYsqZiM/mGdUrZFNSNymQU/3luPSnrS++7JsgUHBMLFQSVfYMPtgiEjav3MlUUd7t2O6SWQ==}
+    peerDependencies:
+      svelte: ^5.36.0
+    peerDependenciesMeta:
+      svelte:
+        optional: true
+
+  '@delightstack/database@2.2.1':
+    resolution: {integrity: sha512-enhkltqqw2masa2PFoznuO0WvdY4cbYlKPG4rpu5ZmMWs11R62hmKt2o/FUFxJnKYt56UtMFNjonRYh6cf7/6A==}
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
@@ -1617,6 +1625,14 @@ snapshots:
       thumbhash: 0.1.1
 
   '@delightstack/database@2.2.0(svelte@5.56.4)':
+    dependencies:
+      '@delightstack/utilities': 1.1.0(svelte@5.56.4)
+      comlink: 4.4.2
+      fast-equals: 6.0.2
+    optionalDependencies:
+      svelte: 5.56.4
+
+  '@delightstack/database@2.2.1(svelte@5.56.4)':
     dependencies:
       '@delightstack/utilities': 1.1.0(svelte@5.56.4)
       comlink: 4.4.2
