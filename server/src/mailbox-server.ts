@@ -69,6 +69,18 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		this.#wsForEvents = getWs;
 	}
 
+	/**
+	 * Message rows are far heavier than the library default assumes (8KB
+	 * searchable excerpts, `$derived` rewrites of large json columns) — the
+	 * default 1000-row slice measured ~30s on this corpus, i.e. the whole DO
+	 * CPU budget, so every wake died mid-slice and the DO never served a
+	 * request. 150 rows ≈ 5s worst case: each wake finishes its slice with
+	 * budget to spare and the alarm chain drains the rest.
+	 */
+	protected override searchRebuildRowsPerSlice(): number {
+		return 150;
+	}
+
 	#wsForEvents: () => { broadcast?(message: Record<string, unknown>): void };
 
 	/** Broadcast a custom mail event (mail:new, sync:progress, …) to all devices. */
