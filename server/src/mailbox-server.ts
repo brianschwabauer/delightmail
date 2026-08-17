@@ -881,7 +881,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		const next = rows[0]?.next;
 		if (next == null) return;
 		const current = await this.ctx.storage.getAlarm();
-		if (current == null || next < current) {
+		// `current <= Date.now()` matches SyncEngine's stale-alarm fix (the
+		// 2026-08-11 incident): after the runtime abandons a crash-looping
+		// alarm, getAlarm() keeps returning the stale past timestamp, and
+		// without this clause the queue never re-arms.
+		if (current == null || next < current || current <= Date.now()) {
 			await this.ctx.storage.setAlarm(next);
 		}
 	}
