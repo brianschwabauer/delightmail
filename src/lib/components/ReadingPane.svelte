@@ -68,9 +68,21 @@
 	let fallbackDocs = $state<Message[]>([]);
 	let fallbackThread = $state<string | null>(null);
 	$effect(() => {
+		// Read the reactive handle UNCONDITIONALLY, before any early return. This
+		// effect is the handle's one lifetime-long subscriber: every other reader
+		// (the template, `docs`) is conditional on threadId, and a handle whose
+		// readers all bail while threadId is null loses its live subscription —
+		// the reactive query then never re-runs when threadId changes and the
+		// reader sits on its skeleton forever (the 2026-08-18 "previews stopped
+		// loading" regression).
+		const status = messages.status;
+		const items = (messages.items ?? []).length;
+		// Same lifeline for the attachment handle: its only other reader (the
+		// chips markup) vanishes whenever the skeleton shows.
+		void attachmentDocs.status;
 		const tid = threadId;
-		if (!tid || messages.status === 'loading' || messages.status === 'refreshing') return;
-		if ((messages.items ?? []).length > 0) return;
+		if (!tid || status === 'loading' || status === 'refreshing') return;
+		if (items > 0) return;
 		if (untrack(() => fallbackThread) === tid) return;
 		untrack(() => {
 			fallbackThread = tid;
