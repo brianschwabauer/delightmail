@@ -81,6 +81,16 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		return 150;
 	}
 
+	/**
+	 * Same story as the slice override: the library default (tuned for plain
+	 * rows) is too big here. Legacy journal rows carry multi-KB msgpack sparse
+	 * docs, and prod measured a 5000-row chunk at >32s CPU (~6.5ms/row) — the
+	 * whole DO budget, killed before the chunk's own log line. 250 rows ≈ <2s.
+	 */
+	protected override legacyJournalDropBatch(): number {
+		return 250;
+	}
+
 	#wsForEvents: () => { broadcast?(message: Record<string, unknown>): void };
 
 	/** Broadcast a custom mail event (mail:new, sync:progress, …) to all devices. */
