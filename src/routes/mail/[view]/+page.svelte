@@ -357,6 +357,24 @@
 			void prefetchBodies(top);
 		});
 	});
+	// Reading order is predictable (j/k walks the list), so once a thread is open
+	// warm its neighbors too — the NEXT open becomes a disk-cache hit even deep in
+	// the list, where the top-of-list warmup above never reached.
+	const NEIGHBOR_PREFETCH = 3;
+	$effect(() => {
+		const id = openId;
+		if (!id) return;
+		untrack(() => {
+			if (isMobile.current) return;
+			const i = docs.findIndex((t) => String(t.id) === id);
+			if (i < 0) return;
+			const around = [
+				...docs.slice(i + 1, i + 1 + NEIGHBOR_PREFETCH),
+				...docs.slice(Math.max(0, i - 1), i),
+			].map((t) => String(t.id));
+			if (around.length) void prefetchBodies(around);
+		});
+	});
 	async function prefetchBodies(thread_ids: string[]) {
 		for (const tid of thread_ids) {
 			if (prefetched.has(tid)) continue;
