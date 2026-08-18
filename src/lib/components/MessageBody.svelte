@@ -91,9 +91,21 @@
 		return true;
 	}
 
+	/** The first measure sizes the frame exactly; after that, grow ONLY when the
+	 *  content overflows the frame. A body styled `height:100%` reports
+	 *  scrollHeight == the frame's own viewport, so an unconditional `h + 24`
+	 *  on every ResizeObserver tick fed the frame its own height back (+24
+	 *  each round) and ballooned short emails to the 4000px cap. */
+	let measured = false;
 	function measure(doc: Document) {
 		const h = doc.body?.scrollHeight ?? 0;
-		if (h > 0) frameHeight = Math.min(h + 24, 4000);
+		if (h <= 0) return;
+		if (!measured) {
+			measured = true;
+			frameHeight = Math.min(h + 24, 4000);
+		} else if (h > frameHeight) {
+			frameHeight = Math.min(h + 24, 4000);
+		}
 	}
 
 	function onLoad() {
@@ -131,7 +143,7 @@
 	<iframe
 		bind:this={iframe}
 		title="Message body"
-		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}&v=2"
+		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}&v=3"
 		class:dark={scheme === 'dark'}
 		class:sized
 		sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"

@@ -133,9 +133,12 @@ function bodyResponse(body: string, contentType: string): Response {
 			'content-type': contentType,
 			'x-content-type-options': 'nosniff',
 			'cache-control': IMMUTABLE,
-			// The reading pane iframe pins a strict CSP.
+			// The reading pane iframe pins a strict CSP. Google Fonts stylesheets are
+			// the one external CSS host allowed — big senders (YouTube, marketing
+			// mail) link them, and blocking them only cost rendering fidelity while
+			// spamming the console with CSP violations. Fixed host, no script risk.
 			'content-security-policy':
-				"default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src https: data:",
+				"default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https: data:",
 		},
 	});
 }
