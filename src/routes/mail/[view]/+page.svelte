@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, onMount, untrack, getContext } from 'svelte';
-	import { pushState, replaceState } from '$app/navigation';
+	import { afterNavigate, pushState, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Button, Input, toast } from '@delightstack/components';
 	import { isMobile } from '$lib/mobile';
@@ -14,6 +14,7 @@
 	import { useScope } from '$lib/mail/scope.svelte';
 	import { useFocus } from '$lib/mail/focus.svelte';
 	import { replySubject, replyAllRecipients, buildQuoteDoc } from '$lib/mail/compose';
+	import { parseParticipantText } from '$lib/mail/participants';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
 	import type { ComposeInit } from '$lib/components/Compose.svelte';
@@ -199,13 +200,19 @@
 	// the full-screen reader instead of leaving the app; in-app closes pop that
 	// same entry so stale reader states never pile up in history.
 	let pushedReader = false;
+	// pushState/replaceState THROW before the router initializes — and on a ?t=
+	// deep link the mirror effect's first run DOES carry a change (openId is set
+	// in onMount, before the router is up). The throw didn't just skip the
+	// mirror: an exception in an effect aborts the whole flush, freezing every
+	// effect on the page — the deep-linked reader sat on its skeleton forever.
+	// Gate on router-ready instead; the effect re-runs when the flag flips.
+	let routerReady = $state(false);
+	afterNavigate(() => (routerReady = true));
 	$effect(() => {
 		const id = openId;
-		if (typeof history === 'undefined') return;
+		if (!routerReady || typeof history === 'undefined') return;
 		untrack(() => {
-			// Only touch history when something actually changes — the effect's very
-			// first run (openId null, no ?t) happens BEFORE the SvelteKit router
-			// initializes, where pushState/replaceState throw.
+			// Only touch history when something actually changes.
 			const url = new URL(location.href);
 			const current = url.searchParams.get('t');
 			if (id) {
@@ -668,6 +675,145 @@
 		return t ? [t] : [];
 	}
 
+	// --- yank (y-chord): copy things about the current conversation ---
+	// Targets what the reader shows (openId), falling back to the list cursor —
+	// so it works identically from the middle pane and the reading pane.
+	function yankThread(): Thread | null {
+		return (
+			(openId ? (docs.find((d) => String(d.id) === openId) as Thread | undefined) : undefined) ??
+			(docs[cursor] as Thread | undefined) ??
+			null
+		);
+	}
+	/** Latest inbound message of the yank target from the reader's loaded docs. */
+	function yankMessage(t: Thread): Message | null {
+		const loaded = openMessages.filter((m) => String(m.thread_id) === String(t.id));
+		for (let i = loaded.length - 1; i >= 0; i--) if (!loaded[i].is_outbound) return loaded[i];
+		return loaded[loaded.length - 1] ?? null;
+	}
+	/** The conversation's sender address: latest inbound from, else the first
+	 *  participant that isn't one of the user's own addresses. */
+	function yankSender(t: Thread): string | null {
+		const m = yankMessage(t);
+		const from_msg = m?.from?.email ?? parseParticipantText(m?.from_text)[0]?.email;
+		if (from_msg) return from_msg;
+		const emails = (t.participants ?? [])
+			.map((p) => p?.email)
+			.filter((e): e is string => !!e);
+		const self = new Set(scope.selfEmails.map((e) => e.toLowerCase()));
+		return (
+			emails.find((e) => !self.has(e.toLowerCase())) ??
+			emails[0] ??
+			parseParticipantText(t.participant_text)[0]?.email ??
+			null
+		);
+	}
+	async function copyText(text: string | null | undefined, what: string): Promise<void> {
+		if (!text) {
+			toast(`Nothing to copy — no ${what}.`);
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(text);
+			toast(`Copied ${what}.`);
+		} catch {
+			toast('Clipboard unavailable.');
+		}
+	}
+	async function yankBody(t: Thread): Promise<void> {
+		const m = yankMessage(t) ?? (await latestMessage(String(t.id)));
+		if (!m) return copyText(t.snippet ?? null, 'body text');
+		try {
+			// The stored plain-text body (full, quoted chains included); the excerpt
+			// and snippet are progressively shorter fallbacks.
+			const res = await fetch(`/api/messages/${encodeURIComponent(String(m.id))}/body?format=text`);
+			const text = res.ok ? (await res.text()).trim() : '';
+			return copyText(text || m.text_excerpt || t.snippet || null, 'body text');
+		} catch {
+			return copyText(m.text_excerpt || t.snippet || null, 'body text');
+		}
+	}
+	async function yankAttachment(t: Thread): Promise<void> {
+		const loaded = openMessages.filter((m) => String(m.thread_id) === String(t.id));
+		let ids = loaded.map((m) => String(m.id));
+		if (!ids.length) {
+			const m = await latestMessage(String(t.id));
+			if (m) ids = [String(m.id)];
+		}
+		if (!ids.length) {
+			toast('No attachments in this conversation.');
+			return;
+		}
+		interface AttDoc {
+			id: string;
+			filename?: string;
+			mime_type?: string;
+		}
+		let atts: AttDoc[] = [];
+		try {
+			const res = await db
+				.list('attachment', { where: { message_id: ids }, limit: 100 } as never)
+				.load();
+			atts = (res.items ?? []) as unknown as AttDoc[];
+		} catch {
+			/* fall through to the empty toast */
+		}
+		if (!atts.length) {
+			toast('No attachments in this conversation.');
+			return;
+		}
+		const urls = atts.map(
+			(a) => `${location.origin}/api/attachments/${encodeURIComponent(String(a.id))}`,
+		);
+		// A single image goes onto the clipboard as an actual image (converted to
+		// PNG — the only raster type the async clipboard accepts); everything else
+		// copies as download link(s).
+		if (atts.length === 1 && (atts[0].mime_type ?? '').startsWith('image/')) {
+			try {
+				const blob = await fetch(urls[0]).then((r) => (r.ok ? r.blob() : Promise.reject()));
+				const bitmap = await createImageBitmap(blob);
+				const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+				canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+				const png = await canvas.convertToBlob({ type: 'image/png' });
+				await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+				toast(`Copied ${atts[0].filename ?? 'image'}.`);
+				return;
+			} catch {
+				/* fall back to the link */
+			}
+		}
+		await copyText(
+			urls.join('\n'),
+			atts.length === 1
+				? `link to ${atts[0].filename ?? 'attachment'}`
+				: `${atts.length} attachment links`,
+		);
+	}
+	function yank(kind: 'sender' | 'subject' | 'body' | 'attachment' | 'link'): void {
+		const t = yankThread();
+		if (!t) {
+			toast('No conversation selected.');
+			return;
+		}
+		switch (kind) {
+			case 'sender':
+				void copyText(yankSender(t), 'sender address');
+				break;
+			case 'subject':
+				void copyText(t.subject ?? null, 'subject');
+				break;
+			case 'body':
+				void yankBody(t);
+				break;
+			case 'attachment':
+				void yankAttachment(t);
+				break;
+			case 'link':
+				void copyText(`${location.origin}/mail/${view}?t=${String(t.id)}`, 'conversation link');
+				break;
+		}
+	}
+
 	// --- reply / reply-all / forward ---
 	async function latestMessage(threadId: string): Promise<Message | null> {
 		try {
@@ -959,6 +1105,14 @@
 			{ keys: 'r', description: 'Reply', group: 'Actions', context: 'list', handler: () => reply('reply') },
 			{ keys: 'R', description: 'Reply all', group: 'Actions', context: 'list', handler: () => reply('reply_all') },
 			{ keys: 'w', description: 'Forward', group: 'Actions', context: 'list', handler: () => reply('forward') },
+			// Yank (copy) chords — work from the list and the reader alike; pressing
+			// `y` alone shows the which-key hint listing these.
+			{ keys: 'y y', description: 'Copy sender address', group: 'Copy', context: 'list', when: listOrReading, handler: () => yank('sender') },
+			{ keys: 'y f', description: 'Copy sender address', group: 'Copy', context: 'list', when: listOrReading, handler: () => yank('sender') },
+			{ keys: 'y s', description: 'Copy subject', group: 'Copy', context: 'list', when: listOrReading, handler: () => yank('subject') },
+			{ keys: 'y b', description: 'Copy body text', group: 'Copy', context: 'list', when: listOrReading, handler: () => yank('body') },
+			{ keys: 'y a', description: 'Copy attachment', group: 'Copy', context: 'list', when: listOrReading, handler: () => yank('attachment') },
+			{ keys: 'y l', description: 'Copy link to conversation', group: 'Copy', context: 'list', when: listOrReading, handler: () => yank('link') },
 			{ keys: '/', description: 'Search', group: 'Find', context: 'list', handler: startSearch },
 			{ keys: 'f', description: 'Filter loaded list', group: 'Find', context: 'list', handler: startFilter },
 			{ keys: 'Escape', description: 'Close / clear', group: 'Panes', context: 'list', global: true, handler: () => {

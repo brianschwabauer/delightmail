@@ -6,6 +6,13 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 
+interface SeedAttachment {
+	filename: string;
+	mime_type: string;
+	/** Generates the file bytes (kept lazy so the seed module stays small). */
+	content: () => Uint8Array;
+}
+
 interface SeedMessage {
 	from: [name: string, email: string];
 	subject: string;
@@ -17,7 +24,106 @@ interface SeedMessage {
 	/** Groups messages into one thread; omit for a single-message thread. */
 	thread?: string;
 	is_outbound?: boolean;
+	attachments?: SeedAttachment[];
 }
+
+// --- Attachment byte generators (real, openable files) ---------------------
+
+/** A tiny but valid single-page PDF with the given title drawn on it. */
+function tinyPdf(title: string): Uint8Array {
+	const text = title.replace(/[()\\]/g, '');
+	const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`;
+	const objects = [
+		'<< /Type /Catalog /Pages 2 0 R >>',
+		'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+		'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+		`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+		'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+	];
+	let pdf = '%PDF-1.4\n';
+	const offsets: number[] = [];
+	objects.forEach((obj, i) => {
+		offsets.push(pdf.length);
+		pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+	});
+	const xref = pdf.length;
+	pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+	for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+	pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+	return new TextEncoder().encode(pdf);
+}
+
+/** A small solid-color PNG (validly encoded; visible when opened). */
+function tinyPng(r: number, g: number, b: number): Uint8Array {
+	// 8x8 truecolor PNG, uncompressed deflate (stored blocks).
+	const W = 8;
+	const raw: number[] = [];
+	for (let y = 0; y < W; y++) {
+		raw.push(0); // filter: none
+		for (let x = 0; x < W; x++) raw.push(r, g, b);
+	}
+	// zlib stream: header + single stored deflate block + adler32
+	const data = new Uint8Array(raw);
+	let a = 1,
+		bAd = 0;
+	for (const byte of data) {
+		a = (a + byte) % 65521;
+		bAd = (bAd + a) % 65521;
+	}
+	const stored = [
+		0x78, 0x01, 0x01, data.length & 0xff, (data.length >> 8) & 0xff,
+		~data.length & 0xff, (~data.length >> 8) & 0xff, ...data,
+		(bAd >> 8) & 0xff, bAd & 0xff, (a >> 8) & 0xff, a & 0xff,
+	];
+	const crcTable = [...Array(256)].map((_, n) => {
+		let c = n;
+		for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+		return c >>> 0;
+	});
+	const crc = (bytes: number[]) => {
+		let c = 0xffffffff;
+		for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+		return (c ^ 0xffffffff) >>> 0;
+	};
+	const chunk = (type: string, body: number[]) => {
+		const t = [...type].map((ch) => ch.charCodeAt(0));
+		const all = [...t, ...body];
+		const c = crc(all);
+		return [
+			(body.length >> 24) & 0xff, (body.length >> 16) & 0xff,
+			(body.length >> 8) & 0xff, body.length & 0xff,
+			...all,
+			(c >> 24) & 0xff, (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff,
+		];
+	};
+	const ihdr = chunk('IHDR', [0, 0, 0, W, 0, 0, 0, W, 8, 2, 0, 0, 0]);
+	const idat = chunk('IDAT', stored);
+	const iend = chunk('IEND', []);
+	return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...ihdr, ...idat, ...iend]);
+}
+
+function textFile(text: string): () => Uint8Array {
+	return () => new TextEncoder().encode(text);
+}
+
+const ICS_INVITE = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//DelightMail Seed//EN
+BEGIN:VEVENT
+UID:seed-dinner@delightmail.dev
+DTSTART:20260823T000000Z
+DTEND:20260823T020000Z
+SUMMARY:Sunday dinner
+LOCATION:Mom & Dad's
+END:VEVENT
+END:VCALENDAR
+`;
+
+const CONTRACT_CSV = `line,item,change,decision
+1,Liability cap,Raise to 12 months of fees,accept
+2,Data deletion clause,Struck entirely,reject
+3,Renewal term,Auto-renew 12mo,accept
+`;
 
 const ME = 'demo@gmail.com';
 
@@ -63,6 +169,9 @@ deployment notifications for this account.</p>`,
 		body: `<p>Are you free this Sunday? Your father is threatening to make the
 lasagna again, and I think it would help to have a witness.</p>
 <p>Around 6? Bring nothing, he insists.</p>`,
+		attachments: [
+			{ filename: 'Sunday dinner.ics', mime_type: 'text/calendar', content: textFile(ICS_INVITE) },
+		],
 	},
 	{
 		from: ['GitHub', 'notifications@github.com'],
@@ -87,6 +196,14 @@ broken image icon in the reading pane.
 <li>They struck the data-deletion clause entirely. I think that's <em>not</em> fine.</li>
 </ol>
 <p>If you can look before Friday we can still close this month.</p>`,
+		attachments: [
+			{
+				filename: 'Vendor agreement — redlines v3.pdf',
+				mime_type: 'application/pdf',
+				content: () => tinyPdf('Vendor agreement - redlines v3'),
+			},
+			{ filename: 'redline-summary.csv', mime_type: 'text/csv', content: textFile(CONTRACT_CSV) },
+		],
 	},
 	{
 		from: ['Stripe', 'receipts@stripe.com'],
@@ -156,6 +273,10 @@ position when returning from a thread</p>
 		body: `<p>Finally got around to sorting these. There are 400 of them and roughly
 six are good, which feels like a reasonable ratio.</p>
 <p><a href="https://example.com/album">Shared album →</a></p>`,
+		attachments: [
+			{ filename: 'IMG_2481.png', mime_type: 'image/png', content: () => tinyPng(52, 120, 246) },
+			{ filename: 'IMG_2497.png', mime_type: 'image/png', content: () => tinyPng(240, 130, 48) },
+		],
 	},
 	{
 		from: ['Alex Rivera', 'alex.rivera@gmail.com'],
@@ -228,6 +349,18 @@ export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 			// Real bodies in R2 so the reading pane renders instead of sitting empty.
 			const prefix = await messagePrefix(org_id, rfc822_message_id);
 			const text = toText(m.body);
+			// Attachment bytes live at the same deterministic layout ingest uses
+			// (`{prefix}/att/{i}`), so `/api/attachments/:id` serves them for real.
+			const attachments = (m.attachments ?? []).map((a, ai) => {
+				const bytes = a.content();
+				return {
+					filename: a.filename,
+					mime_type: a.mime_type,
+					size_bytes: bytes.length,
+					r2_key: `${prefix}/att/${ai}`,
+					bytes,
+				};
+			});
 			await Promise.all([
 				r2.put(`${prefix}/body.html`, m.body, {
 					httpMetadata: { contentType: 'text/html; charset=utf-8' },
@@ -235,6 +368,9 @@ export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 				r2.put(`${prefix}/body.txt`, text, {
 					httpMetadata: { contentType: 'text/plain; charset=utf-8' },
 				}),
+				...attachments.map((a) =>
+					r2.put(a.r2_key, a.bytes, { httpMetadata: { contentType: a.mime_type } }),
+				),
 			]);
 
 			// Messages sharing a `thread` key also share a subject, so the pure
@@ -256,6 +392,8 @@ export async function handleDevSeed(event: RequestEvent): Promise<Response> {
 				folder: 'inbox',
 				in_reply_to: root && i > 0 ? root : undefined,
 				references: root ? [root] : [],
+				attachments: attachments.map(({ bytes: _bytes, ...a }) => a),
+				attachment_count: attachments.length,
 			};
 		}),
 	);

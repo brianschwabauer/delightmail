@@ -379,17 +379,18 @@
 					{/if}
 					<span class="draft-tag">Draft</span>
 					<h1 class="subject">{headSubject}</h1>
-				</div>
-				<div class="toolbar">
-					<Button size="0" accent onclick={() => onEditDraft?.()}>
-						<Icon name="pencil" size={15} /> Continue editing
-					</Button>
-					{#if onAct}
-						<span class="tb-gap"></span>
-						<Button size="0" transparent onclick={() => onAct('trash')}>
-							<Icon name="trash" size={15} /> Discard
+					<div class="actions draft-actions">
+						<Button size="0" accent onclick={() => onEditDraft?.()}>
+							<Icon name="pencil" size={15} /> Continue editing
 						</Button>
-					{/if}
+						{#if onAct}
+							<Hint label="Discard draft" keys={['d']}>
+								<Button size="0" transparent aria-label="Discard draft" onclick={() => onAct('trash')}>
+									<Icon name="trash" size={16} />
+								</Button>
+							</Hint>
+						{/if}
+					</div>
 				</div>
 			</div>
 		</header>
@@ -426,37 +427,40 @@
 					{/if}
 					{#if headStarred}<span class="star" title="Starred"><Icon name="star" size={18} fill /></span>{/if}
 					<h1 class="subject">{headSubject}</h1>
-				</div>
-				{#if onReply || onAct}
-					<div class="toolbar">
-						{#if onReply}
-							<Hint label="Reply" keys={['r']}>
-								<Button size="0" transparent onclick={() => onReply('reply')}><Icon name="reply" size={15} /> Reply</Button>
-							</Hint>
-							<Hint label="Reply all" keys={['R']}>
-								<Button size="0" transparent onclick={() => onReply('reply_all')}><Icon name="reply-all" size={15} /> Reply all</Button>
-							</Hint>
-							<Hint label="Forward" keys={['w']}>
-								<Button size="0" transparent onclick={() => onReply('forward')}><Icon name="forward" size={15} /> Forward</Button>
-							</Hint>
-						{/if}
-						{#if onAct}
-							<span class="tb-gap"></span>
-							{#if folder === 'archive'}
-								<Hint label="Unarchive" keys={['a']}>
-									<Button size="0" transparent onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={15} /> Unarchive</Button>
+					{#if onReply || onAct}
+						<!-- Icon-only cluster on the subject line — the labels live in the
+						     hover hints (with their key chips), so the header stays one calm
+						     row instead of a second row of labelled buttons. -->
+						<div class="actions">
+							{#if onReply}
+								<Hint label="Reply" keys={['r']}>
+									<Button size="0" transparent aria-label="Reply" onclick={() => onReply('reply')}><Icon name="reply" size={16} /></Button>
 								</Hint>
-							{:else}
-								<Hint label="Archive" keys={['a']}>
-									<Button size="0" transparent onclick={() => onAct('archive')}><Icon name="archive" size={15} /> Archive</Button>
+								<Hint label="Reply all" keys={['R']}>
+									<Button size="0" transparent aria-label="Reply all" onclick={() => onReply('reply_all')}><Icon name="reply-all" size={16} /></Button>
+								</Hint>
+								<Hint label="Forward" keys={['w']}>
+									<Button size="0" transparent aria-label="Forward" onclick={() => onReply('forward')}><Icon name="forward" size={16} /></Button>
 								</Hint>
 							{/if}
-							<Hint label="Trash" keys={['d']}>
-								<Button size="0" transparent onclick={() => onAct('trash')}><Icon name="trash" size={15} /> Trash</Button>
-							</Hint>
-						{/if}
-					</div>
-				{/if}
+							{#if onAct}
+								<span class="tb-gap"></span>
+								{#if folder === 'archive'}
+									<Hint label="Unarchive" keys={['a']}>
+										<Button size="0" transparent aria-label="Unarchive" onclick={() => onAct('move', { folder: 'inbox' })}><Icon name="inbox" size={16} /></Button>
+									</Hint>
+								{:else}
+									<Hint label="Archive" keys={['a']}>
+										<Button size="0" transparent aria-label="Archive" onclick={() => onAct('archive')}><Icon name="archive" size={16} /></Button>
+									</Hint>
+								{/if}
+								<Hint label="Trash" keys={['d']}>
+									<Button size="0" transparent aria-label="Trash" onclick={() => onAct('trash')}><Icon name="trash" size={16} /></Button>
+								</Hint>
+							{/if}
+						</div>
+					{/if}
+				</div>
 			</div>
 		</header>
 
@@ -510,7 +514,17 @@
 										target="_blank"
 										rel="noopener"
 										title={att.filename || 'attachment'}>
-										<Icon name={attIcon(att.mime_type)} size={15} />
+										{#if (att.mime_type ?? '').startsWith('image/')}
+											<!-- Images preview themselves — the bytes endpoint serves
+											     raster types inline, so the chip's icon IS the file. -->
+											<img
+												class="att-thumb"
+												src="/api/attachments/{encodeURIComponent(att.id)}"
+												alt=""
+												loading="lazy" />
+										{:else}
+											<Icon name={attIcon(att.mime_type)} size={15} />
+										{/if}
 										<span class="att-name">{att.filename || 'attachment'}</span>
 										<span class="att-size">{fmtSize(att.size_bytes)}</span>
 										<Icon name="download" size={13} class="att-dl" />
@@ -593,8 +607,25 @@
 	}
 	.subject-row {
 		display: flex;
-		align-items: baseline;
+		align-items: flex-start;
 		gap: var(--space-2);
+	}
+	.subject-row .star {
+		/* optically center against the subject's first line */
+		margin-top: 3px;
+	}
+	/* The action cluster rides the subject's first line, pinned right. A long
+	   subject wraps underneath it instead of pushing it around (spatial
+	   stability: the icons never move while you read). */
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		margin-left: auto;
+		flex-shrink: 0;
+		/* subject line-height 1.25 at font-size-3 ≈ 30px; the size-0 buttons are
+		   shorter — nudge down so the icons sit on the subject's optical center. */
+		margin-top: 1px;
 	}
 	.star {
 		display: inline-flex;
@@ -731,13 +762,6 @@
 			transform: translateX(100%);
 		}
 	}
-	.toolbar {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		margin-top: var(--space-2);
-		flex-wrap: wrap;
-	}
 	.tb-gap {
 		width: 1px;
 		align-self: stretch;
@@ -827,6 +851,14 @@
 	.att-chip:hover {
 		border-color: color-mix(in oklab, var(--color-primary) 45%, var(--color-border));
 		background: color-mix(in oklab, var(--color-primary) 5%, var(--color-bg-0));
+	}
+	.att-thumb {
+		width: 22px;
+		height: 22px;
+		object-fit: cover;
+		border-radius: var(--radius-sm);
+		flex-shrink: 0;
+		background: var(--color-bg-2);
 	}
 	.att-name {
 		overflow: hidden;
@@ -929,8 +961,18 @@
 		.backbtn:active {
 			background: var(--color-bg-3);
 		}
-		article:not(:has(.draft-tag)) .toolbar {
+		/* The desktop icon cluster gives way to the page's fixed bottom action
+		   bar; the draft CTA has no bottom-bar stand-in, so it stays — wrapping
+		   onto its own line under the (narrow) subject. */
+		.actions:not(.draft-actions) {
 			display: none;
+		}
+		.subject-row {
+			flex-wrap: wrap;
+		}
+		.draft-actions {
+			margin-left: 0;
+			flex-basis: 100%;
 		}
 		.head-col,
 		.message,
