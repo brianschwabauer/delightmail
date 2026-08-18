@@ -111,6 +111,46 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		return false;
 	}
 
+	/** Whether search-migration work (rebuild cursors or legacy tables) remains. */
+	#searchMigrationPending(): boolean {
+		const rows = this.exec(`SELECT json FROM state WHERE id = 'main' LIMIT 1`) as Array<{
+			json: string;
+		}>;
+		try {
+			const native = (JSON.parse(rows[0]?.json ?? '{}').native_search ?? {}) as Record<
+				string,
+				{ rebuild?: unknown }
+			>;
+			if (Object.values(native).some((entry) => entry?.rebuild !== undefined)) return true;
+		} catch {
+			/* unreadable state — let the legacy-table check decide */
+		}
+		const legacy = this.exec(
+			`SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('search_index', 'search_journal')`,
+		) as unknown[];
+		return legacy.length > 0;
+	}
+
+	/**
+	 * Advance the search migration by a few slices, RPC-driven.
+	 *
+	 * The migration is designed to self-continue on this object's alarm — but
+	 * workerd ABANDONS an alarm after enough consecutive failures, and this
+	 * mailbox's alarm crash-looped for hours before the work was chunked
+	 * small enough to survive. Once abandoned, even an unconditional
+	 * setAlarm() never fires again, so the pending work just sits there.
+	 * SyncEngine's alarm demonstrably still works, so it calls this as a
+	 * backstop: `super.alarm()` runs DatabaseServer's registered handlers
+	 * (the `search_rebuild` continuation) directly, no alarm required.
+	 */
+	async migrationTick(): Promise<{ pending: boolean }> {
+		let iterations = 0;
+		while (this.#searchMigrationPending() && iterations++ < 6) {
+			await super.alarm();
+		}
+		return { pending: this.#searchMigrationPending() };
+	}
+
 	#wsForEvents: () => { broadcast?(message: Record<string, unknown>): void };
 
 	/** Broadcast a custom mail event (mail:new, sync:progress, …) to all devices. */

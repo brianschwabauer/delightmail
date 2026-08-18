@@ -106,6 +106,7 @@ function retryBackoffMs(attempts: number): number {
 
 interface MailboxStub {
 	ingestMessages(batch: unknown[]): Promise<{ ingested: number; skipped: number }>;
+	migrationTick(): Promise<{ pending: boolean }>;
 	broadcastMail(event: Record<string, unknown>): void;
 	update(entity_type: string, id: string, data: Record<string, unknown>): unknown;
 	applyRemoteFlagChange(payload: unknown): Promise<void>;
@@ -381,6 +382,28 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			}
 		}
 		await this.#rearm();
+
+		// Backstop for the mailbox's search migration: the MailboxServer's own
+		// alarm was abandoned by the runtime after its hours-long crash loop and
+		// never fires again, so ITS pending migration is driven from here — the
+		// one alarm in the system that provably still works. Each call advances
+		// a few bounded slices; while work remains, pull our next alarm to ~3s
+		// out so the drain runs continuously instead of at job cadence.
+		try {
+			const { pending } = await this.#mailbox().migrationTick();
+			if (pending) {
+				const next = Date.now() + 3_000;
+				const current = await this.ctx.storage.getAlarm();
+				if (current == null || next < current || current <= Date.now()) {
+					await this.ctx.storage.setAlarm(next);
+				}
+			}
+		} catch (err) {
+			// A migration slice that still exceeds a limit kills the RPC, not this
+			// alarm — log it (the mailbox's own batch log names the stuck rows)
+			// and let the next tick retry.
+			console.error('[SyncEngine] migrationTick failed:', err);
+		}
 	}
 
 	async #runJob(type: JobType, payload: unknown): Promise<void> {
