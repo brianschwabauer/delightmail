@@ -76,9 +76,18 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	 * CPU budget, so every wake died mid-slice and the DO never served a
 	 * request. 150 rows ≈ 5s worst case: each wake finishes its slice with
 	 * budget to spare and the alarm chain drains the rest.
+	 *
+	 * Lowered again to 30 after the batch logs caught the migration stuck on
+	 * one specific 150-row message batch (after id 0VRvJzJpSJ6GWBSj7TOC) that
+	 * died with a STORAGE timeout on top of the CPU limit: message rows can
+	 * approach the 2MB DO row cap (drafts embedding images), they cluster in
+	 * id order, and the rebuild both reads and json_set-rewrites each row in
+	 * one batch transaction. 30 rows bounds a batch at ~60MB even in the worst
+	 * neighborhood. If the same cursor still dies at 30, it's a single poison
+	 * row — the batch log will say so.
 	 */
 	protected override searchRebuildRowsPerSlice(): number {
-		return 150;
+		return 30;
 	}
 
 	/**
