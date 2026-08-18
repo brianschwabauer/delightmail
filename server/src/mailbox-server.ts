@@ -91,6 +91,17 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		return 250;
 	}
 
+	/**
+	 * Never do migration work in the constructor. This mailbox has now been
+	 * wedged three times by O(corpus) work running before the object could
+	 * serve a single request — with alarm-only migration, an over-budget unit
+	 * of work kills a retried alarm attempt instead of every wake, requests
+	 * keep flowing, and the batch logs identify exactly what's stuck.
+	 */
+	protected override searchRebuildInConstructor(): boolean {
+		return false;
+	}
+
 	#wsForEvents: () => { broadcast?(message: Record<string, unknown>): void };
 
 	/** Broadcast a custom mail event (mail:new, sync:progress, …) to all devices. */
