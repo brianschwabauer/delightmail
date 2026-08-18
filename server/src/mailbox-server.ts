@@ -144,8 +144,20 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	 * (the `search_rebuild` continuation) directly, no alarm required.
 	 */
 	async migrationTick(): Promise<{ pending: boolean }> {
+		// Time-bounded, not iteration-bounded: each `await` is a clock-advance
+		// boundary in workerd, so Date.now() is trustworthy here (unlike inside
+		// a synchronous loop). Light row pockets get many slices per tick;
+		// heavy pockets (drafts near the 2MB row cap cluster in id order) stop
+		// early instead of accumulating past the 30s CPU limit and dying with
+		// the tick's uncommitted tail. The iteration cap is a backstop for a
+		// frozen clock.
+		const started = Date.now();
 		let iterations = 0;
-		while (this.#searchMigrationPending() && iterations++ < 6) {
+		while (
+			this.#searchMigrationPending() &&
+			Date.now() - started < 8_000 &&
+			iterations++ < 20
+		) {
 			await super.alarm();
 		}
 		return { pending: this.#searchMigrationPending() };
