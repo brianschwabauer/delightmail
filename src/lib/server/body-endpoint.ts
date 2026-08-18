@@ -32,7 +32,10 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	if (kv) {
 		const cached = await kv.get(cacheKey);
 		if (cached !== null) {
-			return bodyResponse(format === 'text' ? cached : typeset(cached, scheme), contentType);
+			return bodyResponse(
+				format === 'text' ? cached : typeset(upgradeLegacyBody(cached), scheme),
+				contentType,
+			);
 		}
 	}
 
@@ -65,7 +68,30 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 
 	let body = await readCached(r2, kv, key, cacheKey, text_as_html ? textToHtml : undefined);
 	if (body === null) return DelightError.notFound('Body not found').toResponse();
-	return bodyResponse(format === 'text' ? body : typeset(body, scheme), contentType);
+	return bodyResponse(
+		format === 'text' ? body : typeset(upgradeLegacyBody(body), scheme),
+		contentType,
+	);
+}
+
+/**
+ * Serve-time repair of bodies sanitized by older ingest code. Stored bodies are
+ * immutable, so sanitizer fixes can't reach mail already in R2/KV — undo the two
+ * known defects here instead:
+ * 1. The sanitizer used to prefix ids with `user-content-` (DOM-clobber guard,
+ *    pointless in this script-free document), which broke every id selector in
+ *    kept <style> blocks — e.g. a newsletter's `#body { background:#030303 }`
+ *    dark-mode rule stopped matching while its `p { color:#fff !important }`
+ *    still applied: white-on-white, invisible mail.
+ * 2. Stripping <title> used to keep its text, leaking the subject line as bare
+ *    text at the very top of the body (before the first tag, which for a full
+ *    HTML email is a head-remnant <style>).
+ */
+function upgradeLegacyBody(html: string): string {
+	return html
+		.replace(/(\b(?:id|name)=")user-content-/g, '$1')
+		.replace(/(href="#)user-content-/g, '$1')
+		.replace(/^\s*[^<]+?\s*(?=<style[\s>])/i, '');
 }
 
 /**

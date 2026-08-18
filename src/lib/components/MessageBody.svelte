@@ -24,8 +24,12 @@
 	let iframe = $state<HTMLIFrameElement>();
 	let frameHeight = $state(120);
 	let failed = $state(false);
+	/** The frame stays invisible until its height is measured — painting the
+	 *  120px default first flashed an inner scrollbar for one frame, then grew. */
+	let sized = $state(false);
 
 	function onLoad() {
+		sized = true;
 		try {
 			const doc = iframe?.contentDocument;
 			if (!doc) return;
@@ -57,8 +61,9 @@
 	<iframe
 		bind:this={iframe}
 		title="Message body"
-		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}"
+		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}&v=2"
 		class:dark={scheme === 'dark'}
+		class:sized
 		sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 		referrerpolicy="no-referrer"
 		style:height="{frameHeight}px"
@@ -71,6 +76,13 @@
 		border: none;
 		background: white;
 		display: block;
+		/* Hidden until onload has sized the frame; the un-sized 120px default
+		   otherwise paints its internal scrollbar for a frame before growing.
+		   Opacity (not visibility) so the load + measure still happen normally. */
+		opacity: 0;
+	}
+	iframe.sized {
+		opacity: 1;
 	}
 	/* Match the endpoint's dark palette so the frame never flashes white while
 	   loading. Emails that paint their own background stay on their white sheet

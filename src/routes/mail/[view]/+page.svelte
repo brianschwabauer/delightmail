@@ -365,7 +365,7 @@
 			const m = await latestMessage(tid);
 			if (!m?.id) continue;
 			// EXACTLY the iframe's URL (scheme included) so the cache key matches.
-			const url = `/api/messages/${encodeURIComponent(String(m.id))}/body?scheme=${resolvedScheme()}`;
+			const url = `/api/messages/${encodeURIComponent(String(m.id))}/body?scheme=${resolvedScheme()}&v=2`;
 			try {
 				await fetch(url, { priority: 'low' } as RequestInit);
 			} catch {
@@ -908,7 +908,15 @@
 			{ keys: 'ArrowLeft', description: 'Back to folders / list', group: 'Panes', context: 'list', when: listOrReading, handler: paneLeft },
 			// Multi-select: Shift extends a range across every motion.
 			{ keys: 'x', description: 'Select / deselect', group: 'Select', context: 'list', when: inList, handler: toggleSelect },
-			{ keys: 'Space', description: 'Select & go to next', group: 'Select', context: 'list', when: inList, handler: toggleSelectAndAdvance },
+			// Space is claimed in EVERY pane so the browser default (scrolling the
+			// last-clicked scrollable — usually the thread list) can never fire: the
+			// list must only ever scroll by cursor movement. In the reader it pages
+			// the message (Shift+Space pages back, classic mail-client style); in the
+			// folder rail it's a deliberate no-op.
+			{ keys: 'Space', description: 'Select & next / scroll reader', group: 'Select', context: 'list', handler: (e) => {
+				if (focus.is('reading')) scrollReading((e.shiftKey ? -1 : 1) * (readingEl?.clientHeight ?? 600) * 0.9);
+				else if (focus.is('list')) toggleSelectAndAdvance();
+			} },
 			{ keys: 'Shift+ArrowDown', description: 'Select down', group: 'Select', context: 'list', when: inList, handler: () => nav('line', 1, true) },
 			{ keys: 'Shift+ArrowUp', description: 'Select up', group: 'Select', context: 'list', when: inList, handler: () => nav('line', -1, true) },
 			{ keys: 'Ctrl+Shift+ArrowDown', description: 'Select down ×5', group: 'Select', context: 'list', when: inList, handler: () => nav('jump', 1, true) },
@@ -1065,8 +1073,9 @@
 			loading={results.status === 'loading' || (docs.length === 0 && !db.synced)}
 			onOpen={(i) => {
 				cursor = i;
+				// A click opens the thread but the keyboard stays in the list (the
+				// pane's mousedown-capture set it) — only ↵/→/l move into the reader.
 				openCursor();
-				if (openId) focus.set('reading');
 			}}
 			onCursor={(i) => {
 				cursor = i;

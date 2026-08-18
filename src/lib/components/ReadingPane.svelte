@@ -682,6 +682,18 @@
 		gap: var(--space-3);
 		padding: var(--space-4) var(--space-4);
 	}
+	/* The shimmer holds back for a beat: a message that loads fast swaps in with
+	   no skeleton ever painting (its space is still reserved — only the paint is
+	   delayed, so nothing shifts). Kept under reduced-motion: it's a fade. */
+	.sk,
+	.sk-line.inline {
+		animation: sk-appear 150ms var(--ease-out, ease) 200ms backwards;
+	}
+	@keyframes sk-appear {
+		from {
+			opacity: 0;
+		}
+	}
 	.sk-line {
 		height: 0.72em;
 		border-radius: var(--radius-sm, 4px);

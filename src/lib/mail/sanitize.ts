@@ -58,7 +58,15 @@ const emailSchema: Schema = {
 		font: ['color', 'face', 'size'],
 	},
 	// Belt-and-suspenders: explicitly strip dangerous elements even if listed.
-	strip: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'link', 'meta', 'base'],
+	// `title` is stripped WITH its text: dropping only the tag leaked the email's
+	// <title> as bare text at the top of the rendered body.
+	strip: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'link', 'meta', 'base', 'title'],
+	// Don't prefix ids/names with `user-content-`. Clobbering guards a host page's
+	// scripts from DOM shadowing, but this HTML is only ever served as its own
+	// script-free document (sandboxed iframe, CSP default-src 'none'). The prefix
+	// actively breaks mail: id selectors in kept <style> blocks (`#body { … }` —
+	// how real newsletters do dark mode) stop matching their now-renamed elements.
+	clobber: [],
 };
 
 export interface SanitizeOptions {
