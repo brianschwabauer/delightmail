@@ -144,21 +144,26 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	 * (the `search_rebuild` continuation) directly, no alarm required.
 	 */
 	async migrationTick(): Promise<{ pending: boolean }> {
-		// Time-bounded, not iteration-bounded: each `await` is a clock-advance
-		// boundary in workerd, so Date.now() is trustworthy here (unlike inside
-		// a synchronous loop). Light row pockets get many slices per tick;
-		// heavy pockets (drafts near the 2MB row cap cluster in id order) stop
-		// early instead of accumulating past the 30s CPU limit and dying with
-		// the tick's uncommitted tail. The iteration cap is a backstop for a
-		// frozen clock.
+		// Time-bounded, with a REAL clock advance between slices. A rebuild
+		// slice is almost pure synchronous work (SQLite exec + index encodes),
+		// and workerd's clock doesn't move across awaits that do no actual I/O —
+		// so an 8s budget checked after bare `await super.alarm()` calls never
+		// tripped: prod measured 7 heavy ~4.6s-CPU slices in one tick (32.5s,
+		// dead at the 30s limit) with Date.now() pinned at `started`. The timer
+		// yield below is a genuine I/O boundary, so the budget now measures
+		// something: heavy pockets stop after ~2 slices, light pockets still
+		// drain many slices per tick. The iteration cap is a second belt sized
+		// to the measured worst case (5 × ~4.6s ≈ 23s, under the 30s limit) in
+		// case timer yields ever stop advancing the clock again.
 		const started = Date.now();
 		let iterations = 0;
 		while (
 			this.#searchMigrationPending() &&
 			Date.now() - started < 8_000 &&
-			iterations++ < 20
+			iterations++ < 5
 		) {
 			await super.alarm();
+			await new Promise((resolve) => setTimeout(resolve, 1));
 		}
 		return { pending: this.#searchMigrationPending() };
 	}
