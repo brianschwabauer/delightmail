@@ -18,8 +18,8 @@ importers:
         specifier: ^1.5.1
         version: 1.5.1(@delightstack/styles@1.1.0)(svelte@5.56.4)
       '@delightstack/database':
-        specifier: ^2.2.5
-        version: 2.2.5(svelte@5.56.4)
+        specifier: ^2.3.0
+        version: 2.3.0(svelte@5.56.4)
       '@delightstack/editor':
         specifier: ^1.0.3
         version: 1.0.3(@delightstack/components@1.5.1(@delightstack/styles@1.1.0)(svelte@5.56.4))(svelte@5.56.4)
@@ -210,8 +210,8 @@ packages:
       svelte:
         optional: true
 
-  '@delightstack/database@2.2.5':
-    resolution: {integrity: sha512-waVsQkCZHyPv3k+h+QgeAKaFm9VW/Nigro5NjVNoKdHajt3w6CvFo7pkZoGMQ8Tke4dUXvESIepWnVheGUOt1w==}
+  '@delightstack/database@2.3.0':
+    resolution: {integrity: sha512-FGwZjYZEGSnCEs5n9XJFqoJksR88/34kiZHB+5Gxu3zRp1sL/BdhyxdK8PyLOwxdvkQ+tEI6MSggVefYQ6mLbQ==}
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
@@ -238,6 +238,11 @@ packages:
 
   '@delightstack/utilities@1.1.0':
     resolution: {integrity: sha512-8gdGxvuTnsImV7G2s15wwTkYw0jn6VSsyHLQilgpaR6BmJriBE2zjestomj8PySlvKg6n59prX6PAKefI0T74Q==}
+    peerDependencies:
+      svelte: ^5.36.0
+
+  '@delightstack/utilities@1.2.0':
+    resolution: {integrity: sha512-gnKjogxPQDnvJx5qECDtiVF79wBgBPDAPjn/ncZ7fLTU+v7fXP73RmZt4otSuzW0+vtemLjs51jq98kbBWCQvA==}
     peerDependencies:
       svelte: ^5.36.0
 
@@ -1632,9 +1637,9 @@ snapshots:
     optionalDependencies:
       svelte: 5.56.4
 
-  '@delightstack/database@2.2.5(svelte@5.56.4)':
+  '@delightstack/database@2.3.0(svelte@5.56.4)':
     dependencies:
-      '@delightstack/utilities': 1.1.0(svelte@5.56.4)
+      '@delightstack/utilities': 1.2.0(svelte@5.56.4)
       comlink: 4.4.2
       fast-equals: 6.0.2
     optionalDependencies:
@@ -1672,6 +1677,15 @@ snapshots:
   '@delightstack/styles@1.1.0': {}
 
   '@delightstack/utilities@1.1.0(svelte@5.56.4)':
+    dependencies:
+      '@shopify/draggable': 1.2.1
+      dequal: 2.0.3
+      focus-trap: 7.8.0
+      selecto: 1.26.3
+      svelte: 5.56.4
+      zod: 4.4.3
+
+  '@delightstack/utilities@1.2.0(svelte@5.56.4)':
     dependencies:
       '@shopify/draggable': 1.2.1
       dequal: 2.0.3
