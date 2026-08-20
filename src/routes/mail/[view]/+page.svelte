@@ -398,7 +398,7 @@
 			const m = await latestMessage(tid);
 			if (!m?.id) continue;
 			// EXACTLY the iframe's URL (scheme included) so the cache key matches.
-			const url = `/api/messages/${encodeURIComponent(String(m.id))}/body?scheme=${resolvedScheme()}&v=5`;
+			const url = `/api/messages/${encodeURIComponent(String(m.id))}/body?scheme=${resolvedScheme()}&v=6`;
 			try {
 				await fetch(url, { priority: 'low' } as RequestInit);
 			} catch {

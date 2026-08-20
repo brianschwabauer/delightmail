@@ -7,6 +7,7 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
 import { classifyBody, flipColors } from './dark-mail';
+import { stripTrackingPixels } from './tracking-pixels';
 
 const IMMUTABLE = 'private, max-age=31536000, immutable';
 
@@ -87,12 +88,17 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
  * 2. Stripping <title> used to keep its text, leaking the subject line as bare
  *    text at the very top of the body (before the first tag, which for a full
  *    HTML email is a head-remnant <style>).
+ * Also strips obvious tracking pixels (tracking-pixels.ts) — serve-time so it
+ * reaches stored mail too. Bump the `v=` query in MessageBody.svelte when any of
+ * this changes: responses are cached immutable.
  */
 function upgradeLegacyBody(html: string): string {
-	return html
-		.replace(/(\b(?:id|name)=")user-content-/g, '$1')
-		.replace(/(href="#)user-content-/g, '$1')
-		.replace(/^\s*[^<]+?\s*(?=<style[\s>])/i, '');
+	return stripTrackingPixels(
+		html
+			.replace(/(\b(?:id|name)=")user-content-/g, '$1')
+			.replace(/(href="#)user-content-/g, '$1')
+			.replace(/^\s*[^<]+?\s*(?=<style[\s>])/i, ''),
+	);
 }
 
 /**
