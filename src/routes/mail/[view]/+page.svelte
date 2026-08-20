@@ -264,6 +264,14 @@
 	const title = $derived(viewTitle(view));
 
 	let readingEl = $state<HTMLElement>();
+	// The pane (not the thread inside it) is the scroller and persists across
+	// threads, so a new conversation must start at the top rather than inherit
+	// the previous one's offset.
+	$effect(() => {
+		void openId;
+		void previewThread?.id;
+		readingEl?.scrollTo({ top: 0 });
+	});
 
 	function clamp(i: number): number {
 		return Math.min(docs.length - 1, Math.max(0, i));

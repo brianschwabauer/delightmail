@@ -144,6 +144,10 @@
 			kb.handle(e);
 		};
 		window.addEventListener('keydown', onKey);
+		// A pending chord (the which-key hint) has no timeout — it waits for the
+		// next key, or for a click anywhere, which abandons it.
+		const onPointer = () => kb.cancelChord();
+		window.addEventListener('pointerdown', onPointer, true);
 
 		const free = () => !overlayOpen;
 		const off = kb.registerAll([
@@ -175,6 +179,7 @@
 
 		return () => {
 			window.removeEventListener('keydown', onKey);
+			window.removeEventListener('pointerdown', onPointer, true);
 			off();
 			offSend?.();
 			if ('requestIdleCallback' in window) window.cancelIdleCallback(idle as number);

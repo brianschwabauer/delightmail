@@ -91,20 +91,39 @@
 		return true;
 	}
 
-	/** The first measure sizes the frame exactly; after that, grow ONLY when the
-	 *  content overflows the frame. A body styled `height:100%` reports
-	 *  scrollHeight == the frame's own viewport, so an unconditional `h + 24`
-	 *  on every ResizeObserver tick fed the frame its own height back (+24
-	 *  each round) and ballooned short emails to the 4000px cap. */
+	/** Content height measured from the elements themselves, not from
+	 *  `body.scrollHeight`. Mail that styles html/body/wrapper tables with
+	 *  `height:100%` (plus a margin or padding) reports a scrollHeight that is
+	 *  the frame's own viewport + a few px — so every ResizeObserver tick grew
+	 *  the frame, which grew the body, which grew the frame… up to the 4000px
+	 *  cap. Element bottom edges are independent of the viewport height, so the
+	 *  loop can't form. */
+	function contentHeight(doc: Document): number {
+		const body = doc.body;
+		if (!body) return 0;
+		let max = 0;
+		const els = body.querySelectorAll<HTMLElement>('*');
+		for (const el of els) {
+			const r = el.getBoundingClientRect();
+			if (r.height > 0 && r.bottom > max) max = r.bottom;
+		}
+		// Text directly in <body> with no elements at all.
+		if (max === 0) max = body.getBoundingClientRect().bottom;
+		return Math.ceil(max + doc.documentElement.scrollTop);
+	}
+
+	/** Grow-only after the first measure: images streaming in push the content
+	 *  down; nothing legitimately shrinks a finished email. */
 	let measured = false;
 	function measure(doc: Document) {
-		const h = doc.body?.scrollHeight ?? 0;
+		const h = contentHeight(doc);
 		if (h <= 0) return;
+		const want = Math.min(h + 24, 4000);
 		if (!measured) {
 			measured = true;
-			frameHeight = Math.min(h + 24, 4000);
-		} else if (h > frameHeight) {
-			frameHeight = Math.min(h + 24, 4000);
+			frameHeight = want;
+		} else if (want > frameHeight) {
+			frameHeight = want;
 		}
 	}
 

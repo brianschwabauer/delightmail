@@ -570,9 +570,15 @@
 {/if}
 
 <style>
-	.placeholder,
-	.thread {
+	.placeholder {
 		height: 100%;
+	}
+	/* The thread is NOT a scroll container: the pane around it (.reading-pane in
+	   the mail page) is the one scroller, so keyboard motions, the sticky header
+	   and the wheel all act on the same element. min-height keeps the skeleton
+	   and short threads filling the pane. */
+	.thread {
+		min-height: 100%;
 	}
 	.placeholder {
 		display: flex;
@@ -596,9 +602,6 @@
 	.ph-sub {
 		margin: 0;
 		font-size: var(--font-size-0);
-	}
-	.thread {
-		overflow-y: auto;
 	}
 	.thread-head {
 		position: sticky;

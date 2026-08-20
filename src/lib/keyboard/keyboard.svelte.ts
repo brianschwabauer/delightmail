@@ -1,6 +1,7 @@
 /**
  * Keyboard engine. A single manager owns all bindings: a context stack
- * (global → pane → overlay), chord support with a 1.2s timeout + on-screen hint,
+ * (global → pane → overlay), chord support with an on-screen hint (the pending
+ * chord stays until another key resolves it or the mouse clicks anywhere),
  * and a registry that feeds both the `?` help overlay and the command palette.
  *
  * Rules:
@@ -26,14 +27,11 @@ export interface Binding {
 	defaultKeys?: string;
 }
 
-const CHORD_TIMEOUT = 1200;
-
 export class Keyboard {
 	#bindings = new Set<Binding>();
 	#overrides: Record<string, string> = {};
 	contextStack = $state<string[]>(['global']);
 	pendingChord = $state<string | null>(null);
-	#chordTimer: ReturnType<typeof setTimeout> | null = null;
 
 	/** Register a binding; returns an unregister function. */
 	register(binding: Binding): () => void {
@@ -86,7 +84,10 @@ export class Keyboard {
 		const editing = isEditingTarget(event.target);
 		// While editing, only Escape and explicitly-global chords are allowed.
 		if (editing && token !== 'Escape') {
-			const globalMatch = this.#findBinding(this.pendingChord ? `${this.pendingChord} ${token}` : token, true);
+			const globalMatch = this.#findBinding(
+				this.pendingChord ? `${this.pendingChord} ${token}` : token,
+				true,
+			);
 			if (!globalMatch) return;
 		}
 
@@ -106,7 +107,6 @@ export class Keyboard {
 		if (this.#isChordPrefix(token)) {
 			event.preventDefault();
 			this.pendingChord = token;
-			this.#chordTimer = setTimeout(() => this.#clearChord(), CHORD_TIMEOUT);
 			return;
 		}
 
@@ -135,12 +135,13 @@ export class Keyboard {
 		return false;
 	}
 
+	/** Drop a pending chord without firing anything (e.g. on a mouse click). */
+	cancelChord(): void {
+		this.#clearChord();
+	}
+
 	#clearChord(): void {
 		this.pendingChord = null;
-		if (this.#chordTimer) {
-			clearTimeout(this.#chordTimer);
-			this.#chordTimer = null;
-		}
 	}
 
 	/** Chord options shown in the on-screen hint (yazi-style). */
@@ -202,10 +203,5 @@ function isEditingTarget(target: EventTarget | null): boolean {
 	const el = target as HTMLElement | null;
 	if (!el) return false;
 	const tag = el.tagName;
-	return (
-		tag === 'INPUT' ||
-		tag === 'TEXTAREA' ||
-		tag === 'SELECT' ||
-		el.isContentEditable === true
-	);
+	return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
 }
