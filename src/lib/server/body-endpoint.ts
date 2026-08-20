@@ -6,6 +6,7 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
+import { classifyBody, flipColors } from './dark-mail';
 
 const IMMUTABLE = 'private, max-age=31536000, immutable';
 
@@ -99,22 +100,20 @@ function upgradeLegacyBody(html: string): string {
  * email otherwise renders at browser defaults inside the iframe — Times New
  * Roman, black-on-white, line-height 1.2 — the worst-typeset surface in the
  * app. Heavily-designed HTML mail overrides all of this with its own inline
- * styles/tables and is unharmed. The dark palette applies only when the email
- * declares no colors of its own (background or text), so newsletters keep their white sheet and
- * plain text stops strobing you at night.
+ * styles/tables and is unharmed. In the dark scheme, classifyBody() decides:
+ * designed mail keeps its white sheet, colorless mail gets the dark palette,
+ * and personal mail that merely sets text colors gets the dark palette with
+ * its colors re-mapped for it (see dark-mail.ts).
  */
 function typeset(html: string, scheme: 'light' | 'dark'): string {
-	// Any explicit color counts as "designed": mail that sets text colors but no
-	// background (QuickBooks, Apple Mail replies with color:rgb(0,0,0)) assumes a
-	// white sheet — dark grey on our dark palette is unreadable.
-	const paintsOwnColors = /bgcolor\s*=|background(?:-color)?\s*:|(?:^|[;"\s{])color\s*:/i.test(
-		html,
-	);
-	const dark = scheme === 'dark' && !paintsOwnColors;
-	const palette = dark ? 'color:#dde1e6;background:#16181c;' : 'color:#1f2328;background:#ffffff;';
+	const tier = scheme === 'dark' ? classifyBody(html) : 'design';
+	const dark = tier !== 'design';
+	const bg = dark ? '#16181c' : '#ffffff';
+	const palette = dark ? `color:#dde1e6;background:${bg};` : `color:#1f2328;background:${bg};`;
 	const link = dark ? '#8ab0ff' : '#3b5fc9';
 	const quote = dark ? '#3a4048' : '#d0d4da';
 	const quoteText = dark ? '#9aa4b0' : '#57606a';
+	if (tier === 'flip') html = flipColors(html, bg);
 	return (
 		`<style>` +
 		`body{margin:0;padding:20px 24px;${palette}` +

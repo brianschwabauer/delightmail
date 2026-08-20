@@ -143,7 +143,7 @@
 	<iframe
 		bind:this={iframe}
 		title="Message body"
-		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}&v=4"
+		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}&v=5"
 		class:dark={scheme === 'dark'}
 		class:sized
 		sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
