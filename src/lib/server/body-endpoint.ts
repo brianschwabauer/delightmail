@@ -100,15 +100,18 @@ function upgradeLegacyBody(html: string): string {
  * Roman, black-on-white, line-height 1.2 — the worst-typeset surface in the
  * app. Heavily-designed HTML mail overrides all of this with its own inline
  * styles/tables and is unharmed. The dark palette applies only when the email
- * paints no background of its own, so newsletters keep their white sheet and
+ * declares no colors of its own (background or text), so newsletters keep their white sheet and
  * plain text stops strobing you at night.
  */
 function typeset(html: string, scheme: 'light' | 'dark'): string {
-	const paintsOwnBackground = /bgcolor\s*=|background(?:-color)?\s*:/i.test(html);
-	const dark = scheme === 'dark' && !paintsOwnBackground;
-	const palette = dark
-		? 'color:#dde1e6;background:#16181c;'
-		: 'color:#1f2328;background:#ffffff;';
+	// Any explicit color counts as "designed": mail that sets text colors but no
+	// background (QuickBooks, Apple Mail replies with color:rgb(0,0,0)) assumes a
+	// white sheet — dark grey on our dark palette is unreadable.
+	const paintsOwnColors = /bgcolor\s*=|background(?:-color)?\s*:|(?:^|[;"\s{])color\s*:/i.test(
+		html,
+	);
+	const dark = scheme === 'dark' && !paintsOwnColors;
+	const palette = dark ? 'color:#dde1e6;background:#16181c;' : 'color:#1f2328;background:#ffffff;';
 	const link = dark ? '#8ab0ff' : '#3b5fc9';
 	const quote = dark ? '#3a4048' : '#d0d4da';
 	const quoteText = dark ? '#9aa4b0' : '#57606a';
@@ -227,10 +230,7 @@ export async function handleAttachmentByCid(
 	if (!obj) return DelightError.notFound('Attachment not found').toResponse();
 	// Same stored-XSS containment as handleAttachment: only render safe raster
 	// images inline; everything else downloads.
-	const mime = (obj.httpMetadata?.contentType ?? 'application/octet-stream').replace(
-		/[\r\n]/g,
-		'',
-	);
+	const mime = (obj.httpMetadata?.contentType ?? 'application/octet-stream').replace(/[\r\n]/g, '');
 	const baseType = mime.split(';')[0].trim().toLowerCase();
 	const disposition = INLINE_SAFE_TYPES.has(baseType) ? 'inline' : 'attachment';
 	return new Response(obj.body, {
@@ -329,9 +329,6 @@ async function readCached(
 
 /** A stored plain-text body as minimal servable HTML (escaped, pre-wrapped). */
 function textToHtml(text: string): string {
-	const escaped = text
-		.replaceAll('&', '&amp;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;');
+	const escaped = text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 	return `<div style="white-space:pre-wrap">${escaped}</div>`;
 }
