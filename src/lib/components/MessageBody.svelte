@@ -91,25 +91,36 @@
 		return true;
 	}
 
-	/** Content height measured from the elements themselves, not from
-	 *  `body.scrollHeight`. Mail that styles html/body/wrapper tables with
-	 *  `height:100%` (plus a margin or padding) reports a scrollHeight that is
-	 *  the frame's own viewport + a few px — so every ResizeObserver tick grew
-	 *  the frame, which grew the body, which grew the frame… up to the 4000px
-	 *  cap. Element bottom edges are independent of the viewport height, so the
-	 *  loop can't form. */
+	/** Content height, measured in a way that can't depend on the frame's own
+	 *  height. Two traps, both seen in real mail:
+	 *  - `body.scrollHeight` on a `height:100%` body is the viewport height.
+	 *  - Bodies are served without a doctype (quirks mode), where a percentage
+	 *    height on a wrapper `<table>` resolves against the VIEWPORT even when
+	 *    html/body are `auto`. Foundation-for-Emails newsletters wrap everything
+	 *    in `table.body { height:100% }` with tracking pixels after it, so the
+	 *    bottom-most element sat at frame-height + 2px no matter how we
+	 *    measured — every ResizeObserver tick grew the frame by ~27px until the
+	 *    4000px cap.
+	 *  Pinning `<html>` to 0px for the duration of the measurement makes those
+	 *  percentages resolve to 0 (a table's height is only a minimum, so the real
+	 *  content still lays out at its natural size), then restore. Style-toggle +
+	 *  read + restore is synchronous, so nothing paints in between. */
 	function contentHeight(doc: Document): number {
 		const body = doc.body;
-		if (!body) return 0;
+		const html = doc.documentElement;
+		if (!body || !html) return 0;
+		const prev = html.style.height;
+		html.style.height = '0px';
 		let max = 0;
-		const els = body.querySelectorAll<HTMLElement>('*');
-		for (const el of els) {
+		for (const el of body.querySelectorAll<HTMLElement>('*')) {
 			const r = el.getBoundingClientRect();
 			if (r.height > 0 && r.bottom > max) max = r.bottom;
 		}
 		// Text directly in <body> with no elements at all.
 		if (max === 0) max = body.getBoundingClientRect().bottom;
-		return Math.ceil(max + doc.documentElement.scrollTop);
+		const h = Math.ceil(max + html.scrollTop);
+		html.style.height = prev;
+		return h;
 	}
 
 	/** Grow-only after the first measure: images streaming in push the content
