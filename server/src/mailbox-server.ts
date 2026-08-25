@@ -529,8 +529,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			account_id: identity.account_id,
 			identity_email: identity.email,
 			rfc822_message_id: rfc822,
-			in_reply_to: payload.in_reply_to,
-			references: payload.references,
+			in_reply_to: payload.in_reply_to || undefined,
+			// Schema requires string[] — never trust the client payload shape.
+			references: (payload.references ?? []).filter(
+				(r): r is string => typeof r === 'string' && r.length > 0,
+			),
 			from: { name: identity.name, email: identity.email },
 			from_text: identity.name ? `${identity.name} ${identity.email}` : identity.email,
 			to: payload.to,

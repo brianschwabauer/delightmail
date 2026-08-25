@@ -882,8 +882,12 @@
 				cc: recipients.cc,
 				subject: replySubject(m.subject ?? t.subject ?? '', 'reply'),
 				bodyDoc: quoted,
-				in_reply_to: m.rfc822_message_id,
-				references: [...(m.references ?? []), m.rfc822_message_id],
+				in_reply_to: m.rfc822_message_id || undefined,
+				// A sparse/partial doc (or a legacy null-poisoned row) can leave
+				// holes here; the server schema requires every entry be a string.
+				references: [...(m.references ?? []), m.rfc822_message_id].filter(
+					(r): r is string => typeof r === 'string' && r.length > 0,
+				),
 				thread_id: String(t.id),
 			};
 		}
