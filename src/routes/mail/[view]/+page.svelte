@@ -571,8 +571,20 @@
 		// `date`, which the server-side search rejects — so relying on it alone
 		// would silently fail to resume the draft.
 		const loaded = openMessages.find((mm) => String(mm.thread_id) === String(t.id)) ?? null;
-		const m = loaded ?? (await latestMessage(String(t.id)));
+		let m = loaded ?? (await latestMessage(String(t.id)));
 		if (!m) return;
+		// `draft_doc` is not a searchable field, so a message that came out of the
+		// client index (or a sparse server hit) simply doesn't carry it. Resuming
+		// from such a row opened an EMPTY editor — and the first autosave then
+		// overwrote the real body with that emptiness. Fetch the whole row first.
+		if (m.draft_doc == null) {
+			const full = await fullMessage(String(m.id));
+			if (!full) {
+				toast('Could not load the draft — try again in a moment.');
+				return;
+			}
+			m = full;
+		}
 		let bodyDoc: unknown;
 		try {
 			bodyDoc = m.draft_doc ? JSON.parse(m.draft_doc) : undefined;
@@ -823,6 +835,16 @@
 	}
 
 	// --- reply / reply-all / forward ---
+	/** The whole message row (every column, not the index projection). */
+	async function fullMessage(id: string): Promise<Message | null> {
+		try {
+			const e = db.entity('message', id);
+			await e.load();
+			return e.loaded ? (e.value as Message) : null;
+		} catch {
+			return null;
+		}
+	}
 	async function latestMessage(threadId: string): Promise<Message | null> {
 		try {
 			const res = await db

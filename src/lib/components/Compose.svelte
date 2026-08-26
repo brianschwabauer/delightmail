@@ -1,24 +1,34 @@
 <script lang="ts">
-	import { tick, onMount } from 'svelte';
-	import { Editor as EditorClass, defaultBlocks } from '@delightstack/editor';
+	import { tick, onMount } from "svelte";
+	import { Editor as EditorClass, defaultBlocks } from "@delightstack/editor";
 	// The package's generated Editor.svelte.d.ts has an internal name collision
 	// (component `Editor` vs the core `Editor` type it imports), so the named
 	// re-export resolves type-only under verbatimModuleSyntax. A namespace import
 	// is unambiguously a value import; pull the component off it.
-	import * as EditorComponents from '@delightstack/editor/components';
+	import * as EditorComponents from "@delightstack/editor/components";
 	// The same .d.ts collision types the value as the editor INSTANCE, not the
 	// component, so cast it back to a Svelte component that takes `editor`.
-	const EditorView = EditorComponents.Editor as unknown as import('svelte').Component<{
-		editor: EditorClass;
-	}>;
-	import { Avatar, Button, Expand, Input, Modal, toast } from '@delightstack/components';
-	import type { InputOption } from '@delightstack/components';
-	import Icon from './Icon.svelte';
-	import type { MailDatabaseClient } from '$lib/clients';
-	import type { Address, Identity } from '$lib/schema';
-	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
-	import { mergeSignatureDoc, docToText } from '$lib/mail/compose';
-	import { DraftAutosaver } from '$lib/mail/draft-autosave';
+	const EditorView =
+		EditorComponents.Editor as unknown as import("svelte").Component<{
+			editor: EditorClass;
+		}>;
+	import {
+		Avatar,
+		Button,
+		Expand,
+		Input,
+		List,
+		ListItem,
+		Modal,
+		toast,
+	} from "@delightstack/components";
+	import type { InputOption } from "@delightstack/components";
+	import Icon from "./Icon.svelte";
+	import type { MailDatabaseClient } from "$lib/clients";
+	import type { Address, Identity } from "$lib/schema";
+	import { verifiedAvatarUrl } from "$lib/mail/avatar.svelte";
+	import { mergeSignatureDoc, docToText } from "$lib/mail/compose";
+	import { DraftAutosaver } from "$lib/mail/draft-autosave";
 
 	export interface ComposeInit {
 		to?: Address[];
@@ -58,9 +68,9 @@
 		uploading: boolean;
 	}
 
-	const identities = db.list('identity', { limit: 50 });
+	const identities = db.list("identity", { limit: 50 });
 
-	let identityId = $state(init.identity_id ?? '');
+	let identityId = $state(init.identity_id ?? "");
 	let showCc = $state((init.cc?.length ?? 0) > 0);
 	let showBcc = $state((init.bcc?.length ?? 0) > 0);
 	// Recipients are held as the delightstack <Input multiple> value: a string[]
@@ -71,7 +81,7 @@
 	let to = $state<string[]>(initChips(init.to));
 	let cc = $state<string[]>(initChips(init.cc));
 	let bcc = $state<string[]>(initChips(init.bcc));
-	let subject = $state(init.subject ?? '');
+	let subject = $state(init.subject ?? "");
 	let sending = $state(false);
 	let attachments = $state<Attachment[]>([]);
 	let fileInput = $state<HTMLInputElement>();
@@ -82,12 +92,16 @@
 	// draft and topped up as autocomplete options stream in. Plain map (a lookup
 	// cache, not reactive UI state).
 	const nameByEmail = new Map<string, string>();
-	for (const a of [...(init.to ?? []), ...(init.cc ?? []), ...(init.bcc ?? [])]) {
+	for (const a of [
+		...(init.to ?? []),
+		...(init.cc ?? []),
+		...(init.bcc ?? []),
+	]) {
 		if (a.email && a.name) nameByEmail.set(a.email.toLowerCase(), a.name);
 	}
 
 	const editor = new EditorClass({
-		placeholder: 'Write your message…',
+		placeholder: "Write your message…",
 		blocks: defaultBlocks(),
 		content: (init.bodyDoc as never) ?? undefined,
 	});
@@ -101,7 +115,7 @@
 	// <Input>, which doesn't expose it — but its `input` events bubble, so we
 	// mirror them here (see onFieldInput). That lets Send light up for an address
 	// that's fully typed but not yet a chip.
-	const drafts = $state({ to: '', cc: '', bcc: '' });
+	const drafts = $state({ to: "", cc: "", bcc: "" });
 	const typedTo = $derived.by(() => {
 		const a = parseAddress(drafts.to);
 		return a?.email && isSendableEmail(a.email) ? a : null;
@@ -117,41 +131,55 @@
 			!attachments.some((a) => a.uploading),
 	);
 
-	// --- draft autosave: every 3s of idle, persist to a draft row. The saver
-	// serializes saves, so fast typing during an in-flight create can't spawn a
-	// second create (duplicate/orphan drafts). ---
+	// --- draft autosave. Saves are driven by CHANGES (a short idle debounce after
+	// the last edit), and forced on every way out of the composer — Escape / ✕,
+	// the tab hiding or unloading — so a long message can't be lost between
+	// timer ticks. The saver serializes saves, so fast typing during an in-flight
+	// create can't spawn a second create (duplicate/orphan drafts). ---
 	let sent = $state(false);
+	const SAVE_IDLE_MS = 1200;
+	const SAVE_MAX_WAIT_MS = 5000;
 
+	// Once the composer is closing the editor is about to be destroyed, so the
+	// final save reads from this snapshot instead of the live doc.
+	let frozen_doc: unknown = null;
+	function currentDoc(): unknown {
+		return frozen_doc ?? editor.doc;
+	}
 	function currentSig(): string {
-		return JSON.stringify({ s: subject, t: to, c: cc, d: editor.doc });
+		return JSON.stringify({ s: subject, t: to, c: cc, d: currentDoc() });
 	}
 	function hasContent(): boolean {
-		return !!(subject.trim() || to.length || docToText(editor.doc).trim());
+		return !!(subject.trim() || to.length || docToText(currentDoc()).trim());
 	}
 
 	const saver = new DraftAutosaver(
 		{
 			signature: currentSig,
 			hasContent,
-			save: async (id) => {
-				if (!fromIdentity) throw new Error('no identity to save under');
-				const res = await fetch('/api/drafts', {
-					method: 'POST',
-					headers: { 'content-type': 'application/json' },
+			save: async (id, final) => {
+				if (!fromIdentity) throw new Error("no identity to save under");
+				const res = await fetch("/api/drafts", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					// keepalive lets the last save outlive a closing tab.
+					keepalive: final,
 					body: JSON.stringify({
 						draft_id: id,
 						identity_id: fromIdentity.id,
 						to: toAddresses(to),
 						cc: showCc ? toAddresses(cc) : [],
 						subject,
-						doc: editor.doc,
+						doc: currentDoc(),
 					}),
 				});
-				if (!res.ok) throw new Error('draft save failed');
+				if (!res.ok) throw new Error("draft save failed");
 				return ((await res.json()) as { draft_id: string }).draft_id;
 			},
 			remove: async (id) => {
-				await fetch(`/api/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+				await fetch(`/api/drafts/${encodeURIComponent(id)}`, {
+					method: "DELETE",
+				});
 			},
 		},
 		init.draft_id,
@@ -165,17 +193,73 @@
 		// opens — and, because focus is now inside the overlay, Esc reaches the
 		// overlay's own handler (fixing "n then Esc doesn't close it").
 		void tick().then(() => {
-			overlayEl?.querySelector<HTMLInputElement>('#to')?.focus();
+			overlayEl?.querySelector<HTMLInputElement>("#to")?.focus();
 		});
-		const timer = setInterval(() => {
-			if (sent || sending || !fromIdentity) return;
-			void saver.tick();
-		}, 3000);
+		// The tab going away is a way out of the composer too — flush the draft
+		// (the request is keepalive, so it survives the unload).
+		const onHidden = () => {
+			if (document.visibilityState === "hidden") void saver.flush();
+		};
+		window.addEventListener("pagehide", flushDraft);
+		document.addEventListener("visibilitychange", onHidden);
 		return () => {
-			clearInterval(timer);
+			window.removeEventListener("pagehide", flushDraft);
+			document.removeEventListener("visibilitychange", onHidden);
+			clearTimeout(idle_timer);
+			clearTimeout(max_wait_timer);
 			editor.destroy();
 		};
 	});
+
+	// Change-driven autosave: each edit restarts a short idle timer; a longer
+	// max-wait timer guarantees a save lands during continuous typing. Reading
+	// `currentSig()` inside the effect subscribes it to every input the draft
+	// depends on (editor.doc is reactive).
+	let idle_timer: ReturnType<typeof setTimeout> | undefined;
+	let max_wait_timer: ReturnType<typeof setTimeout> | undefined;
+	let last_seen_sig = currentSig();
+	function saveSoon(): void {
+		clearTimeout(idle_timer);
+		clearTimeout(max_wait_timer);
+		idle_timer = undefined;
+		max_wait_timer = undefined;
+		if (sent || sending || !fromIdentity) return;
+		void saver.tick();
+	}
+	$effect(() => {
+		const sig = currentSig();
+		if (sig === last_seen_sig) return;
+		last_seen_sig = sig;
+		clearTimeout(idle_timer);
+		idle_timer = setTimeout(saveSoon, SAVE_IDLE_MS);
+		if (!max_wait_timer)
+			max_wait_timer = setTimeout(saveSoon, SAVE_MAX_WAIT_MS);
+	});
+	// A save that failed (offline, server hiccup) keeps its signature unsaved —
+	// retry on a slow cadence so it isn't stuck until the next keystroke.
+	$effect(() => {
+		const retry = setInterval(() => {
+			if (sent || sending || !fromIdentity) return;
+			void saver.tick();
+		}, 15000);
+		return () => clearInterval(retry);
+	});
+
+	function flushDraft(): void {
+		if (sent || sending) return;
+		void saver.flush();
+	}
+	/** Every way out of the composer (Escape, backdrop, ✕) lands here: snapshot
+	 *  the doc, persist it, then unmount. */
+	function close(): void {
+		clearTimeout(idle_timer);
+		clearTimeout(max_wait_timer);
+		if (!sent && !sending) {
+			frozen_doc = editor.doc;
+			void saver.flush();
+		}
+		onClose();
+	}
 
 	// Signature preview: shown below the body, swapped when the identity
 	// changes, and merged into the doc at send time without touching what's written.
@@ -188,10 +272,12 @@
 			return null;
 		}
 	});
-	const signaturePreview = $derived(signatureDoc ? docToText(signatureDoc) : '');
+	const signaturePreview = $derived(
+		signatureDoc ? docToText(signatureDoc) : "",
+	);
 
 	function parseAddress(raw: string): Address | null {
-		const trimmed = raw.trim().replace(/[,;]+$/, '');
+		const trimmed = raw.trim().replace(/[,;]+$/, "");
 		if (!trimmed) return null;
 		const m = trimmed.match(/^(.*)<(.+@.+)>$/);
 		if (m) return { name: m[1].trim() || undefined, email: m[2].trim() };
@@ -237,25 +323,33 @@
 	async function contactOptions(query: string): Promise<InputOption[]> {
 		const term = query.trim();
 		const chosen = new Set(
-			[...to, ...cc, ...bcc].map((c) => (parseAddress(c)?.email ?? c).toLowerCase()),
+			[...to, ...cc, ...bcc].map((c) =>
+				(parseAddress(c)?.email ?? c).toLowerCase(),
+			),
 		);
 		const typed = parseAddress(term);
 		const typedEmail =
-			typed?.email && isSendableEmail(typed.email) && !chosen.has(typed.email.toLowerCase())
+			typed?.email &&
+			isSendableEmail(typed.email) &&
+			!chosen.has(typed.email.toLowerCase())
 				? typed.email
 				: null;
-		if (typedEmail && typed?.name) nameByEmail.set(typedEmail.toLowerCase(), typed.name);
+		if (typedEmail && typed?.name)
+			nameByEmail.set(typedEmail.toLowerCase(), typed.name);
 
 		const res = await db
 			.list(
-				'contact',
+				"contact",
 				term
 					? { term, limit: 8 }
-					: { limit: 8, order: [{ field: 'send_count', direction: 'DESC' }] },
+					: { limit: 8, order: [{ field: "send_count", direction: "DESC" }] },
 			)
 			.load();
 		const contacts = (res.hits ?? [])
-			.map((h) => h.document as { email?: string; name?: string; send_count?: number })
+			.map(
+				(h) =>
+					h.document as { email?: string; name?: string; send_count?: number },
+			)
 			.filter((c) => c.email && !chosen.has(c.email.toLowerCase()))
 			.sort((a, b) => (b.send_count ?? 0) - (a.send_count ?? 0))
 			.map((c) => {
@@ -271,7 +365,11 @@
 		const key = typedEmail.toLowerCase();
 		const known = contacts.find((c) => c.value === key);
 		return [
-			{ value: key, label: typedEmail, description: known?.description ?? nameByEmail.get(key) },
+			{
+				value: key,
+				label: typedEmail,
+				description: known?.description ?? nameByEmail.get(key),
+			},
 			...contacts.filter((c) => c.value !== key).slice(0, 5),
 		];
 	}
@@ -282,19 +380,19 @@
 	// debounced, so the panel can be a keystroke behind what you actually typed.
 	// Left alone, a complete address you typed and never "picked" is silently
 	// dropped at send. So compose commits it itself, on Enter and on blur.
-	type Field = 'to' | 'cc' | 'bcc';
+	type Field = "to" | "cc" | "bcc";
 	function chipsOf(field: Field): string[] {
-		return field === 'to' ? to : field === 'cc' ? cc : bcc;
+		return field === "to" ? to : field === "cc" ? cc : bcc;
 	}
 	function setChips(field: Field, next: string[]): void {
-		if (field === 'to') to = next;
-		else if (field === 'cc') cc = next;
+		if (field === "to") to = next;
+		else if (field === "cc") cc = next;
 		else bcc = next;
 	}
 	/** The recipient field an event came from, or null if it came from anywhere else. */
 	function recipientField(target: EventTarget | null): Field | null {
 		const id = (target as HTMLElement | null)?.id;
-		return id === 'to' || id === 'cc' || id === 'bcc' ? id : null;
+		return id === "to" || id === "cc" || id === "bcc" ? id : null;
 	}
 	/** Mirror each recipient field's draft text into `drafts` (the events bubble
 	 *  up to `.compose`; the subject input isn't a recipient field, so it's ignored). */
@@ -307,27 +405,30 @@
 	 *  honest — chip changes have to resync it, after Svelte has flushed the clear. */
 	function syncDraft(field: Field): void {
 		void tick().then(() => {
-			drafts[field] = overlayEl?.querySelector<HTMLInputElement>(`#${field}`)?.value ?? '';
+			drafts[field] =
+				overlayEl?.querySelector<HTMLInputElement>(`#${field}`)?.value ?? "";
 		});
 	}
 	/** Commit the field's uncommitted text as a chip if it's a real address.
 	 *  Returns whether it did — Enter uses that to decide who owns the keystroke. */
 	function commitTypedAddress(field: Field): boolean {
 		const el = overlayEl?.querySelector<HTMLInputElement>(`#${field}`);
-		const addr = parseAddress(el?.value ?? '');
+		const addr = parseAddress(el?.value ?? "");
 		if (!addr?.email || !isSendableEmail(addr.email)) return false;
 		const key = addr.email.toLowerCase();
 		if (addr.name) nameByEmail.set(key, addr.name);
 		const chips = chipsOf(field);
-		if (!chips.some((c) => (parseAddress(c)?.email ?? c).toLowerCase() === key)) {
+		if (
+			!chips.some((c) => (parseAddress(c)?.email ?? c).toLowerCase() === key)
+		) {
 			setChips(field, [...chips, addr.email]);
 		}
 		// The draft text lives in the <Input>'s own state, which we can't reach — so
 		// clear it the way the user would, by emptying the field and letting the
 		// component's `oninput` handler see it (this also refreshes its panel).
 		if (el) {
-			el.value = '';
-			el.dispatchEvent(new Event('input', { bubbles: true }));
+			el.value = "";
+			el.dispatchEvent(new Event("input", { bubbles: true }));
 		}
 		return true;
 	}
@@ -346,7 +447,7 @@
 	async function addFiles(files: FileList | File[]): Promise<void> {
 		for (const file of Array.from(files)) {
 			if (totalBytes() + file.size > MAX_TOTAL_BYTES) {
-				toast('Attachments exceed the 25 MB limit.');
+				toast("Attachments exceed the 25 MB limit.");
 				continue;
 			}
 			const id = crypto.randomUUID();
@@ -356,18 +457,23 @@
 					id,
 					filename: file.name,
 					size: file.size,
-					mime_type: file.type || 'application/octet-stream',
-					r2_key: '',
+					mime_type: file.type || "application/octet-stream",
+					r2_key: "",
 					uploading: true,
 				},
 			];
 			try {
 				const form = new FormData();
-				form.set('file', file);
-				const res = await fetch('/api/attachments/upload', { method: 'POST', body: form });
+				form.set("file", file);
+				const res = await fetch("/api/attachments/upload", {
+					method: "POST",
+					body: form,
+				});
 				if (!res.ok) {
-					const b = (await res.json().catch(() => ({}))) as { message?: string };
-					throw new Error(b.message || 'Upload failed');
+					const b = (await res.json().catch(() => ({}))) as {
+						message?: string;
+					};
+					throw new Error(b.message || "Upload failed");
 				}
 				const j = (await res.json()) as { r2_key: string };
 				attachments = attachments.map((a) =>
@@ -382,7 +488,7 @@
 	function onFilePicked(e: Event): void {
 		const input = e.target as HTMLInputElement;
 		if (input.files?.length) void addFiles(input.files);
-		input.value = '';
+		input.value = "";
 	}
 	function onDrop(e: DragEvent): void {
 		e.preventDefault();
@@ -392,27 +498,40 @@
 		attachments = attachments.filter((a) => a.id !== id);
 	}
 	function fmtSize(n: number): string {
-		return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+		return n < 1024
+			? `${n} B`
+			: n < 1024 * 1024
+				? `${Math.round(n / 1024)} KB`
+				: `${(n / 1024 / 1024).toFixed(1)} MB`;
 	}
 
 	async function send(): Promise<void> {
 		// A recipient can still be sitting in a field as text — typed, complete, and
 		// never picked (clicking Send from a disabled state fires no blur). Commit
 		// those first so the message goes to who it looks like it's going to.
-		for (const f of ['to', 'cc', 'bcc'] as Field[]) commitTypedAddress(f);
+		for (const f of ["to", "cc", "bcc"] as Field[]) commitTypedAddress(f);
 		const toList = toAddresses(to);
 		const ccList = showCc ? toAddresses(cc) : [];
 		const bccList = showBcc ? toAddresses(bcc) : [];
-		if (!toList.length) { toast('Add at least one recipient.'); return; }
-		if (!fromIdentity) { toast('No identity to send from. Connect an account first.'); return; }
-		if (attachments.some((a) => a.uploading)) { toast('Wait for attachments to finish uploading.'); return; }
+		if (!toList.length) {
+			toast("Add at least one recipient.");
+			return;
+		}
+		if (!fromIdentity) {
+			toast("No identity to send from. Connect an account first.");
+			return;
+		}
+		if (attachments.some((a) => a.uploading)) {
+			toast("Wait for attachments to finish uploading.");
+			return;
+		}
 		sending = true;
 		try {
 			// Merge the identity's signature into the doc at send (WYSIWYG-neutral).
 			const doc = mergeSignatureDoc(editor.doc, signatureDoc);
-			const res = await fetch('/api/send', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
+			const res = await fetch("/api/send", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
 					identity_id: fromIdentity.id,
 					to: toList,
@@ -425,14 +544,23 @@
 					thread_id: init.thread_id,
 					attachments: attachments
 						.filter((a) => a.r2_key)
-						.map((a) => ({ r2_key: a.r2_key, filename: a.filename, mime_type: a.mime_type, size: a.size })),
+						.map((a) => ({
+							r2_key: a.r2_key,
+							filename: a.filename,
+							mime_type: a.mime_type,
+							size: a.size,
+						})),
 				}),
 			});
 			if (!res.ok) {
-				const err = (await res.json().catch(() => ({}))) as { message?: string };
+				const err = (await res.json().catch(() => ({}))) as {
+					message?: string;
+				};
 				throw new Error(err.message || `Send failed (${res.status})`);
 			}
-			const { message_id } = (await res.json().catch(() => ({}))) as { message_id?: string };
+			const { message_id } = (await res.json().catch(() => ({}))) as {
+				message_id?: string;
+			};
 			// The sent message supersedes the draft — stop autosaving and drop it,
 			// waiting for any in-flight save first so it can't re-create an orphan.
 			sent = true;
@@ -443,15 +571,15 @@
 			// long as undo is possible, so its presence == "you can still stop it".
 			const undoSeconds = await undoWindowSeconds();
 			if (message_id) {
-				toast('Sent.', {
+				toast("Sent.", {
 					duration: undoSeconds * 1000,
 					action: {
-						label: 'Undo',
+						label: "Undo",
 						onclick: () => void undoSend(message_id),
 					},
 				});
 			} else {
-				toast('Sent.');
+				toast("Sent.");
 			}
 			onClose();
 		} catch (e) {
@@ -463,9 +591,11 @@
 
 	async function undoWindowSeconds(): Promise<number> {
 		try {
-			const e = db.entity('settings', 'main');
+			const e = db.entity("settings", "main");
 			await e.load();
-			const s = e.loaded ? (e.value as { undo_send_seconds?: number }).undo_send_seconds : undefined;
+			const s = e.loaded
+				? (e.value as { undo_send_seconds?: number }).undo_send_seconds
+				: undefined;
 			return Math.max(1, s ?? 10);
 		} catch {
 			return 10;
@@ -474,17 +604,20 @@
 
 	async function undoSend(message_id: string): Promise<void> {
 		try {
-			const res = await fetch(`/api/send/${encodeURIComponent(message_id)}/undo`, {
-				method: 'POST',
-			});
+			const res = await fetch(
+				`/api/send/${encodeURIComponent(message_id)}/undo`,
+				{
+					method: "POST",
+				},
+			);
 			const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
 			if (res.ok && body.ok) {
-				toast('Send undone — the message is back in Drafts.');
+				toast("Send undone — the message is back in Drafts.");
 			} else {
-				toast('Too late to undo — the message already left the outbox.');
+				toast("Too late to undo — the message already left the outbox.");
 			}
 		} catch {
-			toast('Could not reach the outbox to undo.');
+			toast("Could not reach the outbox to undo.");
 		}
 	}
 
@@ -494,7 +627,7 @@
 	// (a descendant) ever sees the key — and stop propagation so the message sends
 	// without a stray blank line. Handled here, not in onKeydown, for that reason.
 	function onKeydownCapture(e: KeyboardEvent): void {
-		if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+		if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
 			e.preventDefault();
 			e.stopPropagation();
 			void send();
@@ -505,11 +638,13 @@
 		// previous keystroke). Claim it in the capture phase so the <Input> never
 		// gets to swap in a suggestion. If the user has arrowed off the first row
 		// they've chosen a suggestion deliberately — leave that Enter to the Input.
-		if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+		if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.altKey) {
 			const field = recipientField(e.target);
 			if (!field) return;
-			const active = (e.target as HTMLElement).getAttribute('aria-activedescendant');
-			if (active && !active.endsWith('-option-0')) return;
+			const active = (e.target as HTMLElement).getAttribute(
+				"aria-activedescendant",
+			);
+			if (active && !active.endsWith("-option-0")) return;
 			if (commitTypedAddress(field)) {
 				e.preventDefault();
 				e.stopPropagation();
@@ -519,10 +654,19 @@
 
 	function onKeydown(e: KeyboardEvent): void {
 		const mod = e.ctrlKey || e.metaKey;
-		if (mod && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); fileInput?.click(); }
-		else if (mod && e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); showCc = true; }
-		else if (mod && e.shiftKey && e.key.toLowerCase() === 'b') { e.preventDefault(); showBcc = true; }
-		else if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); cycleIdentity(); }
+		if (mod && e.shiftKey && e.key.toLowerCase() === "a") {
+			e.preventDefault();
+			fileInput?.click();
+		} else if (mod && e.shiftKey && e.key.toLowerCase() === "c") {
+			e.preventDefault();
+			showCc = true;
+		} else if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
+			e.preventDefault();
+			showBcc = true;
+		} else if (mod && e.key.toLowerCase() === "j") {
+			e.preventDefault();
+			cycleIdentity();
+		}
 		// Escape is deliberately NOT handled here — the Modal owns it, so pressing
 		// Escape closes only the compose dialog, never the mail behind it.
 		// Ctrl/Cmd+Enter (send) lives in onKeydownCapture so the editor can't
@@ -537,7 +681,11 @@
      `opt.description` the display name. -->
 {#snippet contactOption(opt: InputOption)}
 	<span class="ac-opt">
-		<Avatar name={opt.description || opt.label} src={verifiedAvatarUrl(opt.label)} size="0" />
+		<Avatar
+			name={opt.description || opt.label}
+			src={verifiedAvatarUrl(opt.label)}
+			size="0"
+		/>
 		<span class="ac-text">
 			{#if opt.description}<span class="ac-name">{opt.description}</span>{/if}
 			<span class="ac-email">{opt.label}</span>
@@ -548,7 +696,13 @@
 <!-- `.compose-host` scopes the no-animation CSS override to this modal only, so
      the dialog and its backdrop appear instantly (snappy) instead of animating. -->
 <div class="compose-host">
-	<Modal bind:open onclose={onClose} class="compose-modal" title="New message" width="640px">
+	<Modal
+		bind:open
+		onclose={close}
+		class="compose-modal"
+		title="New message"
+		width="640px"
+	>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="compose"
@@ -557,13 +711,52 @@
 			onkeydown={onKeydown}
 			oninput={onFieldInput}
 			ondragover={(e) => e.preventDefault()}
-			ondrop={onDrop}>
+			ondrop={onDrop}
+		>
 			<div class="fields">
-				<div class="row from">
-					<span class="rowlabel">From</span>
-					<Button size="0" outline onclick={cycleIdentity} tooltip="Ctrl+J to cycle">
-						{fromIdentity?.email ?? 'No identity'}
-					</Button>
+				<!-- Every header row is the same quiet shape: a muted label column and a
+				     borderless field, separated by hairlines — one form, not three
+				     different controls. From is a text button (a chevron marks it as
+				     switchable only when there is something to switch to). -->
+				<div class="row">
+					<span class="rowlabel" id="from-label">From</span>
+					{#if (identities.items as Identity[]).length > 1}
+						<!-- A real dropdown (Button's `menu` Popover sits on the popover layer,
+						     above the modal). Ctrl+J still cycles without opening it. -->
+						<span class="identity-wrap">
+							<Button
+								size="0"
+								transparent
+								show_chevron
+								tooltip="Switch identity (Ctrl+J)"
+								aria-labelledby="from-label"
+								popover_placement="bottom-start"
+								popover_close_on_inside_click
+							>
+								{fromIdentity?.email ?? "No identity"}
+								{#snippet menu()}
+									<List>
+										{#each identities.items as Identity[] as i (i.id)}
+											<ListItem
+												active={String(i.id) === identityId}
+												onclick={() => (identityId = String(i.id))}
+											>
+												<span class="identity-opt">
+													<span>{i.email}</span>
+													{#if i.name}<span class="identity-name">{i.name}</span
+														>{/if}
+												</span>
+											</ListItem>
+										{/each}
+									</List>
+								{/snippet}
+							</Button>
+						</span>
+					{:else}
+						<span class="identity" aria-labelledby="from-label">
+							{fromIdentity?.email ?? "No identity"}
+						</span>
+					{/if}
 				</div>
 
 				<!-- To is always visible; Cc/Bcc slide open (delightstack <Expand>) when
@@ -584,16 +777,29 @@
 							bind:value={to}
 							onfilter={contactOptions}
 							option={contactOption}
-							onblur={() => commitTypedAddress('to')}
-							onchange={() => syncDraft('to')}
-							placeholder="recipient@example.com" />
+							onblur={() => commitTypedAddress("to")}
+							onchange={() => syncDraft("to")}
+							placeholder="recipient@example.com"
+						/>
 					</div>
 					<!-- Convenience toggles (also Ctrl+Shift+C / Ctrl+Shift+B): kept out of
 					     the Tab sequence so Tab flows To → Subject → body directly. -->
-					<span class="toggles">
-						{#if !showCc}<Button size="0" transparent tabindex={-1} onclick={() => (showCc = true)}>Cc</Button>{/if}
-						{#if !showBcc}<Button size="0" transparent tabindex={-1} onclick={() => (showBcc = true)}>Bcc</Button>{/if}
-					</span>
+					{#if !showCc || !showBcc}
+						<span class="toggles">
+							{#if !showCc}<button
+									type="button"
+									class="toggle"
+									tabindex={-1}
+									onclick={() => (showCc = true)}>Cc</button
+								>{/if}
+							{#if !showBcc}<button
+									type="button"
+									class="toggle"
+									tabindex={-1}
+									onclick={() => (showBcc = true)}>Bcc</button
+								>{/if}
+						</span>
+					{/if}
 				</div>
 				<Expand show={showCc}>
 					<div class="row">
@@ -605,8 +811,9 @@
 								bind:value={cc}
 								onfilter={contactOptions}
 								option={contactOption}
-								onblur={() => commitTypedAddress('cc')}
-								onchange={() => syncDraft('cc')} />
+								onblur={() => commitTypedAddress("cc")}
+								onchange={() => syncDraft("cc")}
+							/>
 						</div>
 					</div>
 				</Expand>
@@ -620,15 +827,21 @@
 								bind:value={bcc}
 								onfilter={contactOptions}
 								option={contactOption}
-								onblur={() => commitTypedAddress('bcc')}
-								onchange={() => syncDraft('bcc')} />
+								onblur={() => commitTypedAddress("bcc")}
+								onchange={() => syncDraft("bcc")}
+							/>
 						</div>
 					</div>
 				</Expand>
 
 				<div class="row">
 					<label for="subject">Subject</label>
-					<input id="subject" class="subject" bind:value={subject} placeholder="Subject" />
+					<input
+						id="subject"
+						class="subject"
+						bind:value={subject}
+						placeholder="Subject"
+					/>
 				</div>
 			</div>
 
@@ -646,36 +859,50 @@
 				<div class="attachments">
 					{#each attachments as a (a.id)}
 						<span class="att-chip" class:uploading={a.uploading}>
-							<Icon name="paperclip" size={13} /> {a.filename} <span class="att-size">{fmtSize(a.size)}</span>
+							<Icon name="paperclip" size={13} />
+							{a.filename} <span class="att-size">{fmtSize(a.size)}</span>
 							{#if a.uploading}<span class="att-status">uploading…</span>{/if}
-							<button onclick={() => removeAttachment(a.id)} aria-label="Remove attachment"><Icon name="x" size={13} /></button>
+							<button
+								onclick={() => removeAttachment(a.id)}
+								aria-label="Remove attachment"
+								><Icon name="x" size={13} /></button
+							>
 						</span>
 					{/each}
 				</div>
 			{/if}
 		</div>
 
-		{#snippet footer()}
-			<div class="footer-row">
-				<span class="hint">
-					<span class="hk"><kbd>Ctrl</kbd><kbd>↵</kbd> Send</span>
-					<span class="hk"><kbd>Ctrl</kbd><kbd>J</kbd> Identity</span>
-					<span class="hk"><kbd>Esc</kbd> Close</span>
-				</span>
-				<div class="footer-actions">
-					<input bind:this={fileInput} type="file" multiple hidden onchange={onFilePicked} />
-					<Button
-						icon
-						transparent
-						onclick={() => fileInput?.click()}
-						tooltip="Attach (Ctrl+Shift+A)"
-						aria-label="Attach files">
-						<Icon name="paperclip" size={18} />
-					</Button>
-					<Button accent disabled={!canSend} loading={sending} onclick={send}>
-						{sending ? 'Sending…' : 'Send'}
-					</Button>
-				</div>
+		<!-- Actions live in the title bar; the shortcuts are on their tooltips
+		     (Esc-to-close needs no signpost). No footer. -->
+		{#snippet header_end()}
+			<div class="actions">
+				<input
+					bind:this={fileInput}
+					type="file"
+					multiple
+					hidden
+					onchange={onFilePicked}
+				/>
+				<Button
+					icon
+					transparent
+					onclick={() => fileInput?.click()}
+					tooltip="Attach (Ctrl+Shift+A)"
+					aria-label="Attach files"
+				>
+					<Icon name="paperclip" size={18} />
+				</Button>
+				<Button
+					accent
+					size="0"
+					disabled={!canSend}
+					loading={sending}
+					onclick={send}
+					tooltip="Send (Ctrl+Enter)"
+				>
+					{sending ? "Sending…" : "Send"}
+				</Button>
 			</div>
 		{/snippet}
 	</Modal>
@@ -734,73 +961,229 @@
 	:global(body > .mobile-bar) {
 		z-index: var(--layer-popover, 500) !important;
 	}
+
+	:global(.compose-host .modal .body > header) {
+		/* Ensure "Send" button equidistant from modal body */
+		margin-right: -1.25rem;
+	}
+
 	.compose {
 		display: flex;
 		flex-direction: column;
 	}
-	.fields { padding: 2px 0 var(--space-2); }
+	/* --- header: one quiet form. Label column + borderless field per row, a
+	   hairline between rows, the same type size everywhere. --- */
+	.fields {
+		padding: 0 0 var(--space-1);
+	}
 	.row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-2);
+		gap: var(--space-3);
+		min-height: 40px;
 		border-bottom: 1px solid var(--dm-hairline);
-		padding: var(--space-2) 0;
 	}
-	.row label, .row .rowlabel { width: 48px; color: var(--color-text-disabled); font-size: var(--font-size-00); flex-shrink: 0; }
-	/* The recipient <Input> owns its own chips, suggestion panel, and field chrome
-	   (drawn from the design tokens); it just needs to fill the row. Its border
-	   replaces the row hairline, so recipient rows drop theirs to avoid doubling. */
-	.field { flex: 1; min-width: 0; }
-	.row:has(.field) { border-bottom: none; }
+	.row label,
+	.row .rowlabel {
+		width: 56px;
+		flex-shrink: 0;
+		color: var(--color-text-disabled);
+		font-size: var(--font-size-0);
+		/* Labels sit on the first line so a chip row that wraps keeps them at top. */
+		align-self: flex-start;
+		line-height: 40px;
+	}
+	.field {
+		flex: 1;
+		min-width: 0;
+	}
+	/* The recipient <Input> draws its own boxed field chrome; here it is one row
+	   of a form, so strip the box (border, radius, height) and let its chips and
+	   suggestion panel sit inline with the other rows. Its private tokens are
+	   the supported way in — no reaching into its markup. */
+	.field :global(.input) {
+		--_border: transparent;
+		--_border-hover: transparent;
+		--_border-focus: transparent;
+		--_radius: 0;
+		--_height: 40px;
+		--_bg: transparent;
+		--control-pad-x: 0px;
+	}
+	/* Single identity: plain text, nothing to click. */
+	.identity {
+		font-size: var(--font-size-1);
+	}
+	/* Several: the Button's text sits flush with the other fields (its own
+	   padding is pulled back so the email lines up with To/Subject). */
+	.identity-wrap {
+		margin-left: calc(-1 * var(--control-pad-x, 0.75em));
+	}
+	.identity-wrap :global(.button) {
+		font-size: var(--font-size-1);
+		font-weight: normal;
+		/* Body text, not the accent a plain transparent Button paints itself with
+		   (it sets its own --color-text/-active; inherit hands back the page tokens). */
+		--color-text: inherit;
+		--color-text-active: inherit;
+	}
+	/* The Button's own chevron has no intrinsic size at size="0". */
+	.identity-wrap :global(.chevron) {
+		width: 1em;
+		height: 1em;
+		opacity: 0.6;
+	}
+	.identity-opt {
+		display: flex;
+		flex-direction: column;
+		line-height: 1.25;
+		text-align: left;
+	}
+	.identity-name {
+		color: var(--color-text-disabled);
+		font-size: var(--font-size-0);
+	}
 	.subject {
-		width: 100%; border: none; background: transparent; color: inherit; outline: none;
-		padding: 4px 0; font: inherit; font-size: var(--font-size-1);
+		width: 100%;
+		border: none;
+		background: transparent;
+		color: inherit;
+		outline: none;
+		padding: 0;
+		font: inherit;
+		font-size: var(--font-size-1);
+		line-height: 40px;
 	}
-	/* A suggestion row rendered into <Input>'s panel via the `option` snippet. */
-	.ac-opt { display: flex; align-items: center; gap: 8px; min-width: 0; }
-	.ac-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-	.ac-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.ac-email { color: var(--color-text-disabled); font-size: var(--font-size-00); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.subject::placeholder {
+		color: var(--color-text-disabled);
+	}
+	.toggle {
+		border: none;
+		background: transparent;
+		color: var(--color-text-disabled);
+		font: inherit;
+		font-size: var(--font-size-0);
+		padding: 4px 6px;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		transition:
+			color 120ms var(--ease-out, ease),
+			background-color 120ms var(--ease-out, ease);
+		&:hover {
+			color: var(--color-text);
+			background: var(--color-bg-3);
+		}
+	}
+	/* A suggestion row rendered into <Input>'s panel via the `option` snippet.
+	   The row's <button> centers its content (native button default), so the
+	   snippet must claim the full width and pin its text left itself. */
+	.ac-opt {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		width: 100%;
+		text-align: left;
+	}
+	.ac-text {
+		display: flex;
+		flex-direction: column;
+		line-height: 1.25;
+		min-width: 0;
+	}
+	.ac-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.ac-email {
+		color: var(--color-text-disabled);
+		font-size: var(--font-size-00);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	/* Favicon treatment (neutral backdrop + contain) for avatars in the panel. */
 	.ac-opt :global(.avatar img) {
-		background: var(--color-bg-3); object-fit: contain; padding: 2px; box-sizing: border-box;
+		background: var(--color-bg-3);
+		object-fit: contain;
+		padding: 2px;
+		box-sizing: border-box;
 	}
-	.toggles { display: flex; gap: 4px; }
-	.body { flex: 1; padding: var(--space-4) 0 var(--space-2); min-height: 220px; }
-	.signature { margin-top: var(--space-4); color: var(--color-text-disabled); }
-	.sig-marker { font-family: var(--font-mono); }
-	.signature pre { margin: 0; white-space: pre-wrap; font: inherit; font-size: var(--font-size-00); }
+	.toggles {
+		display: flex;
+		gap: 2px;
+		align-self: flex-start;
+		padding-top: 6px;
+	}
+	.body {
+		flex: 1;
+		padding: var(--space-4) 0 var(--space-2);
+		min-height: 220px;
+	}
+	.signature {
+		margin-top: var(--space-4);
+		color: var(--color-text-disabled);
+	}
+	.sig-marker {
+		font-family: var(--font-mono);
+	}
+	.signature pre {
+		margin: 0;
+		white-space: pre-wrap;
+		font: inherit;
+		font-size: var(--font-size-00);
+	}
 	.attachments {
-		display: flex; flex-wrap: wrap; gap: 6px; padding: var(--space-2) 0 0;
-		border-top: 1px solid var(--color-border); margin-top: var(--space-2);
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: var(--space-2) 0 0;
+		border-top: 1px solid var(--color-border);
+		margin-top: var(--space-2);
 	}
 	.att-chip {
-		display: inline-flex; align-items: center; gap: 6px; background: var(--color-bg-2);
-		border-radius: var(--radius-md); padding: 3px 8px; font-size: var(--font-size-00);
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: var(--color-bg-2);
+		border-radius: var(--radius-md);
+		padding: 3px 8px;
+		font-size: var(--font-size-00);
 	}
-	.att-chip.uploading { opacity: 0.6; }
-	.att-size, .att-status { color: var(--color-text-disabled); }
-	.att-chip button { display: inline-flex; align-items: center; background: none; border: none; padding: 0; color: var(--color-text-disabled); cursor: pointer; }
-	.att-chip button:hover { color: var(--color-error); }
+	.att-chip.uploading {
+		opacity: 0.6;
+	}
+	.att-size,
+	.att-status {
+		color: var(--color-text-disabled);
+	}
+	.att-chip button {
+		display: inline-flex;
+		align-items: center;
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--color-text-disabled);
+		cursor: pointer;
+	}
+	.att-chip button:hover {
+		color: var(--color-error);
+	}
 
-	/* Footer: keyboard hints on the left, Attach + Send actions pinned right. */
-	.footer-row {
-		display: flex; align-items: center; gap: var(--space-3); width: 100%;
+	/* Title-bar actions (header_end): Attach + Send. */
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
 	}
-	.footer-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
-	.hint { display: flex; gap: var(--space-3); font-size: var(--font-size-00); color: var(--color-text-disabled); }
 
 	/* The email body starts blank — hide the editor's "Heading / Bullet list …"
 	   quick-start chips that otherwise appear under the empty-doc placeholder. */
-	.body :global(.quick-chips) { display: none; }
-	.hk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
-	.hint kbd {
-		font-family: var(--font-mono); font-size: 0.9em;
-		background: var(--color-bg-2); border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm); padding: 0 4px;
+	.body :global(.quick-chips) {
+		display: none;
 	}
 	@media (max-width: 767px) {
-		.hint { display: none; }
 		/* Compose fills the screen on a phone. The delightstack Modal already
 		   turns into a full-width bottom sheet (title bar stuck at the bottom,
 		   in thumb reach) — we only stretch it to full height so a long email

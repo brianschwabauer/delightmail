@@ -250,10 +250,31 @@
 	// A standalone draft thread (every message is a draft) gets a read-only preview
 	// instead of the normal reader; Enter/→ resumes it in the compose overlay.
 	const draftMsg = $derived(docs.length > 0 && docs.every((m) => m.is_draft) ? docs[0] : null);
+	// `draft_doc` isn't indexed, so a draft row out of the client index has no
+	// body — fetch the full row for the preview instead of showing it empty.
+	let draftDocFetched = $state<{ id: string; doc: string | undefined } | null>(null);
+	$effect(() => {
+		const m = draftMsg;
+		if (!m || m.draft_doc != null) return;
+		const id = String(m.id);
+		if (untrack(() => draftDocFetched)?.id === id) return;
+		const e = db.entity('message', id);
+		void e
+			.load()
+			.then(() => {
+				const doc = (e.loaded ? (e.value as Message).draft_doc : undefined) ?? undefined;
+				draftDocFetched = { id, doc };
+			})
+			.catch(() => {});
+	});
 	const draftBody = $derived.by(() => {
-		if (!draftMsg?.draft_doc) return '';
+		if (!draftMsg) return '';
+		const raw =
+			draftMsg.draft_doc ??
+			(draftDocFetched?.id === String(draftMsg.id) ? draftDocFetched.doc : undefined);
+		if (!raw) return '';
 		try {
-			return docToText(JSON.parse(draftMsg.draft_doc)).trim();
+			return docToText(JSON.parse(raw)).trim();
 		} catch {
 			return '';
 		}

@@ -86,3 +86,14 @@ body {
 	outline: none;
 	box-shadow: none;
 }
+
+/* Tooltips (the `tooltip` attachment from @delightstack/utilities) portal into a
+   bare `#tooltips` div at the end of <body> and position themselves `fixed` with
+   NO z-index, so inside a modal they paint BEHIND the dialog's backdrop
+   (--layer-modal, 400). Give the portal its own stacking context on the tooltip
+   layer (700) — fixed children still position against the viewport, they just
+   stack above everything else. */
+#tooltips {
+	position: relative;
+	z-index: var(--layer-tooltip, 700);
+}

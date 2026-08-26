@@ -141,4 +141,56 @@ describe('DraftAutosaver', () => {
 		expect(calls).toBe(2);
 		expect(saver.draftId).toBe('d');
 	});
+
+	it('flush saves pending changes immediately, after any in-flight save', async () => {
+		const idsSeen: Array<[string | undefined, boolean]> = [];
+		const gate = deferred<void>();
+		let sig = 1;
+		let calls = 0;
+		const saver = new DraftAutosaver({
+			signature: () => `sig-${sig}`,
+			hasContent: () => true,
+			save: async (id, final) => {
+				idsSeen.push([id, final]);
+				calls++;
+				if (calls === 1) await gate.promise;
+				return id ?? 'draft-1';
+			},
+			remove: async () => {},
+		});
+		const t1 = saver.tick(); // create in flight
+		sig = 2; // more typing, then the user closes the composer
+		const f = saver.flush();
+		expect(calls).toBe(1); // must wait for the create to yield its id
+		gate.resolve();
+		await Promise.all([t1, f]);
+		expect(calls).toBe(2);
+		expect(idsSeen).toEqual([
+			[undefined, false],
+			['draft-1', true],
+		]);
+		// Nothing new → flush is a no-op.
+		await saver.flush();
+		expect(calls).toBe(2);
+	});
+
+	it('flush is a no-op after discardAfterSend and when there is no content', async () => {
+		let calls = 0;
+		let content = false;
+		const saver = new DraftAutosaver({
+			signature: () => 'x',
+			hasContent: () => content,
+			save: async (id) => {
+				calls++;
+				return id ?? 'd';
+			},
+			remove: async () => {},
+		});
+		await saver.flush();
+		expect(calls).toBe(0);
+		content = true;
+		await saver.discardAfterSend();
+		await saver.flush();
+		expect(calls).toBe(0);
+	});
 });

@@ -14,8 +14,10 @@ export interface DraftAutosaverOptions {
 	signature: () => string;
 	/** Whether there is enough content to be worth persisting. */
 	hasContent: () => boolean;
-	/** Persist the draft. `id` is undefined for a create; returns the draft id. */
-	save: (id: string | undefined) => Promise<string>;
+	/** Persist the draft. `id` is undefined for a create; returns the draft id.
+	 *  `final` is set for the last save before the composer goes away (close,
+	 *  unload) so the transport can e.g. use a keepalive request. */
+	save: (id: string | undefined, final: boolean) => Promise<string>;
 	/** Delete the draft by id (best-effort). */
 	remove: (id: string) => Promise<void>;
 }
@@ -58,10 +60,37 @@ export class DraftAutosaver {
 		}
 	}
 
-	async #run(sig: string): Promise<void> {
+	/**
+	 * Save NOW if anything changed — the composer is closing (Escape, ✕, tab
+	 * unload). Waits for an in-flight save first (so a create yields its id and
+	 * the final write updates that row instead of making a second one), then
+	 * writes whatever is newer than the last confirmed save. Resolves once the
+	 * draft is persisted; the component can drop the editor after that.
+	 */
+	async flush(): Promise<void> {
+		if (this.#stopped) return;
+		if (this.#inFlight) {
+			try {
+				await this.#inFlight;
+			} catch {
+				/* ignore */
+			}
+		}
+		if (this.#stopped || !this.#opts.hasContent()) return;
+		const sig = this.#opts.signature();
+		if (sig === this.#lastSig) return;
+		this.#inFlight = this.#run(sig, true);
+		try {
+			await this.#inFlight;
+		} finally {
+			this.#inFlight = null;
+		}
+	}
+
+	async #run(sig: string, final = false): Promise<void> {
 		if (this.#stopped) return;
 		try {
-			this.#draftId = await this.#opts.save(this.#draftId);
+			this.#draftId = await this.#opts.save(this.#draftId, final);
 			// Only record the signature as saved once the server confirms, so a
 			// failed save naturally retries on the next tick.
 			this.#lastSig = sig;
