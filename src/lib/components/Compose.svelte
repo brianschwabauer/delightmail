@@ -313,13 +313,81 @@
 	// <Input onfilter> — one-shot contact search feeding the autocomplete panel.
 	// Ranks known correspondents first (send_count), drops anyone already added
 	// across To/Cc/Bcc, and records each name so the chip's email can be re-named
-	// at send. label === the email so the picked chip is the address itself. An
-	// empty query (e.g. the panel refreshing right after a pick) lists the most
-	// frequent contacts so adding several recipients stays a keyboard flow.
+	// at send. label === the email so the picked chip is the address itself.
+	//
+	// An empty query (the field just focused, or the panel refreshing after a
+	// pick) suggests five people instead of "No results": a blend of who you
+	// write to MOST (top send_count) and who you wrote to LATEST
+	// (last_interacted_at) — see suggestRecipients — so the usual names are
+	// Enter/Enter/Enter away.
 	//
 	// When the query is itself a complete address, it leads the list: the <Input>
 	// parks its highlight on the first row, so writing to someone who isn't a
 	// contact yet is the same Enter-to-commit flow as writing to someone who is.
+	type ContactHit = { email?: string; name?: string; send_count?: number };
+	const SUGGESTIONS = 5;
+	/** A search (`term`) answers with scored `hits`; a plain ordered list with
+	 *  `items`. Read whichever came back. */
+	function contactDocs(res: { hits?: Array<{ document?: unknown }>; items?: unknown[] }): ContactHit[] {
+		if (res.hits) return res.hits.map((h) => h.document as ContactHit);
+		return (res.items ?? []) as ContactHit[];
+	}
+
+	/** Two lists, blended by rank: the all-time top recipients and the most
+	 *  recent ones each contribute their position (1..5; absent = 6), lowest
+	 *  sum wins, and a tie goes to the more recent. Someone you mail weekly and
+	 *  mailed yesterday tops both lists; a one-off from this morning and an old
+	 *  regular still both make the cut. Only contacts you've actually written to
+	 *  count — a sender you've never replied to isn't a recipient suggestion. */
+	async function suggestRecipients(usable: (c: ContactHit) => boolean): Promise<ContactHit[]> {
+		const list = (field: "send_count" | "last_interacted_at") =>
+			db
+				.list("contact", { limit: SUGGESTIONS * 3, order: [{ field, direction: "DESC" }] })
+				.load()
+				.then((res) =>
+					contactDocs(res)
+						.filter((c) => usable(c) && (c.send_count ?? 0) > 0)
+						.slice(0, SUGGESTIONS),
+				)
+				.catch((err): ContactHit[] => {
+					console.warn("[compose] recipient suggestions failed:", err);
+					return [];
+				});
+		const [top, recent] = await Promise.all([list("send_count"), list("last_interacted_at")]);
+		const score = new Map<string, { c: ContactHit; sum: number; recent: number }>();
+		const absent = SUGGESTIONS + 1;
+		for (const c of [...top, ...recent]) {
+			const key = c.email!.toLowerCase();
+			if (score.has(key)) continue;
+			const t = top.findIndex((x) => x.email!.toLowerCase() === key);
+			const r = recent.findIndex((x) => x.email!.toLowerCase() === key);
+			const tr = t < 0 ? absent : t + 1;
+			const rr = r < 0 ? absent : r + 1;
+			score.set(key, { c, sum: tr + rr, recent: rr });
+		}
+		const blended = [...score.values()]
+			.sort((a, b) => a.sum - b.sum || a.recent - b.recent)
+			.slice(0, SUGGESTIONS)
+			.map((s) => s.c);
+		if (blended.length) return blended;
+		// Nothing sent yet (a fresh account): fall back to whoever you've heard
+		// from most recently rather than an empty panel.
+		return db
+			.list("contact", {
+				limit: SUGGESTIONS * 2,
+				order: [{ field: "last_interacted_at", direction: "DESC" }],
+			})
+			.load()
+			.then((res) =>
+				contactDocs(res)
+					.filter(usable)
+					.slice(0, SUGGESTIONS),
+			)
+			.catch((err): ContactHit[] => {
+					console.warn("[compose] recipient suggestions failed:", err);
+					return [];
+				});
+	}
 	async function contactOptions(query: string): Promise<InputOption[]> {
 		const term = query.trim();
 		const chosen = new Set(
@@ -337,26 +405,21 @@
 		if (typedEmail && typed?.name)
 			nameByEmail.set(typedEmail.toLowerCase(), typed.name);
 
-		const res = await db
-			.list(
-				"contact",
-				term
-					? { term, limit: 8 }
-					: { limit: 8, order: [{ field: "send_count", direction: "DESC" }] },
-			)
-			.load();
-		const contacts = (res.hits ?? [])
-			.map(
-				(h) =>
-					h.document as { email?: string; name?: string; send_count?: number },
-			)
-			.filter((c) => c.email && !chosen.has(c.email.toLowerCase()))
+		const usable = (c: ContactHit) =>
+			!!c.email && !chosen.has(c.email.toLowerCase());
+		const toOption = (c: ContactHit): InputOption => {
+			const email = c.email!.toLowerCase();
+			if (c.name) nameByEmail.set(email, c.name);
+			return { value: email, label: email, description: c.name };
+		};
+
+		if (!term) return (await suggestRecipients(usable)).map(toOption);
+
+		const res = await db.list("contact", { term, limit: 8 }).load();
+		const contacts = contactDocs(res)
+			.filter(usable)
 			.sort((a, b) => (b.send_count ?? 0) - (a.send_count ?? 0))
-			.map((c) => {
-				const email = c.email!.toLowerCase();
-				if (c.name) nameByEmail.set(email, c.name);
-				return { value: email, label: email, description: c.name };
-			});
+			.map(toOption);
 
 		if (!typedEmail) return contacts.slice(0, 6);
 		// The typed address may also be a known contact — show it once, at the top,
@@ -393,6 +456,16 @@
 	function recipientField(target: EventTarget | null): Field | null {
 		const id = (target as HTMLElement | null)?.id;
 		return id === "to" || id === "cc" || id === "bcc" ? id : null;
+	}
+	/** The <Input> opens its panel on focus but only asks `onfilter` for options
+	 *  on an `input` event — so a freshly focused, empty field shows "No results".
+	 *  Nudge it with a synthetic input so the empty query runs and the panel
+	 *  opens on the recipient suggestions instead. */
+	function onFieldFocus(e: FocusEvent): void {
+		const field = recipientField(e.target);
+		if (!field) return;
+		const el = e.target as HTMLInputElement;
+		if (el.value === "") el.dispatchEvent(new Event("input", { bubbles: true }));
 	}
 	/** Mirror each recipient field's draft text into `drafts` (the events bubble
 	 *  up to `.compose`; the subject input isn't a recipient field, so it's ignored). */
@@ -710,6 +783,7 @@
 			onkeydowncapture={onKeydownCapture}
 			onkeydown={onKeydown}
 			oninput={onFieldInput}
+			onfocusin={onFieldFocus}
 			ondragover={(e) => e.preventDefault()}
 			ondrop={onDrop}
 		>

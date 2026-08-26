@@ -258,7 +258,8 @@ export const contactTable = Database.table('contact', (s) => ({
 	id: s.primaryKey(),
 	email: s.string().email().searchable().indexable().unique(),
 	name: s.string().searchable().optional(),
-	send_count: s.number().default(0),
+	// sortable: the compose autocomplete's empty-query suggestions rank by it.
+	send_count: s.number().sortable().default(0),
 	receive_count: s.number().default(0),
 	last_interacted_at: s.number().sortable().default(0),
 	is_known_correspondent: s.boolean().default(false),
