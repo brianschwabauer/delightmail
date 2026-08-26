@@ -7,8 +7,9 @@
 	"private": true,
 	"packageManager": "pnpm@11.3.0",
 	"scripts": {
-		"dev": "vite dev --port 5174",
-		"dev:worker": "cd server && wrangler dev --config wrangler.jsonc --persist-to ./../.wrangler/state",
+		"dev": "node scripts/dev.mjs",
+		"dev:full": "node scripts/dev.mjs --full",
+		"dev:seed": "node scripts/seed.mjs",
 		"build": "vite build",
 		"preview": "vite preview",
 		"deploy": "wrangler deploy",

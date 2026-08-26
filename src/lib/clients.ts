@@ -37,6 +37,9 @@ export async function createClients(options: {
 
 	const ws = new WebsocketClient({
 		dev,
+		// `pnpm dev` runs the server worker (the WS host in dev) on :8710 — a port no
+		// other project in ~/Work claims (5173/8787 all are).
+		dev_worker_port: 8710,
 		dev_query: {
 			user_id: auth.id ?? undefined,
 			user_name: auth.name ?? undefined,

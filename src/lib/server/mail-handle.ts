@@ -3,7 +3,6 @@
  * shares the org/session guard. Handlers are added per-phase.
  */
 import type { Handle, RequestEvent } from '@sveltejs/kit';
-import { dev } from '$app/environment';
 import { DelightError } from '@delightstack/utilities';
 import {
 	handleGoogleStart,
@@ -27,6 +26,7 @@ import { handleSend, handleUndoSend, handleSaveDraft, handleDeleteDraft } from '
 import { handleTriageTest, handleUnsubscribe, handleUnsubscribeBulk } from './triage-endpoints';
 import { handleVapidKey, handlePushSubscribe, handlePushUnsubscribe } from './push';
 import { handleDevSeed } from './dev-seed';
+import { isDevEnv } from './is-dev';
 
 export function createMailHandle(): Handle {
 	return async ({ event, resolve }) => {
@@ -102,7 +102,13 @@ async function route(event: RequestEvent): Promise<Response> {
 	}
 	// cid: inline images — deterministic {hash}/{index} path baked into sanitized
 	// bodies at ingest (attachment row ids don't exist yet at sanitize time).
-	if (parts[1] === 'attachments' && parts[2] === 'cid' && parts[3] && parts[4] && method === 'GET') {
+	if (
+		parts[1] === 'attachments' &&
+		parts[2] === 'cid' &&
+		parts[3] &&
+		parts[4] &&
+		method === 'GET'
+	) {
 		return handleAttachmentByCid(event, parts[3], parts[4]);
 	}
 	if (parts[1] === 'attachments' && parts[2] && method === 'GET') {
@@ -144,10 +150,11 @@ async function route(event: RequestEvent): Promise<Response> {
 	// --- web push (P6) ---
 	if (pathname === '/api/push/vapid' && method === 'GET') return handleVapidKey(event);
 	if (pathname === '/api/push/subscribe' && method === 'POST') return handlePushSubscribe(event);
-	if (pathname === '/api/push/subscribe' && method === 'DELETE') return handlePushUnsubscribe(event);
+	if (pathname === '/api/push/subscribe' && method === 'DELETE')
+		return handlePushUnsubscribe(event);
 
 	// --- dev-only seed (never reachable in production) ---
-	if (dev && pathname === '/api/dev/seed' && method === 'POST') {
+	if (isDevEnv() && pathname === '/api/dev/seed' && method === 'POST') {
 		return handleDevSeed(event);
 	}
 

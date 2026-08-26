@@ -72,6 +72,17 @@ let logged = false;
  * only the logging; the error check runs every time.
  */
 export function reportEnvOnce(env: Env, opts: { dev?: boolean } = {}): void {
+	// DEV=true relaxes secrets, exposes /api/dev/* and suppresses outbound mail. It
+	// exists for `wrangler dev` on localhost and nowhere else — refuse to serve at
+	// all if it reaches a deployment with a real hostname.
+	if (
+		env.DEV === 'true' &&
+		!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(env.PUBLIC_APP_URL ?? '')
+	) {
+		throw new Error(
+			'DEV=true is set but PUBLIC_APP_URL is not localhost. DEV is for local `wrangler dev` only — unset it.',
+		);
+	}
 	const { errors, warnings, features } = checkEnv(env, opts);
 	if (!logged) {
 		logged = true;

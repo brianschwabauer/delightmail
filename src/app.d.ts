@@ -75,6 +75,8 @@ declare global {
 			IMAGE_PROXY?: string;
 			GMAIL_FULL_SCOPE?: string;
 			GMAIL_POLL_SECONDS?: string;
+			/** "true" only in local dev (.dev.vars). Never set in production. */
+			DEV?: string;
 		}
 	}
 }

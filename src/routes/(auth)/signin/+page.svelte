@@ -12,6 +12,31 @@
 	let notice = $state('');
 	let busy = $state(false);
 	let passkeySupported = $state(false);
+	// Local dev only: `POST /api/dev/signin` mints a session for OWNER_EMAIL with no
+	// email round trip. The route exists only when the worker runs with DEV=true
+	// (see scripts/dev.mjs); anywhere else it 404s and this button hides itself.
+	let devSignin = $state(false);
+	onMount(() => {
+		const h = window.location.hostname;
+		devSignin = h === 'localhost' || h === '127.0.0.1';
+	});
+	async function signInDev() {
+		error = '';
+		busy = true;
+		try {
+			const res = await fetch('/api/dev/signin', { method: 'POST' });
+			if (res.status === 404) {
+				devSignin = false;
+				return;
+			}
+			if (!res.ok) throw new Error(((await res.json()) as { message?: string }).message);
+			window.location.href = '/mail/inbox';
+		} catch (err) {
+			error = (err as Error).message || 'Dev sign-in failed.';
+		} finally {
+			busy = false;
+		}
+	}
 
 	onMount(() => {
 		passkeySupported = auth.passkey.isSupported();
@@ -116,6 +141,13 @@
 					Use a different email
 				</Button>
 			</form>
+		{/if}
+
+		{#if devSignin}
+			<div class="divider"><span>local dev</span></div>
+			<Button full_width transparent disabled={busy} onclick={signInDev}>
+				Sign in instantly as the owner
+			</Button>
 		{/if}
 
 		{#if passkeySupported}

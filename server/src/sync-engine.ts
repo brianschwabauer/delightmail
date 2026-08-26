@@ -36,6 +36,8 @@ export interface SyncEnv {
 	GMAIL_PUBSUB_TOPIC?: string;
 	PUBLIC_APP_URL?: string;
 	EMAIL?: { send(message: unknown): Promise<void> };
+	/** "true" only in local dev (.dev.vars) — outbound mail is never delivered. */
+	DEV?: string;
 	MAIL_FROM?: string;
 	SMTP_RELAY_HOST?: string;
 	SMTP_RELAY_PORT?: string;
@@ -238,9 +240,7 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		// Drop queued/failed sync work first — a resync on top of an in-flight (or
 		// crash-looping) backfill otherwise STACKS a second full chain onto the
 		// first, multiplying memory pressure and Gmail quota burn.
-		this.#sql.exec(
-			`DELETE FROM job WHERE type IN ('backfill_page', 'history_sync')`,
-		);
+		this.#sql.exec(`DELETE FROM job WHERE type IN ('backfill_page', 'history_sync')`);
 		this.#saveState({
 			backfill_cursor: undefined,
 			gmail_history_id: undefined,
@@ -714,7 +714,16 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		this.#markSendAttempt(payload.message_id);
 		let result: SendResult;
 		try {
-			if (state.kind === 'gmail') {
+			if (this.env.DEV === 'true') {
+				// Local dev never delivers: the message is recorded as sent (so Sent,
+				// undo-send and the status pipeline behave exactly as in prod) and a
+				// summary is logged instead of anything leaving the machine.
+				console.log(
+					`\n📤 [dev] send suppressed → ${this.#recipients(payload).join(', ')}` +
+						`\n   subject: ${payload.subject ?? ''}\n   ${built.raw.length} bytes of MIME not delivered\n`,
+				);
+				result = { ok: true };
+			} else if (state.kind === 'gmail') {
 				const gmail = await this.#gmail();
 				// Retry after a possible mid-send crash: Gmail's send isn't idempotent,
 				// so check whether the exact message already landed before re-sending.

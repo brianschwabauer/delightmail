@@ -18,6 +18,7 @@ import { tables } from '$lib/schema';
 import { sendTransactionalEmail } from '$lib/server/email';
 import { createMailHandle } from '$lib/server/mail-handle';
 import { reportEnvOnce } from '$lib/server/env-check';
+import { isDevEnv } from '$lib/server/is-dev';
 import { limitMagicLink, type RateLimiterNamespace } from '$lib/server/rate-limit';
 
 // A valid 64-char hex secret for dev only; production MUST set JWT_KEY_SECRET.
@@ -34,7 +35,7 @@ const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000dead
  */
 function resolveAuthSecret(): string {
 	if (env.JWT_KEY_SECRET) return env.JWT_KEY_SECRET;
-	if (dev) return DEV_SECRET;
+	if (isDevEnv()) return DEV_SECRET;
 	throw new Error(
 		'JWT_KEY_SECRET is not set. Set it to a 64-char hex value (openssl rand -hex 32) on ' +
 			'BOTH workers: `pnpm run secrets secrets.env` or `wrangler secret put JWT_KEY_SECRET`.',
@@ -74,7 +75,7 @@ function signupAllowed(email: string): boolean {
 		.split(/[,\s]+/)
 		.map((e) => e.trim().toLowerCase())
 		.filter(Boolean);
-	if (owners.length === 0) return dev; // dev: allow anyone; prod: locked until OWNER_EMAIL set
+	if (owners.length === 0) return isDevEnv(); // dev: allow anyone; prod: locked until OWNER_EMAIL set
 	return owners.includes(email.trim().toLowerCase());
 }
 
@@ -133,7 +134,7 @@ const signupGateHandle: Handle = async ({ event, resolve }) => {
 	const penv = (event.platform as App.Platform | undefined)?.env;
 	if (penv) {
 		_last_env = penv;
-		reportEnvOnce(penv as unknown as Record<string, string | undefined>, { dev });
+		reportEnvOnce(penv as unknown as Record<string, string | undefined>, { dev: isDevEnv() });
 	}
 
 	const p = event.url.pathname;
@@ -279,7 +280,7 @@ const auth_config = defineAuthConfig({
 	permissions: ['owner', 'admin', 'member'] as const,
 	oauth_scopes: [] as const,
 	entitlements: ['ai', 'push', 'domains'] as const,
-	dev,
+	dev: isDevEnv(),
 	// The library defaults this to 'org:admin', which is not one of our permissions,
 	// so the owner of a new org was encoded with a permission bitfield of 0 — no
 	// permissions at all in their own mailbox.
@@ -298,7 +299,7 @@ const auth_config = defineAuthConfig({
 		// Undefined → the library builds links against the request origin.
 		base_url: appOrigin(),
 		sendEmail: async ({ to, subject, html, text }) => {
-			await sendTransactionalEmail(event_env(), { to, subject, html, text }, { dev });
+			await sendTransactionalEmail(event_env(), { to, subject, html, text }, { dev: isDevEnv() });
 		},
 	},
 	// `passkeys`, not `passkey` — the singular key was silently ignored, so every
@@ -317,6 +318,54 @@ function authServer(event: RequestEvent): AuthServer | undefined {
 	if (!ns) return undefined;
 	return ns.get(ns.idFromName('main')) as unknown as AuthServer;
 }
+
+// ---------------------------------------------------------------------------
+// 0c. Dev sign-in — `POST /api/dev/signin` mints a session for OWNER_EMAIL (or any
+//     address when SIGNUPS_ENABLED) without the magic-link round trip, so
+//     `pnpm dev:seed` can sign in headlessly. Only exists in local dev (isDevEnv)
+//     and only answers a localhost origin — belt and braces, since the DEV flag
+//     that enables it is itself refused on non-local deployments (env-check).
+// ---------------------------------------------------------------------------
+const devSigninHandle: Handle = async ({ event, resolve }) => {
+	if (event.url.pathname !== '/api/dev/signin' || event.request.method !== 'POST') {
+		return resolve(event);
+	}
+	const local = event.url.hostname === 'localhost' || event.url.hostname === '127.0.0.1';
+	if (!isDevEnv() || !local) return new Response('Not found', { status: 404 });
+
+	const body = (await event.request.json().catch(() => ({}))) as { email?: string };
+	// Under `vite dev` the private env comes from `.env`, not `.dev.vars` — the
+	// platform env (getPlatformProxy) is where OWNER_EMAIL actually lives there.
+	const owner = env.OWNER_EMAIL || (event.platform as App.Platform | undefined)?.env?.OWNER_EMAIL;
+	const email = (body.email ?? owner?.split(/[,\s]+/)[0] ?? '').trim().toLowerCase();
+	if (!email) return DelightError.badRequest('No email (set OWNER_EMAIL or pass one)').toResponse();
+	if (!signupAllowed(email)) return DelightError.forbidden('Not an allowed address').toResponse();
+	const auth = authServer(event);
+	if (!auth) return DelightError.badRequest('No AUTH binding').toResponse();
+
+	const meta = {
+		ip_address: clientIp(event) || undefined,
+		user_agent: event.request.headers.get('user-agent') ?? undefined,
+	};
+	let jwt: string;
+	try {
+		// First contact: signing up returns a live session directly.
+		jwt = (await auth.signUpWithEmail({ name: email.split('@')[0] || email, email }, meta)).jwt;
+	} catch {
+		// Already registered: mint a sign-in token and trade it for a session — the
+		// exact exchange a clicked magic link performs, minus the email.
+		const token = await auth.createEmailSignInToken(email, meta);
+		jwt = (await auth.signInWithEmailToken({ email_signin_token: token.jwt }, meta)).jwt;
+	}
+	return new Response(JSON.stringify({ ok: true, email }), {
+		status: 200,
+		headers: {
+			'content-type': 'application/json',
+			'set-cookie': serializeSessionCookie(auth_config, jwt),
+			'cache-control': 'no-store',
+		},
+	});
+};
 
 const authHandle = createAuthHandle({
 	config: auth_config,
@@ -600,9 +649,24 @@ const settingsHandle: Handle = async ({ event, resolve }) => {
 // @sveltejs/kit; cast to the local Handle so sequence() accepts them (they are
 // structurally identical at runtime).
 export const handle = sequence(
-	...((dev ? [createDevHandle()] : []) as unknown as Handle[]),
+	// `vite dev` only: the Durable Objects live in the server worker (`pnpm dev`
+	// starts it on :8710), reached over delightstack's HTTP RPC bridge. `override`
+	// is REQUIRED for cross-script DOs — without it the stubs wrangler's dev registry
+	// hands out are used instead, and those are miniflare ProxyClient stubs that
+	// turn every error thrown inside a DO method into an opaque 500
+	// (`typeHeader === "Promise"`). The bridge relays the real DelightError.
+	...((dev
+		? [
+				createDevHandle({
+					url: env.DEV_WORKER_URL || 'http://localhost:8710',
+					bindings: ['AUTH', 'MAILBOX', 'SYNC', 'WS', 'RATE_LIMITER'],
+					override: true,
+				}),
+			]
+		: []) as unknown as Handle[]),
 	signupGateHandle,
 	emailLinkHandle,
+	devSigninHandle,
 	authHandle as unknown as Handle,
 	orgHandle,
 	appHandle,

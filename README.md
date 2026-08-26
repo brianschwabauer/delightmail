@@ -93,16 +93,24 @@ configurable — see `docs/providers/`. Cloudflare is the only hard dependency.
 
 ```sh
 pnpm install
+cp .dev.vars.example .dev.vars                 # set OWNER_EMAIL + CLOUDFLARE_ACCOUNT_ID
 cp server/.dev.vars.example server/.dev.vars   # the defaults work for local dev
 
-pnpm dev:worker   # terminal 1 — the Durable Object host (:8787)
-pnpm dev          # terminal 2 — the SvelteKit app (:5174)
+pnpm dev          # server worker (:8710) + the app with HMR on http://localhost:5710
+pnpm dev:seed     # (another terminal) sign in headlessly + fill the mailbox with sample mail
 ```
 
-Open http://localhost:5174 and enter the `OWNER_EMAIL` from your `.dev.vars`.
-First contact creates the account and signs you in; magic-link emails are printed
-to the server-worker console in dev. `POST /api/dev/seed` fills the mailbox with
-sample threads so you can exercise the UI without connecting a real account.
+`pnpm dev` starts the Durable Object host and the SvelteKit dev server together
+(Vite HMR; the app reaches the DOs over an HTTP RPC bridge). Nothing touches real
+mail: no provider is connected unless you add Gmail/IMAP credentials, and with
+`DEV=true` outbound messages are recorded as sent and logged instead of
+delivered. On the sign-in page, "Sign in instantly as the owner" skips the
+magic-link round trip.
+
+`pnpm dev:full` instead serves the production build of both workers in ONE
+`wrangler dev` session — the exact deploy topology (native DO RPC, real
+WebSockets, no bridge), rebuilding the app on every `src/` change (~3s, no HMR).
+Reach for it when debugging sync/send/DO behaviour or a 500 you don't trust.
 
 ```sh
 pnpm check   # svelte-check (app) + tsc (server)

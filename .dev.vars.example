@@ -1,0 +1,25 @@
+# DelightMail app-worker local config. Copy to `.dev.vars`. These defaults are
+# exactly what `pnpm dev` (scripts/dev.mjs) expects.
+
+# Local dev switch: enables /api/dev/* (instant sign-in, seed) and the built-in
+# dev JWT secret. The app refuses to serve if this is set with a non-localhost
+# PUBLIC_APP_URL. NEVER set in production.
+DEV=true
+
+# Must be this server's own origin — magic links, passkeys and the DEV guard
+# key off it.
+PUBLIC_APP_URL=http://localhost:5710
+
+# Leave JWT_KEY_SECRET UNSET in dev (both workers then share the same built-in
+# dev secret; if you set it, set the identical value in server/.dev.vars).
+# JWT_KEY_SECRET=
+
+# Any 64-char hex (openssl rand -hex 32). Encrypts stored mail credentials.
+CREDENTIALS_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+
+# The address that can sign in. `pnpm dev:seed` signs in as this.
+OWNER_EMAIL=you@example.com
+
+# Needed by wrangler to start the `ai` binding non-interactively (it proxies to
+# your account even locally). `wrangler whoami` shows it.
+CLOUDFLARE_ACCOUNT_ID=

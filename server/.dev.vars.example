@@ -1,14 +1,15 @@
 # DelightMail server-worker secrets. Copy to `.dev.vars` and fill in.
 
-# Enables the dev-only DO RPC + WebSocket bridge in the server worker so
-# `vite dev` can reach the Durable Objects over HTTP. MUST be left unset in
-# production — it exposes unauthenticated Durable Object access.
+# Local dev switch: outbound mail is never delivered (logged instead), the
+# built-in dev JWT secret is used, and the DO RPC + WebSocket bridge `pnpm dev`
+# (vite) reaches the Durable Objects through is enabled. MUST be left unset in production: the bridge
+# exposes unauthenticated Durable Object access.
 DEV="true"
 
 # Required
 JWT_KEY_SECRET="dev-secret-change-me-in-production-min-64-chars-long-0123456789abcdef"
 CREDENTIALS_ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
-PUBLIC_APP_URL="http://localhost:5174"
+PUBLIC_APP_URL=http://localhost:5710
 OWNER_EMAIL="you@example.com"
 
 # Magic-link delivery (one of these must work before first sign-in). In dev the
