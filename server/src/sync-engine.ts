@@ -112,6 +112,7 @@ interface MailboxStub {
 	broadcastMail(event: Record<string, unknown>): void;
 	update(entity_type: string, id: string, data: Record<string, unknown>): unknown;
 	applyRemoteFlagChange(payload: unknown): Promise<void>;
+	clearPendingProviderOps(gmail_ids: string[]): Promise<void>;
 	markSendResult(
 		message_id: string,
 		result: { ok: boolean; provider_ids?: Record<string, unknown>; error?: string },
@@ -343,9 +344,14 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 	async alarm(): Promise<void> {
 		const started = Date.now();
 		while (Date.now() - started < JOB_TIME_BUDGET_MS) {
+			// User-facing writes (thread-action write-backs, sends) jump ahead of
+			// sync/backfill work: a provider_action queued behind a long history
+			// sync leaves the local DB ahead of Gmail for the whole wait, which is
+			// exactly the window where a stale re-fetch reverts the user's action.
 			const job = this.#sql
 				.exec(
-					`SELECT * FROM job WHERE status = 'pending' AND run_at <= ? ORDER BY run_at ASC LIMIT 1`,
+					`SELECT * FROM job WHERE status = 'pending' AND run_at <= ?
+					 ORDER BY (type NOT IN ('provider_action', 'send')), run_at ASC LIMIT 1`,
 					Date.now(),
 				)
 				.toArray()[0] as unknown as JobRow | undefined;
@@ -1013,6 +1019,17 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 					break;
 				default:
 					break;
+			}
+		}
+		// The Gmail writes landed — lift the mailbox's stale-echo guard on these
+		// messages (pending_provider_op rows). On a mid-loop throw we never get
+		// here, so the retry keeps the guard up; if the clear itself fails, the
+		// guard's TTL lapses instead.
+		if (gmailIds.length) {
+			try {
+				await this.#mailbox().clearPendingProviderOps(gmailIds);
+			} catch (err) {
+				console.error('[SyncEngine] clear pending provider ops failed (TTL will lapse):', err);
 			}
 		}
 	}

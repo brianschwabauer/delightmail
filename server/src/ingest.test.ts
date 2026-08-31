@@ -158,6 +158,52 @@ describe('ingestBatch', () => {
 		expect(t.folder).toBe('archive');
 	});
 
+	it('does NOT reconcile flags/folder while a provider write-back is pending for the message', () => {
+		const { db, threads, messages } = fakeDb();
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<race@x>',
+				account_id: 'acc-1',
+				provider_ids: { gmail_id: 'G1' },
+				folder: 'inbox',
+			}),
+		]);
+		const m = Object.values(messages)[0];
+		const tid = m.thread_id as string;
+		// The user trashed the thread locally; the Gmail write is still queued.
+		db.update('message', m.id as string, { folder: 'trash' });
+		db.update('thread', tid, { folder: 'trash' });
+		db.hasPendingProviderOp = (gmail_id) => gmail_id === 'G1';
+
+		// A history replay / 404-recovery re-fetch carries PRE-action labels.
+		const r = ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<race@x>',
+				account_id: 'acc-1',
+				provider_ids: { gmail_id: 'G1' },
+				folder: 'inbox',
+				is_read: true,
+			}),
+		]);
+		expect(r.skipped).toBe(1);
+		// Local intent wins: the stale inbox copy must not resurrect the thread.
+		expect((messages[m.id as string] as { folder?: string }).folder).toBe('trash');
+		expect((threads[tid] as { folder?: string }).folder).toBe('trash');
+
+		// Once the write-back lands (guard cleared), reconcile applies again.
+		db.hasPendingProviderOp = () => false;
+		ingestBatch(db, [
+			msg({
+				rfc822_message_id: '<race@x>',
+				account_id: 'acc-1',
+				provider_ids: { gmail_id: 'G1' },
+				folder: 'trash',
+				is_read: true,
+			}),
+		]);
+		expect((messages[m.id as string] as { is_read?: boolean }).is_read).toBe(true);
+	});
+
 	it('backfills provider ids on re-delivery of an already-ingested message', () => {
 		const { db, messages } = fakeDb();
 		ingestBatch(db, [msg({ rfc822_message_id: '<pid@x>', account_id: 'acc-1' })]);

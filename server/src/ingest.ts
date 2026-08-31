@@ -78,6 +78,13 @@ export interface DbLike {
 			| { exec: { statement: string; bindings?: unknown[] } }
 		>,
 	): unknown[];
+	/**
+	 * True while an outbound provider write for this Gmail message is still
+	 * queued (or retrying) on the SyncEngine. Fetched provider flag/folder state
+	 * then predates the local action and must not overwrite it — see
+	 * reconcileExistingMessage.
+	 */
+	hasPendingProviderOp?(gmail_id: string): boolean;
 }
 
 export interface IngestResult {
@@ -269,8 +276,13 @@ function makeLookups(db: DbLike): ThreadLookups {
  * 404-recovery, backfill overlap). The dedup skip used to only backfill provider
  * ids and discard the authoritative flag/folder state, so read/archived changes
  * made while the history cursor was stale could never be repaired.
- * Note: a re-fetch that races an in-flight local action can momentarily revert it
- * — the version-guard for that race is a separate follow-up.
+ *
+ * The pending-op guard below closes the other direction of that race: while a
+ * local trash/archive's Gmail write is still queued behind a long sync job, a
+ * re-fetch carries PRE-action labels — applying them yanked the thread back
+ * into the inbox until the write-back's own echo re-trashed it (the "items
+ * reappear ~10s after archiving, then vanish again" jank). Local intent wins
+ * until the SyncEngine confirms the provider write.
  */
 function reconcileExistingMessage(
 	db: DbLike,
@@ -284,6 +296,9 @@ function reconcileExistingMessage(
 			/* best-effort */
 		}
 	}
+
+	const gmail_id = msg.provider_ids?.gmail_id;
+	if (typeof gmail_id === 'string' && gmail_id && db.hasPendingProviderOp?.(gmail_id)) return;
 
 	let cur: { is_read?: unknown; is_starred?: unknown; folder?: string };
 	try {

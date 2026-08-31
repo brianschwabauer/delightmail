@@ -47,6 +47,15 @@ function retryBackoffMs(attempts: number): number {
 }
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * How long a pending_provider_op row suppresses inbound flag/folder reconcile
+ * before it's considered abandoned. Generous: a provider_action can legally sit
+ * behind a retrying sync job for minutes. If the write-back ultimately never
+ * lands (job exhausted, account removed), the lapse lets inbound sync converge
+ * back to Gmail's actual state instead of suppressing it forever.
+ */
+const PENDING_OP_TTL_MS = 15 * 60_000;
+
 // The delightstack `Database.Table` type resolves to an over-narrow
 // `table_definition` when used as a generic *constraint*, so `typeof tables`
 // (correct at runtime) trips the `DatabaseServer<Config>` bound. The example app
@@ -157,11 +166,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		// case timer yields ever stop advancing the clock again.
 		const started = Date.now();
 		let iterations = 0;
-		while (
-			this.#searchMigrationPending() &&
-			Date.now() - started < 8_000 &&
-			iterations++ < 5
-		) {
+		while (this.#searchMigrationPending() && Date.now() - started < 8_000 && iterations++ < 5) {
 			await super.alarm();
 			await new Promise((resolve) => setTimeout(resolve, 1));
 		}
@@ -304,6 +309,12 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		// target folder so undo of archive/trash reaches Gmail.
 		for (const [account_id, gmail_ids] of byAccount) {
 			if (!gmail_ids.length) continue;
+			// Guard inbound sync against stale provider echoes until this write-back
+			// lands (see #recordPendingProviderOps). Recorded BEFORE the job exists —
+			// once enqueued, the SyncEngine could run and clear before we return.
+			// `label` isn't written to Gmail yet (#providerAction skips it), so it
+			// must not arm a guard nothing will clear.
+			if (op !== 'label') this.#recordPendingProviderOps(gmail_ids);
 			this.#enqueueProviderAction(account_id, {
 				op,
 				gmail_ids,
@@ -345,6 +356,63 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		}
 	}
 
+	// -------------------------------------------------------------------------
+	// Pending provider write-backs. While a thread action's Gmail write is still
+	// queued (or retrying) on the SyncEngine, inbound sync must NOT treat
+	// Gmail's fetched labels as authoritative for those messages: a history
+	// replay or 404-recovery re-ingest would carry pre-action labels and revert
+	// the action (the thread pops back into the inbox until the write-back's own
+	// echo re-applies it). Rows live in a local (non-synced) bookkeeping table —
+	// same pattern as job_queue — and are cleared by the SyncEngine once the
+	// Gmail write succeeds, or lapse after PENDING_OP_TTL_MS.
+	// -------------------------------------------------------------------------
+	#ensurePendingOpsTable(): void {
+		this.exec(
+			`CREATE TABLE IF NOT EXISTS pending_provider_op (
+				gmail_id TEXT PRIMARY KEY,
+				enqueued_at INTEGER NOT NULL
+			)`,
+		);
+	}
+
+	#recordPendingProviderOps(gmail_ids: string[]): void {
+		if (!gmail_ids.length) return;
+		this.#ensurePendingOpsTable();
+		const now = Date.now();
+		for (const gmail_id of gmail_ids) {
+			this.exec(
+				`INSERT OR REPLACE INTO pending_provider_op (gmail_id, enqueued_at) VALUES (?, ?)`,
+				gmail_id,
+				now,
+			);
+		}
+	}
+
+	/** SyncEngine RPC: the Gmail write for these messages landed — fetched
+	 *  provider state is authoritative again. */
+	async clearPendingProviderOps(gmail_ids: string[]): Promise<void> {
+		if (!Array.isArray(gmail_ids) || !gmail_ids.length) return;
+		this.#ensurePendingOpsTable();
+		const placeholders = gmail_ids.map(() => '?').join(', ');
+		this.exec(`DELETE FROM pending_provider_op WHERE gmail_id IN (${placeholders})`, ...gmail_ids);
+	}
+
+	/** Whether an outbound provider write for this Gmail message is still in
+	 *  flight (also the ingest DbLike hook — see reconcileExistingMessage). */
+	hasPendingProviderOp(gmail_id: string): boolean {
+		this.#ensurePendingOpsTable();
+		const rows = this.exec(
+			`SELECT enqueued_at FROM pending_provider_op WHERE gmail_id = ? LIMIT 1`,
+			gmail_id,
+		) as Array<{ enqueued_at: number }>;
+		if (!rows.length) return false;
+		if (Date.now() - rows[0].enqueued_at > PENDING_OP_TTL_MS) {
+			this.exec(`DELETE FROM pending_provider_op WHERE gmail_id = ?`, gmail_id);
+			return false;
+		}
+		return true;
+	}
+
 	/**
 	 * Apply a remote flag/label/delete change echoed from a provider (Gmail
 	 * history). Idempotent and does NOT re-enqueue provider jobs — this is the
@@ -355,6 +423,11 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		gmail_id: string;
 		state?: { folder: string; is_read: boolean; is_starred: boolean };
 	}): Promise<void> {
+		// A local action's Gmail write is still in flight for this message — the
+		// fetched label state predates it, so applying it would revert the action.
+		// Skip; the write-back's own history echo re-syncs after the guard clears.
+		// (`deleted` stays unguarded: a hard deletion at Gmail is authoritative.)
+		if (payload.op === 'labels' && this.hasPendingProviderOp(payload.gmail_id)) return;
 		const rows = this.exec(
 			`SELECT id, thread_id FROM message
 			 WHERE json_extract(json, '$.provider_ids.gmail_id') = ? LIMIT 1`,
@@ -617,8 +690,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				try {
 					const thread = this.get('thread', msg.thread_id) as Thread;
 					gmail_thread_id = (
-						(thread.gmail_thread_ids as Array<{ account_id: string; thread_id: string }>) ??
-						[]
+						(thread.gmail_thread_ids as Array<{ account_id: string; thread_id: string }>) ?? []
 					).find((g) => g.account_id === identity.account_id)?.thread_id;
 				} catch {
 					/* thread gone — send unthreaded */
@@ -1021,8 +1093,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
 		// Quiet hours: suppress non-digest pushes inside the window.
 		const settings = await this.ensureSettings();
-		if (withinQuietHours(settings.quiet_hours ?? undefined, settings.timezone ?? undefined))
-			return;
+		if (withinQuietHours(settings.quiet_hours ?? undefined, settings.timezone ?? undefined)) return;
 		const { sendWebPush } = await import('./webpush');
 		const subs = this.exec(`SELECT id, json FROM push_subscription`) as Array<{
 			id: string;
