@@ -206,6 +206,11 @@ export class ActionManager {
 	}
 
 	#unhide(ids: string[]): void {
+		// No-op when nothing is hidden: assigning a fresh Set retriggers every
+		// consumer of the overlay (the whole `docs` pipeline), and the OVERLAY_TTL
+		// timers land here on every action — rebuilding state for no visible
+		// change caused downstream churn (e.g. the reader losing its scroll).
+		if (!ids.some((id) => this.#removed.has(id))) return;
 		const removed = new Set(this.#removed);
 		for (const id of ids) removed.delete(id);
 		this.#removed = removed;
@@ -224,6 +229,8 @@ export class ActionManager {
 	}
 
 	#clearPatch(ids: string[]): void {
+		// Same no-op guard as #unhide: the TTL timers call this unconditionally.
+		if (!ids.some((id) => this.#patches.has(id))) return;
 		const patches = new Map(this.#patches);
 		for (const id of ids) patches.delete(id);
 		this.#patches = patches;

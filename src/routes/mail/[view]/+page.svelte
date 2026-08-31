@@ -264,14 +264,6 @@
 	const title = $derived(viewTitle(view));
 
 	let readingEl = $state<HTMLElement>();
-	// The pane (not the thread inside it) is the scroller and persists across
-	// threads, so a new conversation must start at the top rather than inherit
-	// the previous one's offset.
-	$effect(() => {
-		void openId;
-		void previewThread?.id;
-		readingEl?.scrollTo({ top: 0 });
-	});
 
 	function clamp(i: number): number {
 		return Math.min(docs.length - 1, Math.max(0, i));
@@ -284,6 +276,20 @@
 	// on `openId`) is deferred until the cursor SETTLES, so holding ↑/↓ flies through
 	// previews without touching the network. Explicit opens commit immediately.
 	const previewThread = $derived(docs[cursor] ?? null);
+	// The pane (not the thread inside it) is the scroller and persists across
+	// threads, so a new conversation must start at the top rather than inherit
+	// the previous one's offset. Track the preview's ID, not the doc object:
+	// `docs` is rebuilt with fresh references on every sync echo / overlay tick,
+	// and depending on `previewThread` itself reran this on each of those —
+	// yanking the reader back to the top mid-read with nothing visibly changed.
+	// A derived that recomputes to an equal string doesn't notify dependents,
+	// so this now fires only when a genuinely different thread shows.
+	const preview_scroll_id = $derived(previewThread ? String(previewThread.id) : null);
+	$effect(() => {
+		void openId;
+		void preview_scroll_id;
+		readingEl?.scrollTo({ top: 0 });
+	});
 	/** How long the cursor must rest on a row before its body loads. Short enough to
 	 *  feel instant when you land, long enough that a fast scroll loads nothing. */
 	const PREVIEW_SETTLE_MS = 120;
