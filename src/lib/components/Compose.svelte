@@ -28,6 +28,7 @@
 	import type { Address, Identity } from "$lib/schema";
 	import { verifiedAvatarUrl } from "$lib/mail/avatar.svelte";
 	import { mergeSignatureDoc, docToText } from "$lib/mail/compose";
+	import { resolveComposeIdentity } from "$lib/mail/identity";
 	import { DraftAutosaver } from "$lib/mail/draft-autosave";
 
 	export interface ComposeInit {
@@ -100,7 +101,38 @@
 		init.kind ? TITLES[init.kind] : init.draft_id ? "Draft" : "New message",
 	);
 
-	let identityId = $state(init.identity_id ?? "");
+	// A new message starts from the identity you last sent from on this device
+	// (a per-device convenience, like theme/density), else the default.
+	const LAST_IDENTITY_KEY = "dm-last-identity";
+	function lastUsedIdentity(): string | undefined {
+		try {
+			return localStorage.getItem(LAST_IDENTITY_KEY) ?? undefined;
+		} catch {
+			return undefined;
+		}
+	}
+	function rememberIdentity(id: string): void {
+		try {
+			localStorage.setItem(LAST_IDENTITY_KEY, id);
+		} catch {
+			/* storage blocked — the default still applies next time */
+		}
+	}
+	let identityId = $state(init.identity_id ?? lastUsedIdentity() ?? "");
+	// is_default is only on the full rows: once they land, settle on the default
+	// unless a valid identity was handed in, remembered, or picked meanwhile.
+	void identity_rows_ready.then(() => {
+		const pick = resolveComposeIdentity(
+			identity_rows.map((i) => ({
+				id: String(i.id),
+				email: i.email,
+				account_id: String(i.account_id),
+				is_default: i.is_default,
+			})),
+			identityId,
+		);
+		if (pick) identityId = pick.id;
+	});
 	let showCc = $state((init.cc?.length ?? 0) > 0);
 	let showBcc = $state((init.bcc?.length ?? 0) > 0);
 	// Recipients are held as the delightstack <Input multiple> value: a string[]
@@ -216,9 +248,6 @@
 	);
 
 	onMount(() => {
-		if (!identityId && identities.items.length) {
-			identityId = String((identities.items[0] as Identity).id);
-		}
 		// delightstack's Modal leaves its icon-only ✕ unnamed and its title without
 		// the id the dialog's aria-labelledby points at — patch both until it does.
 		const modal = overlayEl?.closest(".modal");
@@ -680,6 +709,7 @@
 			// waiting for any in-flight save first so it can't re-create an orphan.
 			sent = true;
 			void saver.discardAfterSend();
+			rememberIdentity(String(fromIdentity.id));
 
 			// A REAL undo button for the whole undo window (the server holds the
 			// message in the outbox until it expires). The toast lives exactly as

@@ -584,14 +584,21 @@
 		// client index (or a sparse server hit) simply doesn't carry it. Resuming
 		// from such a row opened an EMPTY editor — and the first autosave then
 		// overwrote the real body with that emptiness. Fetch the whole row first.
-		if (m.draft_doc == null) {
-			const full = await fullMessage(String(m.id));
-			if (!full) {
-				toast('Could not load the draft — try again in a moment.');
-				return;
-			}
-			m = full;
+		// The identity rows come along so the draft resumes from the address it
+		// was written as (identity_email), not whichever identity is listed first.
+		const [full, identities] = await Promise.all([
+			m.draft_doc == null ? fullMessage(String(m.id)) : m,
+			loadIdentities(),
+		]);
+		if (!full) {
+			toast('Could not load the draft — try again in a moment.');
+			return;
 		}
+		m = full;
+		const identity = resolveReplyIdentity(identities, {
+			received_as: m.identity_email ?? m.from?.email ?? undefined,
+			account_id: m.account_id ? String(m.account_id) : undefined,
+		});
 		let bodyDoc: unknown;
 		try {
 			bodyDoc = m.draft_doc ? JSON.parse(m.draft_doc) : undefined;
@@ -601,6 +608,7 @@
 		compose.open({
 			draft_id: String(m.id),
 			thread_id: String(t.id),
+			identity_id: identity?.id,
 			to: nzList(m.to),
 			cc: nzList(m.cc),
 			subject: m.subject ?? '',
