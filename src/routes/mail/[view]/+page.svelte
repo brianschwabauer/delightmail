@@ -935,6 +935,7 @@
 		let init: ComposeInit;
 		if (kind === 'forward') {
 			init = {
+				kind,
 				subject: replySubject(m.subject ?? t.subject ?? '', 'forward'),
 				identity_id: identity?.id,
 				bodyDoc: quoted,
@@ -943,6 +944,7 @@
 		} else {
 			const recipients = replyRecipients(src, selfEmails, kind === 'reply_all');
 			init = {
+				kind,
 				to: recipients.to,
 				cc: recipients.cc,
 				subject: replySubject(m.subject ?? t.subject ?? '', 'reply'),

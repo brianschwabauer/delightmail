@@ -31,6 +31,8 @@
 	import { DraftAutosaver } from "$lib/mail/draft-autosave";
 
 	export interface ComposeInit {
+		/** What started this compose — sets the title. Omitted = a new message. */
+		kind?: "reply" | "reply_all" | "forward";
 		to?: Address[];
 		cc?: Address[];
 		bcc?: Address[];
@@ -69,6 +71,34 @@
 	}
 
 	const identities = db.list("identity", { limit: 50 });
+	// That list is the client index: id + email only. Name and signature live on
+	// the full rows, so load those once — the signature preview, the picker's
+	// names, and send() (which waits on this) read from here.
+	let identity_rows = $state<Identity[]>([]);
+	const identity_rows_ready = loadIdentityRows();
+	async function loadIdentityRows(): Promise<void> {
+		try {
+			const res = (await db
+				.list("identity", { limit: 50, sparse: false } as never)
+				.load()) as unknown as { hits?: Array<{ document?: Identity }> };
+			identity_rows = (res.hits ?? [])
+				.map((h) => h.document)
+				.filter((i): i is Identity => i != null);
+		} catch {
+			/* offline — no signature preview; send still goes out */
+		}
+	}
+	function identityRow(id: string | number | undefined): Identity | undefined {
+		return identity_rows.find((i) => String(i.id) === String(id));
+	}
+	const TITLES = {
+		reply: "Reply",
+		reply_all: "Reply all",
+		forward: "Forward",
+	} as const;
+	const title = $derived(
+		init.kind ? TITLES[init.kind] : init.draft_id ? "Draft" : "New message",
+	);
 
 	let identityId = $state(init.identity_id ?? "");
 	let showCc = $state((init.cc?.length ?? 0) > 0);
@@ -189,11 +219,15 @@
 		if (!identityId && identities.items.length) {
 			identityId = String((identities.items[0] as Identity).id);
 		}
-		// Land the cursor in the first empty recipient field the moment compose
-		// opens — and, because focus is now inside the overlay, Esc reaches the
-		// overlay's own handler (fixing "n then Esc doesn't close it").
+		// Land the cursor in the first empty field the moment compose opens — To,
+		// then Subject, else the top of the body (a reply arrives addressed, so you
+		// start typing above the quote). Focus inside the overlay also lets Esc
+		// reach its own handler (fixing "n then Esc doesn't close it").
 		void tick().then(() => {
-			overlayEl?.querySelector<HTMLInputElement>("#to")?.focus();
+			if (!to.length) overlayEl?.querySelector<HTMLInputElement>("#to")?.focus();
+			else if (!subject.trim())
+				overlayEl?.querySelector<HTMLInputElement>("#subject")?.focus();
+			else editor.focus("start");
 		});
 		// The tab going away is a way out of the composer too — flush the draft
 		// (the request is keepalive, so it survives the unload).
@@ -264,7 +298,7 @@
 	// Signature preview: shown below the body, swapped when the identity
 	// changes, and merged into the doc at send time without touching what's written.
 	const signatureDoc = $derived.by(() => {
-		const raw = fromIdentity?.signature_doc;
+		const raw = identityRow(fromIdentity?.id)?.signature_doc;
 		if (!raw) return null;
 		try {
 			return JSON.parse(raw) as { type: string; content?: unknown[] };
@@ -600,6 +634,8 @@
 		}
 		sending = true;
 		try {
+			// The signature comes from the full identity rows — don't send without it.
+			await identity_rows_ready;
 			// Merge the identity's signature into the doc at send (WYSIWYG-neutral).
 			const doc = mergeSignatureDoc(editor.doc, signatureDoc);
 			const res = await fetch("/api/send", {
@@ -773,7 +809,7 @@
 		bind:open
 		onclose={close}
 		class="compose-modal"
-		title="New message"
+		{title}
 		width="640px"
 	>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -817,7 +853,8 @@
 											>
 												<span class="identity-opt">
 													<span>{i.email}</span>
-													{#if i.name}<span class="identity-name">{i.name}</span
+													{#if identityRow(i.id)?.name}<span class="identity-name"
+															>{identityRow(i.id)?.name}</span
 														>{/if}
 												</span>
 											</ListItem>
