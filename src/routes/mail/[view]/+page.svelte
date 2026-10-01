@@ -13,12 +13,13 @@
 	import { useActions } from '$lib/mail/actions-client.svelte';
 	import { useScope } from '$lib/mail/scope.svelte';
 	import { useFocus } from '$lib/mail/focus.svelte';
-	import { replySubject, replyAllRecipients, buildQuoteDoc } from '$lib/mail/compose';
+	import { replySubject, replyRecipients, buildQuoteDoc } from '$lib/mail/compose';
+	import { resolveReplyIdentity, type IdentityLike } from '$lib/mail/identity';
 	import { parseParticipantText } from '$lib/mail/participants';
 	import ThreadList from '$lib/components/ThreadList.svelte';
 	import ReadingPane from '$lib/components/ReadingPane.svelte';
 	import type { ComposeInit } from '$lib/components/Compose.svelte';
-	import type { Thread, Message } from '$lib/schema';
+	import type { Thread, Message, Identity } from '$lib/schema';
 	import type { ThreadActionName } from '$lib/mail/actions';
 
 	const compose = getContext<{ open: (init?: ComposeInit) => void }>('mail:compose');
@@ -865,30 +866,69 @@
 			return null;
 		}
 	}
+	/** Every identity as a FULL row — the client index only carries `email`, and
+	 *  reply-identity resolution also needs account_id / is_default. */
+	async function loadIdentities(): Promise<IdentityLike[]> {
+		try {
+			const res = (await db
+				.list('identity', { limit: 50, sparse: false } as never)
+				.load()) as unknown as { hits?: Array<{ document?: Identity }> };
+			return (res.hits ?? []).flatMap(({ document: i }) =>
+				i?.email
+					? [{ id: String(i.id), email: i.email, account_id: String(i.account_id), is_default: i.is_default }]
+					: [],
+			);
+		} catch {
+			return [];
+		}
+	}
 	async function reply(kind: 'reply' | 'reply_all' | 'forward') {
 		// Target the thread actually on screen in the reader (openId) — the reading
 		// pane's Reply/Forward buttons act on what's open, and a deep-link or a
 		// re-sorted list can leave the cursor pointing elsewhere.
 		const t = docs.find((d) => String(d.id) === openId) ?? docs[cursor];
 		if (!t) return;
-		// Prefer the messages the reader already loaded (reply is then instant and
-		// can't hang on a round-trip); only fetch when replying to a thread that
-		// isn't the one on screen. Reader messages are date-ASC, so the last is latest.
+		// The reader's messages pick WHICH message to answer (date-ASC, so the last
+		// non-draft is the latest); only query when replying to a thread that isn't
+		// the one on screen.
 		const loaded =
-			openId && String(t.id) === openId && openMessages.length
-				? openMessages[openMessages.length - 1]
+			openId && String(t.id) === openId
+				? openMessages.findLast((mm) => !mm.is_draft) ?? null
 				: null;
-		const m = loaded ?? (await latestMessage(String(t.id)));
-		if (!m) return;
-		const selfEmails = m.identity_email ? [m.identity_email] : [];
+		const sparse = loaded ?? (await latestMessage(String(t.id)));
+		if (!sparse) return;
+		// Those rows are client-index projections: no from/to/cc/reply_to, no
+		// identity_email, no Message-ID/References. Load the whole row (and the
+		// identities) before building the reply, or it opens addressed to no one,
+		// from the wrong identity, and unthreaded.
+		const [full, identities] = await Promise.all([
+			fullMessage(String(sparse.id)),
+			loadIdentities(),
+		]);
+		const m = full ?? sparse;
 		// The DSL types message addresses as nullable ({name: string|null}); the pure
 		// compose helpers want the clean {name?: string} shape — normalize here.
+		const from = nzAddr(m.from) ?? parseParticipantText(m.from_text)[0];
 		const src = {
-			from: nzAddr(m.from),
+			from: from?.email ? { name: from.name || undefined, email: from.email } : undefined,
 			to: nzList(m.to),
 			cc: nzList(m.cc),
 			reply_to: nzList(m.reply_to),
+			is_outbound: !!m.is_outbound,
 		};
+		// Answer from the address that received the message (identity_email, else
+		// the Delivered-To header, else whichever identity is in To/Cc — or From,
+		// when following up on our own message).
+		const identity = resolveReplyIdentity(identities, {
+			received_as: m.identity_email ?? m.headers_subset?.delivered_to ?? undefined,
+			recipients: [...(src.is_outbound && src.from ? [src.from] : []), ...src.to, ...src.cc],
+			account_id: m.account_id ? String(m.account_id) : undefined,
+		});
+		const selfEmails = [
+			...identities.map((i) => i.email),
+			...scope.selfEmails,
+			...(m.identity_email ? [m.identity_email] : []),
+		];
 		// Quoted history (from the excerpt available client-side), collapsed under a
 		// blockquote the user types above.
 		const quoted = buildQuoteDoc({ from: src.from, date: m.date, text: m.text_excerpt ?? '' });
@@ -896,19 +936,17 @@
 		if (kind === 'forward') {
 			init = {
 				subject: replySubject(m.subject ?? t.subject ?? '', 'forward'),
-				identity_id: undefined,
+				identity_id: identity?.id,
 				bodyDoc: quoted,
 				thread_id: String(t.id),
 			};
 		} else {
-			const recipients =
-				kind === 'reply_all'
-					? replyAllRecipients(src, selfEmails)
-					: { to: src.reply_to.length ? src.reply_to : src.from ? [src.from] : [], cc: [] };
+			const recipients = replyRecipients(src, selfEmails, kind === 'reply_all');
 			init = {
 				to: recipients.to,
 				cc: recipients.cc,
 				subject: replySubject(m.subject ?? t.subject ?? '', 'reply'),
+				identity_id: identity?.id,
 				bodyDoc: quoted,
 				in_reply_to: m.rfc822_message_id || undefined,
 				// A sparse/partial doc (or a legacy null-poisoned row) can leave

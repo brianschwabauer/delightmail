@@ -65,6 +65,38 @@ export function replyAllRecipients(
 	return { to, cc };
 }
 
+/**
+ * Recipients for a reply or reply-all. Replying to a message YOU sent (a
+ * follow-up) goes back to that message's recipients, not to yourself.
+ */
+export function replyRecipients(
+	original: {
+		from?: Address;
+		to?: Address[];
+		cc?: Address[];
+		reply_to?: Address[];
+		is_outbound?: boolean;
+	},
+	selfEmails: string[],
+	all: boolean,
+): { to: Address[]; cc: Address[] } {
+	const self = new Set(selfEmails.map((e) => e.toLowerCase()));
+	const fromEmail = (original.from?.email ?? '').toLowerCase();
+	if (original.is_outbound || (fromEmail && self.has(fromEmail))) {
+		const to = dedupe(original.to ?? [], self);
+		// A note-to-self has no one else to go back to — reply to it as-is.
+		if (!to.length && original.from) return { to: [original.from], cc: [] };
+		return { to, cc: all ? dedupe(original.cc ?? [], self, to) : [] };
+	}
+	if (all) return replyAllRecipients(original, selfEmails);
+	const primary = original.reply_to?.length
+		? original.reply_to
+		: original.from
+			? [original.from]
+			: [];
+	return { to: dedupe(primary, new Set()), cc: [] };
+}
+
 function dedupe(list: Address[], exclude: Set<string>, already: Address[] = []): Address[] {
 	const seen = new Set([...already.map((a) => (a.email ?? '').toLowerCase()), ...exclude]);
 	const out: Address[] = [];

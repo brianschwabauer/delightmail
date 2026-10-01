@@ -4,6 +4,7 @@ import {
 	buildReferences,
 	replySubject,
 	replyAllRecipients,
+	replyRecipients,
 	quoteText,
 	docToText,
 	mergeSignatureDoc,
@@ -94,6 +95,61 @@ describe('replyAllRecipients', () => {
 			[],
 		);
 		expect(r.to.map((a) => a.email)).toEqual(['real@x.com']);
+	});
+});
+
+describe('replyRecipients', () => {
+	const incoming = {
+		from: { email: 'sarah@x.com' },
+		to: [{ email: 'me@x.com' }, { email: 'bob@x.com' }],
+		cc: [{ email: 'carol@x.com' }],
+	};
+	it('replies to the sender only', () => {
+		const r = replyRecipients(incoming, ['me@x.com'], false);
+		expect(r.to.map((a) => a.email)).toEqual(['sarah@x.com']);
+		expect(r.cc).toEqual([]);
+	});
+	it('prefers reply-to over from', () => {
+		const r = replyRecipients(
+			{ from: { email: 'noreply@x.com' }, reply_to: [{ email: 'real@x.com' }] },
+			[],
+			false,
+		);
+		expect(r.to.map((a) => a.email)).toEqual(['real@x.com']);
+	});
+	it('reply-all matches replyAllRecipients for incoming mail', () => {
+		expect(replyRecipients(incoming, ['me@x.com'], true)).toEqual(
+			replyAllRecipients(incoming, ['me@x.com']),
+		);
+	});
+	it('a follow-up to your own message goes to its recipients', () => {
+		const sent = {
+			from: { email: 'ME@x.com' },
+			to: [{ email: 'sarah@x.com' }],
+			cc: [{ email: 'bob@x.com' }, { email: 'me@x.com' }],
+		};
+		const r = replyRecipients(sent, ['me@x.com'], false);
+		expect(r.to.map((a) => a.email)).toEqual(['sarah@x.com']);
+		expect(r.cc).toEqual([]);
+		const all = replyRecipients(sent, ['me@x.com'], true);
+		expect(all.to.map((a) => a.email)).toEqual(['sarah@x.com']);
+		expect(all.cc.map((a) => a.email)).toEqual(['bob@x.com']);
+	});
+	it('treats is_outbound as self even when from is unknown', () => {
+		const r = replyRecipients(
+			{ from: { email: 'alias@mine.com' }, to: [{ email: 'sarah@x.com' }], is_outbound: true },
+			[],
+			false,
+		);
+		expect(r.to.map((a) => a.email)).toEqual(['sarah@x.com']);
+	});
+	it('a note-to-self replies to self', () => {
+		const r = replyRecipients(
+			{ from: { email: 'me@x.com' }, to: [{ email: 'me@x.com' }] },
+			['me@x.com'],
+			false,
+		);
+		expect(r.to.map((a) => a.email)).toEqual(['me@x.com']);
 	});
 });
 
