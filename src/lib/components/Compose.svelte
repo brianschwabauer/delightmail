@@ -219,6 +219,12 @@
 		if (!identityId && identities.items.length) {
 			identityId = String((identities.items[0] as Identity).id);
 		}
+		// delightstack's Modal leaves its icon-only ✕ unnamed and its title without
+		// the id the dialog's aria-labelledby points at — patch both until it does.
+		const modal = overlayEl?.closest(".modal");
+		modal?.querySelector("header .close button")?.setAttribute("aria-label", "Close");
+		const labelled_by = modal?.getAttribute("aria-labelledby");
+		if (labelled_by) modal?.querySelector("header h2")?.setAttribute("id", labelled_by);
 		// Land the cursor in the first empty field the moment compose opens — To,
 		// then Subject, else the top of the body (a reply arrives addressed, so you
 		// start typing above the quote). Focus inside the overlay also lets Esc
