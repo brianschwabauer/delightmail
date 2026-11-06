@@ -645,10 +645,25 @@ const settingsHandle: Handle = async ({ event, resolve }) => {
 	}
 };
 
+/**
+ * `vite dev` behind Caddy (https://<app>.dev.brianschwabauer.com): Caddy
+ * terminates TLS and proxies plain http, so event.url arrives as http://
+ * while the browser's Origin is https://, and every same-origin check (the
+ * auth CSRF check included) refuses the request. Dev only: trust the proxy's
+ * X-Forwarded-Proto.
+ */
+const forwardedProtoHandle: Handle = async ({ event, resolve }) => {
+	if (event.request.headers.get('x-forwarded-proto') === 'https') {
+		event.url.protocol = 'https:';
+	}
+	return resolve(event);
+};
+
 // The delightstack factory handles are typed against their own bundled
 // @sveltejs/kit; cast to the local Handle so sequence() accepts them (they are
 // structurally identical at runtime).
 export const handle = sequence(
+	...(dev ? [forwardedProtoHandle] : []),
 	// `vite dev` only: the Durable Objects live in the server worker (`pnpm dev`
 	// starts it on :8710), reached over delightstack's HTTP RPC bridge. `override`
 	// is REQUIRED for cross-script DOs — without it the stubs wrangler's dev registry
