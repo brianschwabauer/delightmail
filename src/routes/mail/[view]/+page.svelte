@@ -9,7 +9,7 @@
 	import { parseSearchInput } from '$lib/mail/search-operators';
 	import SnoozeChordMenu from '$lib/components/SnoozeChordMenu.svelte';
 	import { currentDensity, resolvedScheme, type Density } from '$lib/theme';
-	import { bodyUrl } from '$lib/mail/body-url';
+	import { isWarm, warmThread } from '$lib/mail/warm-threads';
 	import { connectionState } from '$lib/mail/connection.svelte';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
@@ -346,9 +346,17 @@
 		if (!docs.length) return;
 		const t = docs[cursor];
 		if (!t) return;
-		// The instant header already tracks `previewThread`; only defer the body load.
+		// The instant header already tracks `previewThread`. A warmed thread (its
+		// messages and body already in memory) opens NOW — it renders in a frame
+		// or two, so there's nothing to wait for. A cold one waits for the cursor
+		// to settle, so holding j doesn't start a load per keystroke.
 		const id = String(t.id);
 		clearCommit();
+		warmAround(cursor);
+		if (isWarm(id, resolvedScheme())) {
+			openId = id;
+			return;
+		}
 		commitTimer = setTimeout(() => {
 			commitTimer = null;
 			openId = id;
@@ -398,50 +406,47 @@
 	// reader's iframe load into a disk-cache hit — and warms the server's KV body
 	// cache for everything else. Serial and low-priority so it never competes
 	// with an actual open.
-	const PREFETCH_COUNT = 8;
-	const prefetched = new Set<string>();
+	// Warming (mail/warm-threads.ts): the threads you're about to look at are
+	// kept in memory — messages and the expanded body — so switching to them is
+	// synchronous. The top of a freshly loaded list, then always the cursor's
+	// neighbourhood: j/k walks the list, so the next and previous threads are
+	// the ones that matter.
+	const WARM_TOP = 6;
+	const WARM_RADIUS = 2;
 	$effect(() => {
-		const top = docs.slice(0, PREFETCH_COUNT).map((t) => String(t.id));
-		untrack(() => {
-			if (top.length) void prefetchBodies(top);
-		});
+		const top = docs.slice(0, WARM_TOP).map((t) => String(t.id));
+		untrack(() => warmQueue(top));
 	});
-	// Reading order is predictable (j/k walks the list), so once a thread is open
-	// warm its neighbors too — the NEXT open becomes a cache hit even deep in the
-	// list, where the top-of-list warmup above and the background downloader (90
-	// days) never reached.
-	const NEIGHBOR_PREFETCH = 3;
 	$effect(() => {
 		const id = openId;
 		if (!id) return;
 		untrack(() => {
 			const i = docs.findIndex((t) => String(t.id) === id);
-			if (i < 0) return;
-			const around = [
-				...docs.slice(i + 1, i + 1 + NEIGHBOR_PREFETCH),
-				...docs.slice(Math.max(0, i - 1), i),
-			].map((t) => String(t.id));
-			if (around.length) void prefetchBodies(around);
+			if (i >= 0) warmAround(i);
 		});
 	});
-	/** Three at a time (they were strictly one-by-one), low priority. */
-	async function prefetchBodies(thread_ids: string[]) {
-		const todo = thread_ids.filter((tid) => !prefetched.has(tid));
-		for (const tid of todo) prefetched.add(tid);
+	/** Warm the thread at `index` first, then its neighbours, nearest first. */
+	function warmAround(index: number) {
+		const ids: string[] = [];
+		for (let d = 0; d <= WARM_RADIUS; d++) {
+			for (const i of d === 0 ? [index] : [index + d, index - d]) {
+				const t = docs[i];
+				if (t) ids.push(String(t.id));
+			}
+		}
+		warmQueue(ids);
+	}
+	/** Two at a time, in the given order (warmThread dedupes and skips warm ones). */
+	function warmQueue(thread_ids: string[]) {
+		const todo = [...thread_ids];
+		const scheme = resolvedScheme();
 		const next = async () => {
-			for (let tid = todo.shift(); tid !== undefined; tid = todo.shift()) {
-				// Latest message only — that's the one the reader expands.
-				const m = await latestMessage(tid);
-				if (!m?.id) continue;
-				// EXACTLY the iframe's URL (scheme included) so the cache key matches.
-				try {
-					await fetch(bodyUrl(String(m.id), resolvedScheme()), { priority: 'low' } as RequestInit);
-				} catch {
-					/* prefetch is best-effort; the iframe fetch remains the source of truth */
-				}
+			for (let id = todo.shift(); id !== undefined; id = todo.shift()) {
+				await warmThread(db, id, scheme);
 			}
 		};
-		await Promise.all([next(), next(), next()]);
+		void next();
+		void next();
 	}
 
 	/** Plain page move / next-thread step — clamps at the ends (no wrap). */

@@ -11,6 +11,7 @@
 	import { docToText } from '$lib/mail/compose';
 	import { threadSenderLabel, parseParticipantText } from '$lib/mail/participants';
 	import { useScope } from '$lib/mail/scope.svelte';
+	import { warmMessages, rememberMessages } from '$lib/mail/warm-threads';
 	import MessageBody from './MessageBody.svelte';
 
 	const scope = useScope();
@@ -120,8 +121,19 @@
 	const docs = $derived.by(() => {
 		if (!threadId) return [];
 		const local = (messages.items ?? []) as Message[];
-		if (local.length) return local;
+		// The live handle still holds the PREVIOUS thread's rows for a moment
+		// after threadId changes — only trust it once it answers for this thread.
+		if (local.length && String(local[0].thread_id) === String(threadId)) return local;
+		// A warmed thread (a list neighbour) renders from memory immediately; the
+		// live query replaces it a moment later with the same rows.
+		const warm = warmMessages(String(threadId));
+		if (warm?.length) return warm;
 		return fallbackThread === threadId ? fallbackDocs : [];
+	});
+	// Whatever the reader loads becomes warm, so going back to it is instant too.
+	$effect(() => {
+		const local = (messages.items ?? []) as Message[];
+		if (local.length) untrack(() => rememberMessages(String(local[0].thread_id), local));
 	});
 
 	// Attachment chips for every message in the open thread (one live query;
@@ -847,9 +859,8 @@
 		overflow: hidden;
 		background: var(--color-bg-0);
 		box-shadow: 0 1px 2px color-mix(in oklab, black 6%, transparent);
-		/* Thread switches breathe in (90ms) instead of teleporting — the card is
-		   recreated per message, so scrolling never replays this. */
-		animation: body-in 90ms var(--ease-out, ease);
+		/* No fade on thread switches: a warmed body paints within a frame or
+		   two, and fading it in would only add back the delay we removed. */
 	}
 	/* Undesigned mail (a person's note, a plain notification) sits on the pane
 	   like text, not inside a card that makes it look like a form. Indented to
@@ -862,19 +873,6 @@
 		overflow: visible;
 		/* avatar (size 2 = 40px) + the head's gap */
 		margin-left: calc(40px + var(--space-3));
-	}
-	@keyframes body-in {
-		from {
-			opacity: 0;
-		}
-		to {
-			opacity: 1;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.body-surface {
-			animation: none;
-		}
 	}
 	.triage-note {
 		display: flex;

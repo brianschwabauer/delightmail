@@ -37,9 +37,29 @@
 
 	import { scheme as liveScheme } from '$lib/theme';
 	import { bodyUrl } from '$lib/mail/body-url';
+	import { warmBody } from '$lib/mail/warm-threads';
 	// Reactive: a theme flip (including the OS switching while on 'system')
 	// reloads the frame with the body rendered for the new scheme.
 	const scheme = $derived(liveScheme.current);
+
+	const url = $derived(bodyUrl(messageId, scheme));
+	/**
+	 * Warmed bodies (list neighbours — see mail/warm-threads.ts) render straight
+	 * from memory via srcdoc: no request and no navigation, so the body paints
+	 * within a frame or two of the switch. The CSP the endpoint would have sent
+	 * as a header goes in as a meta tag; the sandbox is the same either way.
+	 */
+	const BODY_CSP =
+		"default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https: data:";
+	const srcdoc = $derived.by(() => {
+		const html = warmBody(url);
+		return html ? `<meta http-equiv="Content-Security-Policy" content="${BODY_CSP}">${html}` : undefined;
+	});
+	/** The frame holds the real body (not the initial about:blank). */
+	function isBodyDocument(doc: Document): boolean {
+		if (srcdoc) return doc.URL === 'about:srcdoc';
+		return !!doc.location?.pathname.includes('/api/messages/');
+	}
 
 	let iframe = $state<HTMLIFrameElement>();
 	let frameHeight = $state(120);
@@ -122,7 +142,7 @@
 	function tryReveal(el: HTMLIFrameElement): boolean {
 		const doc = docOf(el);
 		// Still on the initial about:blank — the real navigation hasn't committed.
-		if (!doc || !doc.location?.pathname.includes('/api/messages/')) return false;
+		if (!doc || !isBodyDocument(doc)) return false;
 		// An error response (404/500) is JSON — the browser renders it as raw
 		// text in the frame. Fall back to the excerpt rather than showing it.
 		if (doc.contentType === 'application/json') {
@@ -235,7 +255,8 @@
 	<iframe
 		bind:this={iframe}
 		title="Message body"
-		src={bodyUrl(messageId, scheme)}
+		src={srcdoc ? undefined : url}
+		{srcdoc}
 		class:dark={scheme === 'dark'}
 		class:bare
 		class:sized
