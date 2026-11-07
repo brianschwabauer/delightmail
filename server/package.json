@@ -13,12 +13,12 @@
 		"wrangler": "^4.79.0"
 	},
 	"dependencies": {
-		"@delightstack/ai": "^1.0.1",
-		"@delightstack/auth": "^1.1.0",
-		"@delightstack/database": "^1.1.0",
+		"@delightstack/ai": "^1.1.12",
+		"@delightstack/auth": "^1.4.0",
+		"@delightstack/database": "^2.6.0",
 		"@delightstack/rate-limiter": "^1.0.0",
 		"@delightstack/utilities": "^1.0.1",
-		"@delightstack/websocket": "^1.0.2",
+		"@delightstack/websocket": "^2.2.0",
 		"mimetext": "^3.0.24",
 		"postal-mime": "^2.4.3",
 		"zod": "^4.3.6"

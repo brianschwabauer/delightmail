@@ -9,17 +9,17 @@ importers:
   .:
     dependencies:
       '@delightstack/ai':
-        specifier: ^1.1.2
-        version: 1.1.2(svelte@5.56.4)
+        specifier: ^1.1.12
+        version: 1.1.12(svelte@5.56.4)
       '@delightstack/auth':
-        specifier: ^1.2.0
-        version: 1.2.0(@sveltejs/kit@2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6))(svelte@5.56.4)
+        specifier: ^1.4.0
+        version: 1.4.0(@sveltejs/kit@2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6))(svelte@5.56.4)
       '@delightstack/components':
         specifier: ^1.5.1
         version: 1.5.1(@delightstack/styles@1.1.0)(svelte@5.56.4)
       '@delightstack/database':
-        specifier: ^2.3.0
-        version: 2.3.0(svelte@5.56.4)
+        specifier: ^2.6.0
+        version: 2.6.0(svelte@5.56.4)
       '@delightstack/editor':
         specifier: ^1.0.3
         version: 1.0.3(@delightstack/components@1.5.1(@delightstack/styles@1.1.0)(svelte@5.56.4))(svelte@5.56.4)
@@ -36,8 +36,8 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0(svelte@5.56.4)
       '@delightstack/websocket':
-        specifier: ^2.1.0
-        version: 2.1.0(svelte@5.56.4)
+        specifier: ^2.2.0
+        version: 2.2.0(svelte@5.56.4)
       hast-util-sanitize:
         specifier: ^5.0.2
         version: 5.0.2
@@ -166,16 +166,16 @@ packages:
   '@daybrush/utils@1.13.0':
     resolution: {integrity: sha512-ALK12C6SQNNHw1enXK+UO8bdyQ+jaWNQ1Af7Z3FNxeAwjYhQT7do+TRE4RASAJ3ObaS2+TJ7TXR3oz2Gzbw0PQ==}
 
-  '@delightstack/ai@1.1.2':
-    resolution: {integrity: sha512-Pl3vKfb+Uhaa6TazAnbpHSl9LubOQWntaaMWbeW40eo0X/7YhT4446mmCHOOiGKBKey6d/37TRIdjAGLM3e2sg==}
+  '@delightstack/ai@1.1.12':
+    resolution: {integrity: sha512-gPeVkdo0FHWvh+xKnJx+T/yqF8VT4LgQFwB6tr+YSz/cmsCjM5uue70F+hQ57UiL3dvuOlZ0++A9HfDfSf0Crg==}
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
       svelte:
         optional: true
 
-  '@delightstack/auth@1.2.0':
-    resolution: {integrity: sha512-cyml2LTiiIa/4w6j/9hJkSmGFjrpRhq4OgppGU+ZKM3JxDqc9XXvQEjaKCUstnPVB9MbJ8B6Da7y3FNJMX9j1w==}
+  '@delightstack/auth@1.4.0':
+    resolution: {integrity: sha512-gc4gRdSV1hv7TfhLP5Kz5BjtZdgWmxBw3kQeGgXsXpkChNTG45kvzBPOmr7kw/AXaJvxsbEjHGZep3qaQjF7sQ==}
     peerDependencies:
       '@sveltejs/kit': ^2.0.0
       svelte: ^5.36.0
@@ -210,8 +210,8 @@ packages:
       svelte:
         optional: true
 
-  '@delightstack/database@2.3.0':
-    resolution: {integrity: sha512-FGwZjYZEGSnCEs5n9XJFqoJksR88/34kiZHB+5Gxu3zRp1sL/BdhyxdK8PyLOwxdvkQ+tEI6MSggVefYQ6mLbQ==}
+  '@delightstack/database@2.6.0':
+    resolution: {integrity: sha512-7TNR/pFs8DLdDzYL/t2v4VbZwTSKY1OpiInCPAUQwP7scy4oQ+epO00SogWjQStdotnt/5KcNHixO5LgFPmD2A==}
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
@@ -241,13 +241,13 @@ packages:
     peerDependencies:
       svelte: ^5.36.0
 
-  '@delightstack/utilities@1.2.0':
-    resolution: {integrity: sha512-gnKjogxPQDnvJx5qECDtiVF79wBgBPDAPjn/ncZ7fLTU+v7fXP73RmZt4otSuzW0+vtemLjs51jq98kbBWCQvA==}
+  '@delightstack/utilities@1.2.1':
+    resolution: {integrity: sha512-AvAeBffkRcmxhImb0kmoaRsB42zJ81XjocgTVTesNjpXh3DjbOb+7m4a9+rsdmea80cjROvlvpdswqgk+kMdRQ==}
     peerDependencies:
       svelte: ^5.36.0
 
-  '@delightstack/websocket@2.1.0':
-    resolution: {integrity: sha512-84HsSg9GlYbU2QaikcVcDpw7IdLwTUgZqVAa7LMcBxAQMM4BuTHlzCp59+hXIPqJREJdHSYZESU6MW3eDasNWg==}
+  '@delightstack/websocket@2.2.0':
+    resolution: {integrity: sha512-ADs0FkN7ejIDqectkaq4DKIU4Sn+RzICu5s5TPufeWNUbqUhDycfSWE8uG/5DJZHTcCz0rQgDZvdsh80hNDOuQ==}
     peerDependencies:
       svelte: ^5.36.0
     peerDependenciesMeta:
@@ -1603,17 +1603,17 @@ snapshots:
 
   '@daybrush/utils@1.13.0': {}
 
-  '@delightstack/ai@1.1.2(svelte@5.56.4)':
+  '@delightstack/ai@1.1.12(svelte@5.56.4)':
     dependencies:
-      '@delightstack/database': 2.2.0(svelte@5.56.4)
-      '@delightstack/utilities': 1.1.0(svelte@5.56.4)
-      '@delightstack/websocket': 2.1.0(svelte@5.56.4)
+      '@delightstack/database': 2.6.0(svelte@5.56.4)
+      '@delightstack/utilities': 1.2.1(svelte@5.56.4)
+      '@delightstack/websocket': 2.2.0(svelte@5.56.4)
     optionalDependencies:
       svelte: 5.56.4
 
-  '@delightstack/auth@1.2.0(@sveltejs/kit@2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6))(svelte@5.56.4)':
+  '@delightstack/auth@1.4.0(@sveltejs/kit@2.69.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.4)(vite@7.3.6))(svelte@5.56.4)(typescript@5.9.3)(vite@7.3.6))(svelte@5.56.4)':
     dependencies:
-      '@delightstack/utilities': 1.1.0(svelte@5.56.4)
+      '@delightstack/utilities': 1.2.1(svelte@5.56.4)
       '@simplewebauthn/browser': 13.3.0
       '@simplewebauthn/server': 13.3.2
       argon2-wasm-edge: 1.0.23
@@ -1637,9 +1637,9 @@ snapshots:
     optionalDependencies:
       svelte: 5.56.4
 
-  '@delightstack/database@2.3.0(svelte@5.56.4)':
+  '@delightstack/database@2.6.0(svelte@5.56.4)':
     dependencies:
-      '@delightstack/utilities': 1.2.0(svelte@5.56.4)
+      '@delightstack/utilities': 1.2.1(svelte@5.56.4)
       comlink: 4.4.2
       fast-equals: 6.0.2
     optionalDependencies:
@@ -1685,7 +1685,7 @@ snapshots:
       svelte: 5.56.4
       zod: 4.4.3
 
-  '@delightstack/utilities@1.2.0(svelte@5.56.4)':
+  '@delightstack/utilities@1.2.1(svelte@5.56.4)':
     dependencies:
       '@shopify/draggable': 1.2.1
       dequal: 2.0.3
@@ -1694,10 +1694,10 @@ snapshots:
       svelte: 5.56.4
       zod: 4.4.3
 
-  '@delightstack/websocket@2.1.0(svelte@5.56.4)':
+  '@delightstack/websocket@2.2.0(svelte@5.56.4)':
     dependencies:
-      '@delightstack/database': 2.2.0(svelte@5.56.4)
-      '@delightstack/utilities': 1.1.0(svelte@5.56.4)
+      '@delightstack/database': 2.6.0(svelte@5.56.4)
+      '@delightstack/utilities': 1.2.1(svelte@5.56.4)
       comlink: 4.4.2
     optionalDependencies:
       svelte: 5.56.4

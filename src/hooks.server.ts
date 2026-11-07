@@ -292,7 +292,13 @@ const auth_config = defineAuthConfig({
 	// org on every page load, which is how one account ended up with ten of them.
 	// Resolving deterministically makes a duplicate org merely untidy instead of fatal.
 	resolveOrgId: (event, session) => pickOrg(event, session as SessionOrgs),
-	session: { expires_in: 60 * 60 * 24 * 30 }, // 30-day rolling sessions
+	// Stay signed in: the session cookie lives 400 days (the browser cap) and is
+	// re-issued on every hourly JWT refresh, so anyone who opens the app at least
+	// once in that window is never asked to sign in again. The AuthServer keeps
+	// idle sessions refreshable for the same window (its `session_max_age`
+	// default). Before auth 1.4 the cookie had no expiry at all, so every browser
+	// restart signed you out.
+	session: { max_age: 60 * 60 * 24 * 400 },
 	email: {
 		link: true,
 		code: true,

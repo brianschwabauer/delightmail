@@ -2,6 +2,7 @@
 	import type { AuthClient } from '@delightstack/auth/client';
 	import type { WebsocketClient } from '@delightstack/websocket/client';
 	import { useFocus } from '$lib/mail/focus.svelte';
+	import { connectionState } from '$lib/mail/connection.svelte';
 
 	interface Props {
 		auth: AuthClient;
@@ -9,7 +10,7 @@
 	}
 	const { ws }: Props = $props();
 
-	const online = $derived(ws.connected);
+	const connection = connectionState(() => ws);
 	const focus = useFocus();
 	const PANES = ['folders', 'list', 'reading'] as const;
 	const paneLabel = $derived(
@@ -18,8 +19,8 @@
 </script>
 
 <footer class="statusbar">
-	<span class="pill" class:offline={!online}>
-		<span class="led" aria-hidden="true"></span>{online ? 'Live' : 'Offline'}
+	<span class="pill" class:offline={connection.offline} class:pending={connection.label === 'Connecting…'}>
+		<span class="led" aria-hidden="true"></span>{connection.label}
 	</span>
 	<!-- A three-cell mini-map of the yazi panes — glanceable, wordless; the
 	     filled cell is where the keyboard lives right now. -->
@@ -57,6 +58,10 @@
 	}
 	.pill.offline {
 		color: var(--color-warning, #b25d09);
+	}
+	.pill.pending {
+		color: var(--color-text-disabled);
+		font-weight: normal;
 	}
 	.led {
 		width: 7px;

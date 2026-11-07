@@ -60,6 +60,9 @@ export class AuthServer extends BaseAuthDatabaseServer {
 			// the default is 'org:admin', which isn't, so it encoded to a bitfield of
 			// 0 and left every mailbox owner with no permissions in their own mailbox.
 			orgAdminPermission: 'owner',
+			// Keep idle sessions refreshable as long as the app's session cookie
+			// lives (hooks.server.ts `session.max_age`) — 400 days.
+			session_max_age: 60 * 60 * 24 * 400,
 		});
 	}
 }
