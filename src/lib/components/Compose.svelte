@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { tick, onMount } from "svelte";
+	import { tick, onMount, getContext } from "svelte";
+	import { armUndoSend, takeUndoSend } from "$lib/mail/undo-send";
 	import { Editor as EditorClass, defaultBlocks } from "@delightstack/editor";
 	// The package's generated Editor.svelte.d.ts has an internal name collision
 	// (component `Editor` vs the core `Editor` type it imports), so the named
@@ -45,6 +46,8 @@
 		thread_id?: string;
 		/** Set when editing an existing draft so autosave updates it in place. */
 		draft_id?: string;
+		/** Already-uploaded files to carry over (an undone send reopening). */
+		attachments?: Array<{ filename: string; size: number; mime_type: string; r2_key: string }>;
 	}
 
 	interface Props {
@@ -145,7 +148,12 @@
 	let bcc = $state<string[]>(initChips(init.bcc));
 	let subject = $state(init.subject ?? "");
 	let sending = $state(false);
-	let attachments = $state<Attachment[]>([]);
+	let attachments = $state<Attachment[]>(
+		(init.attachments ?? []).map((a) => ({ ...a, id: crypto.randomUUID(), uploading: false })),
+	);
+	// Reopens compose after an undone send. Read at init: the context belongs to
+	// the mail layout, which outlives this component.
+	const composer = getContext<{ open: (init: ComposeInit) => void } | undefined>("mail:compose");
 	let fileInput = $state<HTMLInputElement>();
 	let overlayEl = $state<HTMLElement>();
 
@@ -716,11 +724,30 @@
 			// long as undo is possible, so its presence == "you can still stop it".
 			const undoSeconds = await undoWindowSeconds();
 			if (message_id) {
+				// Everything needed to put the message back in front of the user if
+				// they take it back — the editor and these fields die with this component.
+				const reopen: ComposeInit = {
+					kind: init.kind,
+					to: toList,
+					cc: ccList,
+					bcc: bccList,
+					subject,
+					bodyDoc: $state.snapshot(editor.doc),
+					identity_id: String(fromIdentity.id),
+					in_reply_to: init.in_reply_to,
+					references: init.references,
+					thread_id: init.thread_id,
+					draft_id: message_id,
+					attachments: attachments
+						.filter((a) => a.r2_key)
+						.map(({ filename, size, mime_type, r2_key }) => ({ filename, size, mime_type, r2_key })),
+				};
+				armUndoSend(undoSeconds, () => void undoSend(message_id, reopen));
 				toast("Sent.", {
 					duration: undoSeconds * 1000,
 					action: {
 						label: "Undo",
-						onclick: () => void undoSend(message_id),
+						onclick: () => takeUndoSend()?.(),
 					},
 				});
 			} else {
@@ -747,7 +774,7 @@
 		}
 	}
 
-	async function undoSend(message_id: string): Promise<void> {
+	async function undoSend(message_id: string, reopen: ComposeInit): Promise<void> {
 		try {
 			const res = await fetch(
 				`/api/send/${encodeURIComponent(message_id)}/undo`,
@@ -757,7 +784,10 @@
 			);
 			const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
 			if (res.ok && body.ok) {
-				toast("Send undone — the message is back in Drafts.");
+				// Back in front of the user, exactly as it was — they took it back to
+				// change something. (It is also in Drafts, which this now edits.)
+				if (composer) composer.open(reopen);
+				else toast("Send undone — the message is back in Drafts.");
 			} else {
 				toast("Too late to undo — the message already left the outbox.");
 			}
@@ -871,7 +901,7 @@
 						     above the modal). Ctrl+J still cycles without opening it. -->
 						<span class="identity-wrap">
 							<Button
-								size="0"
+								size="1"
 								transparent
 								show_chevron
 								tooltip="Switch identity (Ctrl+J)"
@@ -960,6 +990,7 @@
 								option={contactOption}
 								onblur={() => commitTypedAddress("cc")}
 								onchange={() => syncDraft("cc")}
+								placeholder="Add people to copy"
 							/>
 						</div>
 					</div>
@@ -976,6 +1007,7 @@
 								option={contactOption}
 								onblur={() => commitTypedAddress("bcc")}
 								onchange={() => syncDraft("bcc")}
+								placeholder="Add people to copy privately"
 							/>
 						</div>
 					</div>
@@ -1156,6 +1188,14 @@
 		--_height: 40px;
 		--_bg: transparent;
 		--control-pad-x: 0px;
+		/* Same size as From and Subject — the field's own default was a step larger. */
+		--_font: var(--font-size-1);
+	}
+	/* The suggestion panel opens on focus. With nothing typed and no one to
+	   suggest (a new account), it was an empty "No results" box covering
+	   Subject. Only show the panel when there's something in it, or a query. */
+	.field:has(:global(input:placeholder-shown)) :global(.dropdown:has(> .status)) {
+		display: none;
 	}
 	/* Single identity: plain text, nothing to click. */
 	.identity {
@@ -1268,9 +1308,13 @@
 		padding: var(--space-4) 0 var(--space-2);
 		min-height: 220px;
 	}
+	/* The signature previews what will be sent, so it is set like the body
+	   text it follows — only its colour says "not editable here". */
 	.signature {
 		margin-top: var(--space-4);
 		color: var(--color-text-disabled);
+		font-size: var(--font-size-1);
+		line-height: 1.6;
 	}
 	.sig-marker {
 		font-family: var(--font-mono);
@@ -1279,7 +1323,6 @@
 		margin: 0;
 		white-space: pre-wrap;
 		font: inherit;
-		font-size: var(--font-size-00);
 	}
 	.attachments {
 		display: flex;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Button, ButtonGroup, toast } from '@delightstack/components';
+	import { Button, ButtonGroup, Input, toast } from '@delightstack/components';
 	import { applyTheme, applyDensity, currentTheme, currentDensity, type Theme, type Density } from '$lib/theme';
 	import { enablePush, isPushSupported } from '$lib/push-client';
 	import { soundsEnabled, setSoundsEnabled, playTick } from '$lib/mail/sound';
@@ -12,9 +12,20 @@
 	let density = $state<Density>('comfortable');
 	let pushSupported = $state(false);
 	let enablingPush = $state(false);
-	let quietStart = $state('');
-	let quietEnd = $state('');
+	let quietStart = $state<string | null>('');
+	let quietEnd = $state<string | null>('');
 	let sounds = $state(false);
+	let undoSeconds = $state(10);
+	const UNDO_CHOICES = [5, 10, 20, 30] as const;
+	const THEMES: Array<{ value: Theme; label: string }> = [
+		{ value: 'system', label: 'System' },
+		{ value: 'light', label: 'Light' },
+		{ value: 'dark', label: 'Dark' },
+	];
+	const DENSITIES: Array<{ value: Density; label: string }> = [
+		{ value: 'comfortable', label: 'Comfortable' },
+		{ value: 'compact', label: 'Compact' },
+	];
 
 	function setSounds(on: boolean) {
 		sounds = on;
@@ -31,7 +42,12 @@
 		try {
 			const e = db.entity('settings', 'main');
 			await e.load();
-			const win = (e.loaded ? (e.value as { quiet_hours?: string }) : {})?.quiet_hours;
+			const settings = (e.loaded ? e.value : {}) as {
+				quiet_hours?: string;
+				undo_send_seconds?: number;
+			};
+			if (settings.undo_send_seconds) undoSeconds = settings.undo_send_seconds;
+			const win = settings.quiet_hours;
 			const m = win?.match(/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/);
 			if (m) {
 				quietStart = m[1].padStart(5, '0');
@@ -80,6 +96,11 @@
 		}
 	}
 
+	function setUndoSeconds(n: number) {
+		undoSeconds = n;
+		persist({ undo_send_seconds: n });
+	}
+
 	function setTheme(t: Theme) {
 		theme = t;
 		applyTheme(t);
@@ -96,32 +117,59 @@
 
 <h2>Appearance</h2>
 
+<!-- The selected option is filled with the brand colour; the others stay outlined.
+     (ButtonGroup's own `active` tint is too faint to read as "selected".) -->
 <section>
 	<h3>Theme</h3>
-	<ButtonGroup outline>
-		{#each ['system', 'light', 'dark'] as const as t (t)}
-			<Button active={theme === t} onclick={() => setTheme(t)} class="cap">{t}</Button>
+	<ButtonGroup>
+		{#each THEMES as t (t.value)}
+			<Button
+				outline={theme !== t.value}
+				aria-pressed={theme === t.value}
+				onclick={() => setTheme(t.value)}>{t.label}</Button>
 		{/each}
 	</ButtonGroup>
 </section>
 
 <section>
 	<h3>Density</h3>
-	<ButtonGroup outline>
-		{#each ['comfortable', 'compact'] as const as d (d)}
-			<Button active={density === d} onclick={() => setDensity(d)} class="cap">{d}</Button>
+	<ButtonGroup>
+		{#each DENSITIES as d (d.value)}
+			<Button
+				outline={density !== d.value}
+				aria-pressed={density === d.value}
+				onclick={() => setDensity(d.value)}>{d.label}</Button>
 		{/each}
 	</ButtonGroup>
-	<p class="muted">Compact fits more conversations per screen.</p>
+	<p class="muted">Compact fits more conversations on screen.</p>
 </section>
 
 <section>
 	<h3>Sounds</h3>
-	<ButtonGroup outline>
-		<Button active={!sounds} onclick={() => setSounds(false)}>Silent</Button>
-		<Button active={sounds} onclick={() => setSounds(true)}>Subtle sounds</Button>
+	<ButtonGroup>
+		<Button outline={sounds} aria-pressed={!sounds} onclick={() => setSounds(false)}>
+			Silent
+		</Button>
+		<Button outline={!sounds} aria-pressed={sounds} onclick={() => setSounds(true)}>
+			Subtle sounds
+		</Button>
 	</ButtonGroup>
-	<p class="muted">A ~45ms synthesized tick on archive and trash. No assets, no volume war.</p>
+	<p class="muted">A soft click when you archive or delete.</p>
+</section>
+
+<section>
+	<h3>Undo send</h3>
+	<ButtonGroup>
+		{#each UNDO_CHOICES as n (n)}
+			<Button
+				outline={undoSeconds !== n}
+				aria-pressed={undoSeconds === n}
+				onclick={() => setUndoSeconds(n)}>{n} seconds</Button>
+		{/each}
+	</ButtonGroup>
+	<p class="muted">
+		How long a sent message waits before it leaves. Press Undo in the toast, or Ctrl+Z, to take it back.
+	</p>
 </section>
 
 <section>
@@ -130,21 +178,23 @@
 		<Button disabled={enablingPush} onclick={turnOnPush}>
 			{enablingPush ? 'Enabling…' : 'Enable push notifications'}
 		</Button>
-		<p class="muted">Get notified of important new mail even when the app is closed (needs VAPID keys configured; iOS requires the installed PWA).</p>
+		<p class="muted">
+			Get notified of important new mail while the app is closed. On iPhone, install the app to
+			your home screen first.
+		</p>
 	{:else}
-		<p class="muted">Push isn't supported on this device/browser.</p>
+		<p class="muted">This browser can't show push notifications.</p>
 	{/if}
 
 	<h3>Quiet hours</h3>
 	<div class="quiet">
-		<input type="time" bind:value={quietStart} onchange={setQuietHours} aria-label="Quiet hours start" />
-		<span>to</span>
-		<input type="time" bind:value={quietEnd} onchange={setQuietHours} aria-label="Quiet hours end" />
+		<Input type="time" label="From" bind:value={quietStart} onchange={setQuietHours} />
+		<Input type="time" label="Until" bind:value={quietEnd} onchange={setQuietHours} />
 		{#if quietStart || quietEnd}
-			<Button onclick={clearQuietHours}>Clear</Button>
+			<Button outline onclick={clearQuietHours}>Clear</Button>
 		{/if}
 	</div>
-	<p class="muted">Pushes are suppressed during this window (your local time — timezone is saved automatically).</p>
+	<p class="muted">No notifications during these hours, in your local time.</p>
 </section>
 
 <style>
@@ -155,9 +205,6 @@
 		font-size: var(--font-size-1);
 		margin: var(--space-4) 0 var(--space-2);
 	}
-	:global(.cap) {
-		text-transform: capitalize;
-	}
 	.muted {
 		color: var(--color-text-disabled);
 		font-size: var(--font-size-0);
@@ -167,13 +214,9 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-	}
-	.quiet input {
-		background: var(--color-bg-2);
-		color: inherit;
-		border: 1px solid var(--color-border, rgba(128, 128, 128, 0.35));
-		border-radius: var(--radius-2, 6px);
-		padding: var(--space-1) var(--space-2);
-		font: inherit;
+		/* Sized to the value: a time is ~8 characters. */
+		& > :global(*:not(button)) {
+			inline-size: 10rem;
+		}
 	}
 </style>
