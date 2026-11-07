@@ -8,6 +8,7 @@
 	import { useScope } from '$lib/mail/scope.svelte';
 	import { useFocus } from '$lib/mail/focus.svelte';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
+	import { accountColor, accountDetails } from '$lib/mail/account-color';
 
 	interface Props {
 		db: MailDatabaseClient;
@@ -76,11 +77,14 @@
 
 	// Feed the live account list into the scope switcher so Ctrl+1..9 maps to them.
 	$effect(() => {
-		scope.accounts = accounts.items.map((a) => ({
+		const rows = accounts.items.map((a) => ({
 			id: String(a.id),
 			label: (a.display_name || a.email) as string,
-			color: a.color as string | undefined,
+			kind: a.kind as string | undefined,
+			color: accountColor(String(a.id), a.color as string | undefined),
 		}));
+		const details = accountDetails(rows);
+		scope.accounts = rows.map(({ kind: _kind, ...a }) => ({ ...a, detail: details.get(a.id) }));
 		// A cf_domain account's `email` holds the bare domain (see schema), so every
 		// address at it is the user's; other kinds hold a single address.
 		scope.selfDomains = accounts.items
@@ -191,8 +195,9 @@
 					scope.set(a.id);
 					onNavigate?.();
 				}}>
-				<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>
+				<span class="dot" style:background={a.color}></span>
 				<span class="label">{a.label}</span>
+				{#if a.detail}<span class="detail">{a.detail}</span>{/if}
 			</ListItem>
 		{/each}
 	</List>
@@ -260,6 +265,11 @@
 	:global(.rail-list .list-item) {
 		min-height: 0;
 	}
+	/* No hairline between rows: the rail is a short, scannable list and the
+	   lines only added noise. */
+	:global(.rail-list .list-item::after) {
+		content: none;
+	}
 	:global(.rail-list .list-item > a),
 	:global(.rail-list .list-item > button) {
 		gap: var(--space-2);
@@ -295,6 +305,15 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.detail {
+		flex-shrink: 0;
+		font-size: var(--font-size-00);
+		font-variant-numeric: tabular-nums;
+		color: var(--color-text-disabled);
+		background: var(--color-bg-3);
+		padding: 0 6px;
+		border-radius: var(--radius-cap, 99px);
 	}
 	.count {
 		font-variant-numeric: tabular-nums;

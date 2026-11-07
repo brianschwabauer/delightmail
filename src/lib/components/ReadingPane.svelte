@@ -54,11 +54,18 @@
 	}: Props = $props();
 
 	// Reactive query function — the search re-queries when the open thread changes.
-	const messages = db.list('message', () => ({
-		where: { thread_id: threadId ?? '' },
-		order: [{ field: 'date', direction: 'ASC' }],
-		limit: 200,
-	}));
+	// debounce 0: the library's default 150ms quiet window is for typing; here
+	// every step through the list must answer at once (the page already settles
+	// held-key scrolling before it changes threadId).
+	const messages = db.list(
+		'message',
+		() => ({
+			where: { thread_id: threadId ?? '' },
+			order: [{ field: 'date', direction: 'ASC' }],
+			limit: 200,
+		}),
+		{ debounce: 0 },
+	);
 
 	// Server fallback for the open thread. In client search mode the reactive
 	// query above only sees the locally-synced window — a thread older than the
@@ -127,12 +134,16 @@
 		mime_type?: string;
 		size_bytes?: number;
 	}
-	const attachmentDocs = db.list('attachment', () => ({
-		where: {
-			message_id: docs.length ? docs.map((m) => String(m.id)) : ['__none__'],
-		},
-		limit: 100,
-	}));
+	const attachmentDocs = db.list(
+		'attachment',
+		() => ({
+			where: {
+				message_id: docs.length ? docs.map((m) => String(m.id)) : ['__none__'],
+			},
+			limit: 100,
+		}),
+		{ debounce: 0 },
+	);
 	const attachmentsFor = $derived.by(() => {
 		const map = new Map<string, AttachmentDoc[]>();
 		for (const a of (attachmentDocs.items ?? []) as unknown as AttachmentDoc[]) {
@@ -218,6 +229,8 @@
 		onDocs?.(docs);
 	});
 	const latestId = $derived(docs.length ? docs[docs.length - 1].id : null);
+	/** Message ids whose body is undesigned mail — rendered without the card. */
+	let bareBodies = $state<Record<string, boolean>>({});
 	const subject = $derived(docs[0]?.subject || '(no subject)');
 	const starred = $derived(docs.some((m) => m.is_starred));
 
@@ -532,11 +545,12 @@
 						<span class="date">{fmt(m.date)}</span>
 					</button>
 					{#if isExpanded(String(m.id))}
-						<div class="body-surface">
+						<div class="body-surface" class:bare={bareBodies[String(m.id)]}>
 							<MessageBody
 								messageId={String(m.id)}
 								excerpt={m.text_excerpt ?? ''}
-								hasHtml={hasHtmlBody(m)} />
+								hasHtml={hasHtmlBody(m)}
+								onTier={(tier) => (bareBodies[String(m.id)] = tier !== 'design')} />
 						</div>
 						{#if attachmentsFor.get(String(m.id))?.length}
 							<div class="attachments">
@@ -641,10 +655,19 @@
 		margin: 0 auto;
 		padding: 0 var(--space-5);
 	}
+	/* The subject has priority over the toolbar. A short subject shares its line
+	   with the icons; one that would have to wrap to make room for them pushes the
+	   toolbar onto its own line instead — and wrap-reverse puts that line ABOVE the
+	   subject, so the subject keeps the full width and the icons stay top-right. */
 	.subject-row {
 		display: flex;
+		flex-wrap: wrap-reverse;
 		align-items: flex-start;
-		gap: var(--space-2);
+		gap: var(--space-1) var(--space-2);
+	}
+	.subject-row .subject {
+		flex: 1 1 auto;
+		min-width: 0;
 	}
 	.subject-row .star {
 		/* optically center against the subject's first line */
@@ -828,6 +851,18 @@
 		   recreated per message, so scrolling never replays this. */
 		animation: body-in 90ms var(--ease-out, ease);
 	}
+	/* Undesigned mail (a person's note, a plain notification) sits on the pane
+	   like text, not inside a card that makes it look like a form. Indented to
+	   line up with the sender's name above it. */
+	.body-surface.bare {
+		border: none;
+		border-radius: 0;
+		background: transparent;
+		box-shadow: none;
+		overflow: visible;
+		/* avatar (size 2 = 40px) + the head's gap */
+		margin-left: calc(40px + var(--space-3));
+	}
 	@keyframes body-in {
 		from {
 			opacity: 0;
@@ -1009,6 +1044,9 @@
 		.draft-actions {
 			margin-left: 0;
 			flex-basis: 100%;
+		}
+		.body-surface.bare {
+			margin-left: 0;
 		}
 		.head-col,
 		.message,

@@ -5,6 +5,7 @@
 	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
 	import { threadSenderLabel, threadParticipants } from '$lib/mail/participants';
 	import { useScope } from '$lib/mail/scope.svelte';
+	import { isMobile } from '$lib/mobile';
 	import type { Thread } from '$lib/schema';
 
 	const scope = useScope();
@@ -161,7 +162,10 @@
 		swipeSettling = false;
 	}
 
-	const ROW_H = $derived(density === 'compact' ? 48 : 68);
+	// Phones give the preview its own line: sharing one line with the subject at
+	// ~400px cut both to a few words ("Re: Q3 planning doc — one m… — One more t…").
+	const stacked = $derived(isMobile.current && density !== 'compact');
+	const ROW_H = $derived(density === 'compact' ? 48 : stacked ? 88 : 68);
 	const OVERSCAN = 20;
 
 	let viewport = $state<HTMLDivElement>();
@@ -295,13 +299,16 @@
 							{#if t.starred}<span class="star" aria-hidden="true"><Icon name="star" size={12} fill /></span>{/if}
 							<span class="time">{fmtTime(t.last_message_at)}</span>
 						</div>
-						<div class="line2">
+						<div class="line2" class:stacked>
 							<span class="subject">{t.subject || '(no subject)'}</span>
-							{#if !density || density === 'comfortable'}
+							{#if !stacked && (!density || density === 'comfortable')}
 								{#if t.snippet}<span class="snippet">— {t.snippet}</span>{/if}
 							{/if}
 							{#if t.message_count > 1}<span class="count">{t.message_count}</span>{/if}
 						</div>
+						{#if stacked && t.snippet}
+							<div class="line3">{t.snippet}</div>
+						{/if}
 					</div>
 					</div>
 				</div>
@@ -586,6 +593,19 @@
 		padding: 0 7px;
 		font-variant-numeric: tabular-nums;
 		color: var(--color-text-muted, var(--color-text-disabled));
+	}
+	/* Phone layout: the subject gets the whole line (not 60%)… */
+	.line2.stacked .subject {
+		max-width: none;
+		flex-shrink: 1;
+	}
+	/* …and the preview its own. */
+	.line3 {
+		font-size: var(--font-size-0);
+		color: var(--color-text-disabled);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.compact .line2 .snippet {
 		display: none;

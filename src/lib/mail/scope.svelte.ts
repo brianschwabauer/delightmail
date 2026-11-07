@@ -9,7 +9,10 @@ import { getContext, setContext } from 'svelte';
 export interface ScopeAccount {
 	id: string;
 	label: string;
-	color?: string;
+	/** Always set: the account's own colour, or a stable one derived from its id. */
+	color: string;
+	/** Tells accounts with the same label apart ("Gmail 2"); empty when unique. */
+	detail?: string;
 }
 
 export class ScopeState {

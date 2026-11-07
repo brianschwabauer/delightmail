@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { accountColor } from '$lib/mail/account-color';
 	import { Button, Input, toast } from '@delightstack/components';
 
 	const { data } = $props();
@@ -159,7 +160,7 @@
 		{#each accounts.items as a (a.id)}
 			<li>
 				<div class="acct-row">
-					<span class="dot" style:background={a.color || 'var(--color-primary)'}></span>
+					<span class="dot" style:background={accountColor(String(a.id), a.color as string | undefined)}></span>
 					<span class="email">
 						<strong>{a.display_name || a.email}</strong>
 						<small>{a.kind}</small>

@@ -64,6 +64,9 @@
 	:global(.settings-nav .list-item) {
 		min-height: 0;
 	}
+	:global(.settings-nav .list-item::after) {
+		content: none;
+	}
 	:global(.settings-nav .list-item > a) {
 		padding: 7px var(--space-3);
 		border-radius: var(--radius-md);

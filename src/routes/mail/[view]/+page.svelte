@@ -9,6 +9,8 @@
 	import { parseSearchInput } from '$lib/mail/search-operators';
 	import SnoozeChordMenu from '$lib/components/SnoozeChordMenu.svelte';
 	import { currentDensity, resolvedScheme, type Density } from '$lib/theme';
+	import { bodyUrl } from '$lib/mail/body-url';
+	import { connectionState } from '$lib/mail/connection.svelte';
 	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
 	import { useActions } from '$lib/mail/actions-client.svelte';
 	import { useScope } from '$lib/mail/scope.svelte';
@@ -29,13 +31,16 @@
 	const { db, view } = $derived(data);
 
 	const kb = useKeyboard();
+	const connection = connectionState(() => data.ws);
 	const actions = useActions();
 	const scope = useScope();
 	const focus = useFocus();
 
 	// --- search (/) and filter (f) state ---
 	let searching = $state(false);
-	let searchScope = $state<'folder' | 'all'>('folder');
+	// Search looks through all mail by default, like every mail app people know;
+	// Tab narrows it to the current folder (and `in:` names one).
+	let searchScope = $state<'folder' | 'all'>('all');
 	let searchTerm = $state('');
 	let filtering = $state(false);
 	let filterText = $state('');
@@ -82,6 +87,21 @@
 			limit: 200,
 		};
 	});
+	// ATTACHMENT-name search: "the lease pdf" should find the mail carrying
+	// lease.pdf. Attachment → message → thread, then merged like body hits.
+	const attachmentHits = db.list('attachment', () =>
+		searching && parsed.term
+			? { term: parsed.term, limit: 100 }
+			: { where: { message_id: ['__none__'] }, limit: 1 },
+	);
+	const attachmentMessageIds = $derived(
+		[...new Set((attachmentHits.items ?? []).map((a) => String(a.message_id)))].filter(Boolean),
+	);
+	const attachmentMessages = db.list('message', () =>
+		attachmentMessageIds.length
+			? { where: { id: attachmentMessageIds }, limit: 100 }
+			: { where: { id: ['__none__'] }, limit: 1 },
+	);
 	const bodyThreadIds = $derived.by(() => {
 		if (!(searching && searchTerm)) return [] as string[];
 		const from = parsed.from;
@@ -90,6 +110,14 @@
 			// from: post-filters the hits precisely (the term search is fuzzy).
 			if (from && !(m.from_text ?? '').toLowerCase().includes(from)) continue;
 			if (m.thread_id) ids.add(String(m.thread_id));
+		}
+		if (!from) {
+			const scopeFolder =
+				parsed.folder ?? (searchScope === 'folder' ? folderOfView(view) : undefined);
+			for (const m of (attachmentMessages.items ?? []) as Message[]) {
+				if (scopeFolder && m.folder !== scopeFolder) continue;
+				if (m.thread_id) ids.add(String(m.thread_id));
+			}
 		}
 		return [...ids];
 	});
@@ -375,19 +403,18 @@
 	$effect(() => {
 		const top = docs.slice(0, PREFETCH_COUNT).map((t) => String(t.id));
 		untrack(() => {
-			if (!top.length || isMobile.current) return;
-			void prefetchBodies(top);
+			if (top.length) void prefetchBodies(top);
 		});
 	});
 	// Reading order is predictable (j/k walks the list), so once a thread is open
-	// warm its neighbors too — the NEXT open becomes a disk-cache hit even deep in
-	// the list, where the top-of-list warmup above never reached.
+	// warm its neighbors too — the NEXT open becomes a cache hit even deep in the
+	// list, where the top-of-list warmup above and the background downloader (90
+	// days) never reached.
 	const NEIGHBOR_PREFETCH = 3;
 	$effect(() => {
 		const id = openId;
 		if (!id) return;
 		untrack(() => {
-			if (isMobile.current) return;
 			const i = docs.findIndex((t) => String(t.id) === id);
 			if (i < 0) return;
 			const around = [
@@ -397,21 +424,24 @@
 			if (around.length) void prefetchBodies(around);
 		});
 	});
+	/** Three at a time (they were strictly one-by-one), low priority. */
 	async function prefetchBodies(thread_ids: string[]) {
-		for (const tid of thread_ids) {
-			if (prefetched.has(tid)) continue;
-			prefetched.add(tid);
-			// Latest message only — that's the one the reader expands.
-			const m = await latestMessage(tid);
-			if (!m?.id) continue;
-			// EXACTLY the iframe's URL (scheme included) so the cache key matches.
-			const url = `/api/messages/${encodeURIComponent(String(m.id))}/body?scheme=${resolvedScheme()}&v=6`;
-			try {
-				await fetch(url, { priority: 'low' } as RequestInit);
-			} catch {
-				/* prefetch is best-effort; the iframe fetch remains the source of truth */
+		const todo = thread_ids.filter((tid) => !prefetched.has(tid));
+		for (const tid of todo) prefetched.add(tid);
+		const next = async () => {
+			for (let tid = todo.shift(); tid !== undefined; tid = todo.shift()) {
+				// Latest message only — that's the one the reader expands.
+				const m = await latestMessage(tid);
+				if (!m?.id) continue;
+				// EXACTLY the iframe's URL (scheme included) so the cache key matches.
+				try {
+					await fetch(bodyUrl(String(m.id), resolvedScheme()), { priority: 'low' } as RequestInit);
+				} catch {
+					/* prefetch is best-effort; the iframe fetch remains the source of truth */
+				}
 			}
-		}
+		};
+		await Promise.all([next(), next(), next()]);
 	}
 
 	/** Plain page move / next-thread step — clamps at the ends (no wrap). */
@@ -1252,10 +1282,18 @@
 			{#if selected.size}
 				<span class="selcount">{selected.size} selected</span>
 			{/if}
-			{#if !data.ws.connected}
+			{#if connection.offline}
 				<span class="offline m-only">Offline</span>
 			{/if}
-			<span class="count">{docs.length}</span>
+			<!-- Hidden until the list has answered: a "0" while loading read as
+			     an empty folder. Desktop only — the phone header has no room for
+			     an unlabelled number. -->
+			{#if results.status !== 'loading'}
+				<span
+					class="count d-only"
+					title="{docs.length} {docs.length === 1 ? 'conversation' : 'conversations'}"
+					>{docs.length}</span>
+			{/if}
 			<button class="iconbtn m-only" onclick={startSearch} aria-label="Search">
 				<Icon name="search" size={20} />
 			</button>
@@ -1591,6 +1629,9 @@
 		}
 		span.m-only {
 			display: inline;
+		}
+		.d-only {
+			display: none;
 		}
 		.list-head {
 			padding-top: calc(var(--space-2) + env(safe-area-inset-top));

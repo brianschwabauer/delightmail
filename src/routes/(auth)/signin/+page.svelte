@@ -109,8 +109,10 @@
 
 <div class="auth-page">
 	<div class="auth-card">
-		<div class="brand">Mail</div>
-		<p class="subtitle">A calm, fast, keyboard-first inbox.</p>
+		<header>
+			<h1 class="brand">DelightMail</h1>
+			<p class="subtitle">A calm, fast, keyboard-first inbox.</p>
+		</header>
 
 		{#if error}<Callout error>{error}</Callout>{/if}
 		{#if notice}<Callout>{notice}</Callout>{/if}
@@ -152,7 +154,7 @@
 
 		{#if passkeySupported}
 			<div class="divider"><span>or</span></div>
-			<Button full_width transparent disabled={busy} onclick={signInWithPasskey}>
+			<Button full_width outline disabled={busy} onclick={signInWithPasskey}>
 				Sign in with a passkey
 			</Button>
 		{/if}
@@ -160,12 +162,28 @@
 </div>
 
 <style>
+	/* Optically centred: a little more space below than above (≈ 40/60), since
+	   a card at the true middle of an empty page reads as sitting low. */
 	.auth-page {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: center;
 		min-height: 100dvh;
 		padding: var(--space-5);
+		&::before {
+			content: '';
+			flex: 2;
+		}
+		&::after {
+			content: '';
+			flex: 3;
+		}
+	}
+	header {
+		text-align: center;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
 	}
 	.auth-card {
 		width: 100%;
@@ -175,9 +193,11 @@
 		gap: var(--space-4);
 	}
 	.brand {
+		margin: 0;
 		font-size: var(--font-size-5);
 		font-weight: 800;
 		letter-spacing: -0.03em;
+		text-box: trim-both cap alphabetic;
 	}
 	.subtitle {
 		color: var(--color-text-disabled);

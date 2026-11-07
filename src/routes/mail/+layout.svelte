@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/state';
+	import { page, updated } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount, setContext, untrack } from 'svelte';
 	import { toast } from '@delightstack/components';
@@ -16,6 +16,8 @@
 	import { provideActions } from '$lib/mail/actions-client.svelte';
 	import { provideScope } from '$lib/mail/scope.svelte';
 	import { provideFocus } from '$lib/mail/focus.svelte';
+	import { takeUndoSend } from '$lib/mail/undo-send';
+	import { startBodyDownloader } from '$lib/mail/body-downloader';
 
 	const { data, children } = $props();
 	const { auth, db, ws } = $derived(data);
@@ -72,6 +74,25 @@
 	// shortcuts (e.g. the list's Escape, Ctrl+K, scope keys) can't leak beneath it.
 	const overlayOpen = $derived(helpOpen || paletteOpen || composeInit != null);
 
+	// A new version is deployed. Offer the reload; and if the tab is in the
+	// background with nothing in flight (no compose open), just take it — the
+	// user comes back to the new version without having to do anything.
+	$effect(() => {
+		if (!updated.current) return;
+		untrack(() => {
+			toast('A new version of DelightMail is ready.', {
+				id: 'app-update',
+				persistent: true,
+				action: { label: 'Reload', onclick: () => location.reload() },
+			});
+		});
+		const reloadWhenHidden = () => {
+			if (document.visibilityState === 'hidden' && composeInit == null) location.reload();
+		};
+		document.addEventListener('visibilitychange', reloadWhenHidden);
+		return () => document.removeEventListener('visibilitychange', reloadWhenHidden);
+	});
+
 	function openCompose(init: ComposeInit = {}) {
 		composeInit = init;
 		void loadCompose();
@@ -119,6 +140,12 @@
 				toast(`Send failed${e.error ? `: ${e.error}` : ''} — the message stays in your outbox.`);
 			}
 		});
+		// Keep recent mail on the device so opening it is a local read.
+		const bodies = startBodyDownloader(db);
+		const offNewMail = ws.on('mail:new', (msg) => {
+			const id = (msg as { message_id?: string }).message_id;
+			if (id) bodies.add(String(id));
+		});
 		// Warm the compose (editor) chunk once the main thread is idle.
 		const idle =
 			'requestIdleCallback' in window
@@ -156,7 +183,20 @@
 			// a global listener and toggles `paletteOpen`); we only list it for the help
 			// overlay + command palette registry — no handler, so it can't double-fire.
 			{ keys: 'Ctrl+k', description: 'Command palette', group: 'Global', context: 'global', when: () => false, handler: () => {} },
-			{ keys: 'Ctrl+z', description: 'Undo last action', group: 'Global', context: 'global', when: free, handler: () => actions.undo() },
+			{
+				keys: 'Ctrl+z',
+				description: 'Undo last action (or the send you just made)',
+				group: 'Global',
+				context: 'global',
+				when: free,
+				// A send still inside its undo window is the most recent, most costly
+				// thing to take back, so it wins over the thread-action stack.
+				handler: () => {
+					const undoSend = takeUndoSend();
+					if (undoSend) undoSend();
+					else actions.undo();
+				},
+			},
 			{ keys: 'n', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
 			{ keys: 'c', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
 			{ keys: 'g i', description: 'Go to Inbox', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/inbox') },
@@ -182,6 +222,8 @@
 			window.removeEventListener('pointerdown', onPointer, true);
 			off();
 			offSend?.();
+			offNewMail();
+			bodies.stop();
 			if ('requestIdleCallback' in window) window.cancelIdleCallback(idle as number);
 			else clearTimeout(idle as ReturnType<typeof setTimeout>);
 		};

@@ -8,6 +8,12 @@
 				const t = localStorage.getItem('dm-theme') || 'system';
 				const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
 				document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+				// Follow the OS while the preference is 'system' — a tab left open
+				// overnight should go dark at sunset without a reload.
+				matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+					if ((localStorage.getItem('dm-theme') || 'system') !== 'system') return;
+					document.documentElement.dataset.theme = e.matches ? 'dark' : 'light';
+				});
 			} catch (e) {}
 		</script>
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />

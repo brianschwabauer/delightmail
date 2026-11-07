@@ -9,6 +9,10 @@ const config = {
 		experimental: { async: true },
 	},
 	kit: {
+		// A tab left open for days kept running the old code against a newer
+		// server. Poll for a new deploy so the app can offer (or, when nothing is
+		// in progress, make) the switch — see routes/mail/+layout.svelte.
+		version: { pollInterval: 5 * 60 * 1000 },
 		adapter: adapter({
 			platformProxy: {
 				configPath: './wrangler.jsonc',
