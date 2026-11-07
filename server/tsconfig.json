@@ -22,6 +22,7 @@
 		"../src/lib/mail/**/*.test.ts",
 		"../src/lib/mail/actions-client.svelte.ts",
 		"../src/lib/mail/**/*.svelte.ts",
-		"../src/lib/mail/sound.ts"
+		"../src/lib/mail/sound.ts",
+		"../src/lib/mail/body-downloader.ts"
 	]
 }

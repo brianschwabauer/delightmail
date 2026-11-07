@@ -33,6 +33,8 @@ declare global {
 		}
 
 		interface Platform {
+			ctx: ExecutionContext;
+			/** @deprecated adapter-cloudflare alias of `ctx` */
 			context: ExecutionContext;
 			env: CloudflareEnv;
 			cf: CfProperties;

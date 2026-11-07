@@ -77,6 +77,7 @@ git clone https://github.com/brianschwabauer/delightmail
 cd delightmail && pnpm install
 
 wrangler r2 bucket create delightmail
+wrangler r2 bucket lifecycle add delightmail expire-email-images img/ --expire-days 365 -y
 wrangler kv namespace create CACHE     # put the id in both wrangler configs
 
 # set your hostname in wrangler.jsonc (route + PUBLIC_APP_URL)

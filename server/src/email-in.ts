@@ -10,6 +10,7 @@
 import type { Env } from './index';
 import { parseEmail } from '../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
+import { cacheImages, extractImageUrls } from '../../src/lib/mail/image-cache';
 import { messagePrefix, writeBodies, writeAttachments, buildCidMap } from './body-store';
 import type { NormalizedMessage } from './ingest';
 
@@ -23,7 +24,7 @@ interface CfDomainMailbox {
 export async function handleInboundEmail(
 	message: ForwardableEmailMessage,
 	env: Env,
-	_ctx: ExecutionContext,
+	ctx: ExecutionContext,
 ): Promise<void> {
 	const to = message.to;
 	const from = message.from;
@@ -121,6 +122,20 @@ export async function handleInboundEmail(
 		};
 
 		await mailbox.ingestMessages([normalized]);
+
+		// Copy the remote images to our cache now, so opening the mail never
+		// contacts the sender (see mail/image-cache.ts). After the response —
+		// delivery doesn't wait on it.
+		if (html) {
+			const urls = extractImageUrls(html);
+			if (urls.length) {
+				ctx.waitUntil(
+					cacheImages({ r2: env.R2, kv: env.KV }, org_id, urls).catch((err) =>
+						console.error('[email-in] image caching failed', err),
+					),
+				);
+			}
+		}
 
 		// Optional transition forwarding (config: account.config.forward_to).
 		// Left to a per-account setting read in a follow-up; the raw copy remains.

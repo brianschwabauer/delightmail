@@ -11,10 +11,13 @@ import { build, files, version } from '$service-worker';
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const SHELL_CACHE = `dm-shell-${version}`;
-// Version-scoped so each deploy starts fresh and the activate handler purges the
-// previous version's cached private bodies (bounds staleness, avoids serving an
-// old deploy's content). Also fully cleared on sign-out via the message handler.
-const BODY_CACHE = `dm-bodies-${version}`;
+// Bodies, attachments and email images are immutable, so this cache is NOT tied
+// to the deploy: a version-scoped name wiped every cached body on every deploy,
+// and the next open of each message paid the network again. A change to how
+// bodies are served bumps BODY_VERSION in the URL (mail/body-url.ts) instead,
+// which naturally misses the old entries. Cleared on sign-out. Shared with the
+// page, which fills it in the background (mail/body-downloader.ts).
+const BODY_CACHE = 'dm-bodies';
 const PAGE_CACHE = `dm-pages-${version}`;
 const SHELL_ASSETS = [...build, ...files];
 
@@ -31,6 +34,8 @@ sw.addEventListener('activate', (event) => {
 	event.waitUntil(
 		(async () => {
 			for (const key of await caches.keys()) {
+				// Old `dm-bodies-<version>` caches from before the body cache outlived
+				// deploys fall out here too.
 				if (key !== SHELL_CACHE && key !== BODY_CACHE && key !== PAGE_CACHE) {
 					await caches.delete(key);
 				}
@@ -49,7 +54,8 @@ sw.addEventListener('fetch', (event) => {
 	// Immutable message bodies + attachments → cache-first (they never change).
 	if (
 		/\/api\/messages\/[^/]+\/(body|raw)/.test(url.pathname) ||
-		url.pathname.startsWith('/api/attachments/')
+		url.pathname.startsWith('/api/attachments/') ||
+		url.pathname === '/api/img'
 	) {
 		event.respondWith(cacheFirst(req, BODY_CACHE));
 		return;

@@ -19,6 +19,7 @@ import {
 	handleAttachment,
 	handleAttachmentByCid,
 	handleAttachmentUpload,
+	handleImage,
 } from './body-endpoint';
 import { handleOrgConsolidate } from './orgs';
 import { handleThreadActions } from './thread-actions';
@@ -96,6 +97,9 @@ async function route(event: RequestEvent): Promise<Response> {
 		if (parts[3] === 'raw' && method === 'GET') return handleMessageRaw(event, id);
 	}
 
+	// --- email images (our cached copy of remote images) ---
+	if (pathname === '/api/img' && method === 'GET') return handleImage(event);
+
 	// --- attachments ---
 	if (pathname === '/api/attachments/upload' && method === 'POST') {
 		return handleAttachmentUpload(event);
@@ -167,6 +171,7 @@ async function route(event: RequestEvent): Promise<Response> {
 const MAIL_PREFIXES = [
 	'/api/accounts/',
 	'/api/messages/',
+	'/api/img',
 	'/api/attachments/',
 	'/api/threads/',
 	'/api/send',

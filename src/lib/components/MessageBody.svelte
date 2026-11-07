@@ -14,12 +14,32 @@
 		excerpt: string;
 		/** Whether the message has a stored HTML body (else render the excerpt). */
 		hasHtml?: boolean;
+		/**
+		 * Reports whether the sender designed this body ('design') or it is plain /
+		 * personal mail ('plain' | 'flip') that should sit straight on the pane
+		 * without a card. Decided server-side (dark-mail.ts classifyBody).
+		 */
+		onTier?: (tier: 'design' | 'plain' | 'flip') => void;
 	}
-	const { messageId, excerpt, hasHtml = false }: Props = $props();
+	const { messageId, excerpt, hasHtml = false, onTier }: Props = $props();
 
-	import { resolvedScheme } from '$lib/theme';
-	// Captured once per mount — a theme flip re-renders the whole app anyway.
-	const scheme = resolvedScheme();
+	let bare = $state(false);
+	function readTier(doc: Document) {
+		const tier = doc.querySelector('meta[name="dm-tier"]')?.getAttribute('content');
+		if (tier !== 'design' && tier !== 'plain' && tier !== 'flip') return;
+		bare = tier !== 'design';
+		onTier?.(tier);
+	}
+	// The excerpt fallback is plain text by definition.
+	$effect(() => {
+		if (failed || !hasHtml) onTier?.('plain');
+	});
+
+	import { scheme as liveScheme } from '$lib/theme';
+	import { bodyUrl } from '$lib/mail/body-url';
+	// Reactive: a theme flip (including the OS switching while on 'system')
+	// reloads the frame with the body rendered for the new scheme.
+	const scheme = $derived(liveScheme.current);
 
 	let iframe = $state<HTMLIFrameElement>();
 	let frameHeight = $state(120);
@@ -50,6 +70,44 @@
 			observer = null;
 		};
 	});
+
+	/**
+	 * Keyboard events inside the frame never reach the app: once you click into an
+	 * email (to select text, or after following a link and coming back) focus lives
+	 * in the frame's document, and every shortcut went dead until you clicked
+	 * outside it. Re-dispatch each keydown on the app's window so the global
+	 * handler sees it, and cancel the original when the app handled it.
+	 */
+	const forwarded = new WeakSet<Document>();
+	function forwardKeys(doc: Document) {
+		if (forwarded.has(doc)) return;
+		forwarded.add(doc);
+		doc.addEventListener('keydown', (e) => {
+			// Copying a selection is the one thing you do inside a body; let the
+			// browser have it.
+			if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'a')) return;
+			const copy = new KeyboardEvent('keydown', {
+				key: e.key,
+				code: e.code,
+				location: e.location,
+				repeat: e.repeat,
+				ctrlKey: e.ctrlKey,
+				shiftKey: e.shiftKey,
+				altKey: e.altKey,
+				metaKey: e.metaKey,
+				bubbles: true,
+				cancelable: true,
+			});
+			// On the document so listeners on either document or window hear it.
+			document.dispatchEvent(copy);
+			if (copy.defaultPrevented) {
+				e.preventDefault();
+				// Hand focus back to the app so the next key goes straight there.
+				iframe?.blur();
+				window.focus();
+			}
+		});
+	}
 
 	function docOf(el: HTMLIFrameElement | undefined): Document | null {
 		try {
@@ -82,6 +140,8 @@
 		// Suppress the document's own scrollbar until `load` (onLoad restores it,
 		// so a body taller than the height cap can still scroll internally).
 		doc.documentElement.style.overflowY = 'hidden';
+		readTier(doc);
+		forwardKeys(doc);
 		measure(doc);
 		sized = true;
 		// Images/fonts loading after reveal grow the body — track it so the frame
@@ -156,6 +216,8 @@
 		}
 		// Final measure with all subresources in; also covers the case where the
 		// poll somehow never caught the document mid-stream.
+		readTier(doc);
+		forwardKeys(doc);
 		measure(doc);
 		// Everything is in and the frame is sized — hand the scrollbar back so a
 		// body taller than the 4000px cap can scroll inside the frame.
@@ -173,8 +235,9 @@
 	<iframe
 		bind:this={iframe}
 		title="Message body"
-		src="/api/messages/{encodeURIComponent(messageId)}/body?scheme={scheme}&v=6"
+		src={bodyUrl(messageId, scheme)}
 		class:dark={scheme === 'dark'}
+		class:bare
 		class:sized
 		sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 		referrerpolicy="no-referrer"
@@ -202,6 +265,10 @@
 	   for those). */
 	iframe.dark {
 		background: #16181c;
+	}
+	/* Plain mail is transparent so the pane shows through. */
+	iframe.bare {
+		background: transparent;
 	}
 	.excerpt {
 		padding: var(--space-4);

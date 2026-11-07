@@ -27,6 +27,11 @@ cp server/.dev.vars.example server/.dev.vars   # dev works with the defaults
 ```sh
 wrangler r2 bucket create delightmail
 wrangler kv namespace create CACHE      # copy the id into BOTH wrangler configs
+
+# Email images are copied into R2 so reading mail never contacts the sender
+# (src/lib/mail/image-cache.ts). They expire after a year and are re-fetched
+# on demand, so nothing has to track which emails still use them.
+wrangler r2 bucket lifecycle add delightmail expire-email-images img/ --expire-days 365 -y
 ```
 
 Put the KV namespace id in `wrangler.jsonc` (`kv_namespaces`) and

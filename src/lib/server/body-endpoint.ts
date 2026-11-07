@@ -8,8 +8,18 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
 import { classifyBody, flipColors } from './dark-mail';
 import { stripTrackingPixels } from './tracking-pixels';
+import { getImage, rewriteImageUrls } from '../mail/image-cache';
 
 const IMMUTABLE = 'private, max-age=31536000, immutable';
+
+/**
+ * Bodies never change once stored, so the KV copy can live a long time. It used
+ * to expire after 7 days, which made every older message pay the slow path
+ * (MailboxServer wake + R2 read, 400–700ms in prod) on each first open.
+ */
+const BODY_KV_TTL_SECONDS = 60 * 60 * 24 * 365;
+/** Let the edge cache hot KV reads instead of re-reading central storage (default is 60s). */
+const BODY_KV_EDGE_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 interface MessageRow {
 	id: string;
@@ -32,10 +42,10 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	// sanitized body; typography wraps at response time, so no cache versioning.)
 	const cacheKey = `body:${org_id}:${id}:${format ?? 'html'}`;
 	if (kv) {
-		const cached = await kv.get(cacheKey);
+		const cached = await kv.get(cacheKey, { cacheTtl: BODY_KV_EDGE_TTL_SECONDS });
 		if (cached !== null) {
 			return bodyResponse(
-				format === 'text' ? cached : typeset(upgradeLegacyBody(cached), scheme),
+				format === 'text' ? cached : typeset(serveable(cached), scheme),
 				contentType,
 			);
 		}
@@ -68,12 +78,16 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
 	// caller's org, even if a tampered body_keys points elsewhere (IDOR).
 	if (!ownsKey(key, org_id)) return DelightError.notFound('Body not found').toResponse();
 
-	let body = await readCached(r2, kv, key, cacheKey, text_as_html ? textToHtml : undefined);
-	if (body === null) return DelightError.notFound('Body not found').toResponse();
-	return bodyResponse(
-		format === 'text' ? body : typeset(upgradeLegacyBody(body), scheme),
-		contentType,
+	const body = await readStored(
+		event,
+		r2,
+		kv,
+		key,
+		cacheKey,
+		text_as_html ? textToHtml : undefined,
 	);
+	if (body === null) return DelightError.notFound('Body not found').toResponse();
+	return bodyResponse(format === 'text' ? body : typeset(serveable(body), scheme), contentType);
 }
 
 /**
@@ -92,6 +106,11 @@ export async function handleMessageBody(event: RequestEvent, id: string): Promis
  * reaches stored mail too. Bump the `v=` query in MessageBody.svelte when any of
  * this changes: responses are cached immutable.
  */
+/** Stored body → what the reader gets: legacy repairs, then every remote image proxied. */
+function serveable(html: string): string {
+	return rewriteImageUrls(upgradeLegacyBody(html));
+}
+
 function upgradeLegacyBody(html: string): string {
 	return stripTrackingPixels(
 		html
@@ -112,17 +131,28 @@ function upgradeLegacyBody(html: string): string {
  * its colors re-mapped for it (see dark-mail.ts).
  */
 function typeset(html: string, scheme: 'light' | 'dark'): string {
-	const tier = scheme === 'dark' ? classifyBody(html) : 'design';
-	const dark = tier !== 'design';
-	const bg = dark ? '#16181c' : '#ffffff';
+	const tier = classifyBody(html);
+	// Mail the sender didn't design (a note from a person, a plain notification)
+	// renders straight onto the reading pane — no white sheet, no card around it —
+	// so it reads like a message rather than a form. Designed mail keeps its sheet.
+	const bare = tier !== 'design';
+	const dark = scheme === 'dark' && bare;
+	const bg = bare ? 'transparent' : '#ffffff';
 	const palette = dark ? `color:#dde1e6;background:${bg};` : `color:#1f2328;background:${bg};`;
 	const link = dark ? '#8ab0ff' : '#3b5fc9';
 	const quote = dark ? '#3a4048' : '#d0d4da';
 	const quoteText = dark ? '#9aa4b0' : '#57606a';
-	if (tier === 'flip') html = flipColors(html, bg);
+	// Colours are re-mapped against the dark pane they will actually sit on.
+	if (dark && tier === 'flip') html = flipColors(html, '#16181c');
+	const padding = bare ? '2px 0 8px' : '20px 24px';
 	return (
+		// The reading pane reads this to drop the card around bare bodies.
+		`<meta name="dm-tier" content="${tier}">` +
 		`<style>` +
-		`body{margin:0;padding:20px 24px;${palette}` +
+		// A transparent frame only shows the pane through it when its colour scheme
+		// matches the page's; a mismatch makes the browser paint an opaque backdrop.
+		`html{background:${bg};color-scheme:${dark ? 'dark' : 'light'}}` +
+		`body{margin:0;padding:${padding};${palette}` +
 		`font:15px/1.65 system-ui,-apple-system,'Segoe UI',sans-serif;` +
 		`overflow-wrap:break-word;-webkit-text-size-adjust:100%}` +
 		`a{color:${link}}` +
@@ -141,12 +171,15 @@ function bodyResponse(body: string, contentType: string): Response {
 			'content-type': contentType,
 			'x-content-type-options': 'nosniff',
 			'cache-control': IMMUTABLE,
-			// The reading pane iframe pins a strict CSP. Google Fonts stylesheets are
-			// the one external CSS host allowed — big senders (YouTube, marketing
-			// mail) link them, and blocking them only cost rendering fidelity while
-			// spamming the console with CSP violations. Fixed host, no script risk.
+			// The reading pane iframe pins a strict CSP. Images load only from our
+			// own proxy ('self' — every remote URL is rewritten to /api/img), so a
+			// body can never make the reader's browser contact a sender: no read
+			// receipts, no IP or timing leaks, even for a URL the rewrite missed.
+			// Google Fonts stylesheets are the one external CSS host allowed — big
+			// senders (YouTube, marketing mail) link them, and blocking them only
+			// cost rendering fidelity. Fixed host, no script risk.
 			'content-security-policy':
-				"default-src 'none'; img-src https: data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https: data:",
+				"default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https: data:",
 		},
 	});
 }
@@ -249,6 +282,41 @@ export async function handleAttachmentByCid(
 	});
 }
 
+/**
+ * GET /api/img?u=<remote url> — an email image from our cache, fetched from the
+ * sender (server-side) and stored on first request. See mail/image-cache.ts.
+ */
+export async function handleImage(event: RequestEvent): Promise<Response> {
+	const { r2, kv, org_id } = ctx(event);
+	if (!r2 || !kv || !org_id) return DelightError.badRequest('No mailbox').toResponse();
+	const url = event.url.searchParams.get('u');
+	if (!url || url.length > 4096) return DelightError.badRequest('Missing image URL').toResponse();
+	const exec = (event.platform as App.Platform | undefined)?.ctx;
+	const image = await getImage(
+		{ r2, kv },
+		org_id,
+		url,
+		exec ? (p) => exec.waitUntil(p) : undefined,
+	);
+	if (!image) {
+		return new Response(null, {
+			status: 404,
+			headers: { 'cache-control': 'private, max-age=3600' },
+		});
+	}
+	return new Response(image.body, {
+		headers: {
+			'content-type': image.type,
+			...(image.size ? { 'content-length': String(image.size) } : {}),
+			'x-content-type-options': 'nosniff',
+			// SVG can carry script; on a direct visit this keeps it inert.
+			'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+			'content-disposition': 'inline',
+			'cache-control': IMMUTABLE,
+		},
+	});
+}
+
 /** Every R2 key is `{org_id}/…` — reject anything outside the caller's org. */
 function ownsKey(key: string, org_id: string): boolean {
 	return key.startsWith(`${org_id}/`);
@@ -312,23 +380,32 @@ function ctx(event: RequestEvent) {
 	};
 }
 
-async function readCached(
+/**
+ * Read a body from R2 and fill the KV cache for next time. The caller has
+ * already missed KV. The KV write happens after the response is sent: awaiting
+ * it added a KV write round trip to every first open.
+ */
+async function readStored(
+	event: RequestEvent,
 	r2: R2Bucket,
 	kv: KVNamespace | undefined,
 	key: string,
 	cacheKey: string,
 	transform?: (raw: string) => string,
 ): Promise<string | null> {
-	if (kv) {
-		const cached = await kv.get(cacheKey);
-		if (cached !== null) return cached;
-	}
 	const obj = await r2.get(key);
 	if (!obj) return null;
 	// Transform BEFORE caching so KV always holds the servable form (the KV-first
-	// fast path above returns the cached value verbatim, modulo typeset()).
+	// fast path returns the cached value verbatim, modulo typeset()).
 	const text = transform ? transform(await obj.text()) : await obj.text();
-	if (kv) await kv.put(cacheKey, text, { expirationTtl: 60 * 60 * 24 * 7 });
+	if (kv) {
+		const put = kv
+			.put(cacheKey, text, { expirationTtl: BODY_KV_TTL_SECONDS })
+			.catch((err) => console.error('[body] KV cache write failed', err));
+		const exec = (event.platform as App.Platform | undefined)?.ctx;
+		if (exec) exec.waitUntil(put);
+		else await put;
+	}
 	return text;
 }
 

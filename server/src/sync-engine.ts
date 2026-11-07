@@ -23,6 +23,7 @@ import {
 import type { NormalizedMessage } from './ingest';
 import { buildMimeMessage, stripBccHeader } from './mime-build';
 import type { Address } from '../../src/lib/schema';
+import { cacheImages, extractImageUrls } from '../../src/lib/mail/image-cache';
 
 export interface SyncEnv {
 	MAILBOX: DurableObjectNamespace;
@@ -54,7 +55,8 @@ export type JobType =
 	| 'send'
 	| 'fetch_attachment'
 	| 'unsubscribe'
-	| 'replay_r2';
+	| 'replay_r2'
+	| 'cache_images';
 
 interface JobRow {
 	id: number;
@@ -426,6 +428,8 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				return this.#sendMessage(payload as SendPayload);
 			case 'poll_imap':
 				return this.#pollImap();
+			case 'cache_images':
+				return this.#cacheImages(payload as { html_keys: string[] });
 			case 'fetch_attachment':
 			case 'unsubscribe':
 			case 'replay_r2':
@@ -566,7 +570,10 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 			const addedIds = [...added];
 			for (let i = 0; i < addedIds.length; i += RAW_BATCH) {
 				const batch = await this.#fetchAndNormalize(gmail, addedIds.slice(i, i + RAW_BATCH));
-				if (batch.length) await this.#mailbox().ingestMessages(batch);
+				if (batch.length) {
+					await this.#mailbox().ingestMessages(batch);
+					await this.#queueImageCaching(batch);
+				}
 			}
 			// Flag/label changes on existing messages: re-fetch authoritative labels.
 			// Bounded-parallel: a bulk archive done in the Gmail app replays here as
@@ -579,6 +586,38 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 		} while (pageToken);
 
 		this.#saveState({ gmail_history_id: latestHistoryId });
+	}
+
+	/**
+	 * New mail gets its remote images copied to our cache straight away, so the
+	 * first open never touches the sender's servers (see mail/image-cache.ts).
+	 * Only live mail: a backfill of years of history would fetch hundreds of
+	 * thousands of images nobody may ever look at — those are cached on first
+	 * open instead. Spam and trash are skipped: fetching a spammer's images
+	 * confirms the address is live.
+	 */
+	async #queueImageCaching(batch: NormalizedMessage[]): Promise<void> {
+		const html_keys = batch
+			.filter((m) => m.body_keys?.html && m.folder !== 'spam' && m.folder !== 'trash')
+			.map((m) => m.body_keys!.html!);
+		if (html_keys.length) await this.scheduleJob('cache_images', { html_keys }, 0);
+	}
+
+	async #cacheImages(payload: { html_keys: string[] }): Promise<void> {
+		const org_id = this.#state().org_id;
+		if (!org_id) return;
+		for (const key of payload.html_keys ?? []) {
+			// Never read outside this account's org, whatever the payload says.
+			if (!key.startsWith(`${org_id}/`)) continue;
+			const obj = await this.env.R2.get(key);
+			if (!obj) continue;
+			const urls = extractImageUrls(await obj.text());
+			if (!urls.length) continue;
+			const r = await cacheImages({ r2: this.env.R2, kv: this.env.KV }, org_id, urls);
+			console.log(
+				`[SyncEngine] images for ${key}: ${r.cached} cached, ${r.skipped} already had, ${r.failed} failed`,
+			);
+		}
 	}
 
 	async #recoverFromStaleCursor(gmail: GmailClient): Promise<void> {
