@@ -263,8 +263,22 @@
 	const latestId = $derived(docs.length ? docs[docs.length - 1].id : null);
 	/** Message ids whose body is undesigned mail — rendered without the card. */
 	let bareBodies = $state<Record<string, boolean>>({});
-	/** Message ids whose body has painted (see MessageBody `onReady`). */
-	let paintedBodies = $state<Record<string, boolean>>({});
+	/** Bodies painted for the thread currently in this reader (MessageBody
+	 *  `onReady`). Tagged with the thread: this reader instance is reused for
+	 *  other threads, and a message painted on an earlier visit says nothing about
+	 *  the fresh frame it gets when its thread comes back — trusting it swapped a
+	 *  thread in a frame before its body painted. */
+	let painted = $state<{ thread: string | null; ids: Record<string, boolean> }>({
+		thread: null,
+		ids: {},
+	});
+	function markPainted(message_id: string) {
+		const thread = threadId ? String(threadId) : null;
+		painted =
+			painted.thread === thread
+				? { thread, ids: { ...painted.ids, [message_id]: true } }
+				: { thread, ids: { [message_id]: true } };
+	}
 	const subject = $derived(docs[0]?.subject || '(no subject)');
 	const starred = $derived(docs.some((m) => m.is_starred));
 
@@ -337,7 +351,10 @@
 	// expanded (the latest) has painted. A draft preview has no body frame.
 	const bodyPainted = $derived(
 		showMessages &&
-			(isDraft || !latestId || !isExpanded(String(latestId)) || !!paintedBodies[String(latestId)]),
+			(isDraft ||
+				!latestId ||
+				!isExpanded(String(latestId)) ||
+				(painted.thread === String(threadId) && !!painted.ids[String(latestId)])),
 	);
 	// Safety valve: a body frame that never reports painting must not leave the
 	// skeleton up forever. After this long, show what we have.
@@ -373,6 +390,7 @@
 			untrack(() => {
 				currentThread = t;
 				overrides = new Map();
+				painted = { thread: null, ids: {} };
 			});
 		}
 	});
@@ -619,7 +637,7 @@
 								excerpt={m.text_excerpt ?? ''}
 								hasHtml={hasHtmlBody(m)}
 								onTier={(tier) => (bareBodies[String(m.id)] = tier !== 'design')}
-								onReady={() => (paintedBodies[String(m.id)] = true)} />
+								onReady={() => markPainted(String(m.id))} />
 						</div>
 						{#if attachmentsFor.get(String(m.id))?.length}
 							<div class="attachments">
