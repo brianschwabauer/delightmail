@@ -40,6 +40,23 @@
 		onEditDraft?: () => void;
 		/** Mobile: the reader is a full-screen push — this closes it (back arrow). */
 		onBack?: () => void;
+		/**
+		 * Called when this thread is fully on screen: messages rendered and the
+		 * expanded body painted. The page renders an incoming thread in a hidden
+		 * slot and swaps it in on this signal, so switching never shows a
+		 * half-loaded reader.
+		 */
+		onReady?: (threadId: string) => void;
+		/**
+		 * Keep showing the skeleton even if the thread is ready. Set by the page
+		 * so a skeleton, once shown, stays long enough to read as deliberate
+		 * loading UI rather than a flash. The real content keeps loading (hidden)
+		 * underneath, so it appears complete when the skeleton lifts.
+		 */
+		holdSkeleton?: boolean;
+		/** Whether this reader is the one on screen (the page keeps a hidden one
+		 *  for the incoming thread). Only the visible one marks mail read. */
+		onScreen?: boolean;
 	}
 	const {
 		db,
@@ -52,6 +69,9 @@
 		onAct,
 		onEditDraft,
 		onBack,
+		onReady,
+		holdSkeleton = false,
+		onScreen = true,
 	}: Props = $props();
 
 	// Reactive query function — the search re-queries when the open thread changes.
@@ -243,6 +263,8 @@
 	const latestId = $derived(docs.length ? docs[docs.length - 1].id : null);
 	/** Message ids whose body is undesigned mail — rendered without the card. */
 	let bareBodies = $state<Record<string, boolean>>({});
+	/** Message ids whose body has painted (see MessageBody `onReady`). */
+	let paintedBodies = $state<Record<string, boolean>>({});
 	const subject = $derived(docs[0]?.subject || '(no subject)');
 	const starred = $derived(docs.some((m) => m.is_starred));
 
@@ -310,6 +332,33 @@
 	const isDraft = $derived(
 		showMessages ? !!draftMsg : previewThread?.folder === 'drafts',
 	);
+
+	// Fully on screen: the messages are rendered and the body that opens
+	// expanded (the latest) has painted. A draft preview has no body frame.
+	const bodyPainted = $derived(
+		showMessages &&
+			(isDraft || !latestId || !isExpanded(String(latestId)) || !!paintedBodies[String(latestId)]),
+	);
+	// Safety valve: a body frame that never reports painting must not leave the
+	// skeleton up forever. After this long, show what we have.
+	const PAINT_GIVE_UP_MS = 2000;
+	let paintGaveUp = $state<string | null>(null);
+	$effect(() => {
+		const id = threadId ? String(threadId) : null;
+		if (!id || !showMessages || bodyPainted) return;
+		const t = setTimeout(() => (paintGaveUp = id), PAINT_GIVE_UP_MS);
+		return () => clearTimeout(t);
+	});
+	const fullyReady = $derived(bodyPainted || (showMessages && paintGaveUp === String(threadId)));
+	/** Rendered (so it keeps loading) but kept behind the skeleton: not painted yet,
+	 *  or the page is holding the skeleton for its minimum time. */
+	const veiled = $derived(!fullyReady || holdSkeleton);
+	$effect(() => {
+		if (fullyReady && threadId) {
+			const id = String(threadId);
+			untrack(() => onReady?.(id));
+		}
+	});
 	function addrList(list: Message['to']): string {
 		return (list ?? []).map((a) => a.name || a.email).filter(Boolean).join(', ');
 	}
@@ -340,17 +389,23 @@
 	// Mark unread messages read on open. Guarded to run once per thread so the
 	// save→re-query→effect cycle can't thrash the reactive engine.
 	let markedThread = $state<string | null>(null);
+	/** How long a thread must stay on screen before it counts as read. Threads
+	 *  open instantly now, so without this, holding j marked every thread you
+	 *  scrolled past as read. */
+	const MARK_READ_DWELL_MS = 400;
 	$effect(() => {
 		const tid = threadId;
 		// Only mark-read while the list/reader is engaged — previewing from the
-		// folder rail must leave mail untouched.
-		if (!tid || docs.length === 0 || !markReadActive) return;
+		// folder rail must leave mail untouched — and only for the thread actually
+		// on screen (the page also renders the incoming thread, hidden).
+		if (!tid || !showMessages || veiled || !markReadActive || !onScreen) return;
 		if (untrack(() => markedThread) === tid) return;
-		const anyUnread = docs.some((m) => !m.is_read);
-		untrack(() => {
+		const timer = setTimeout(() => {
+			const anyUnread = docs.some((m) => !m.is_read);
 			markedThread = tid;
 			if (anyUnread) void markRead(tid);
-		});
+		}, MARK_READ_DWELL_MS);
+		return () => clearTimeout(timer);
 	});
 
 	/**
@@ -544,6 +599,7 @@
 		{/if}
 
 		{#if showMessages}
+			<div class="messages" class:veiled>
 			{#each docs as m (m.id)}
 				<section class="message" class:collapsed={!isExpanded(String(m.id))}>
 					<button class="msg-head" onclick={() => toggle(String(m.id))} {@attach ripple({ opacity: 0.08 })}>
@@ -562,7 +618,8 @@
 								messageId={String(m.id)}
 								excerpt={m.text_excerpt ?? ''}
 								hasHtml={hasHtmlBody(m)}
-								onTier={(tier) => (bareBodies[String(m.id)] = tier !== 'design')} />
+								onTier={(tier) => (bareBodies[String(m.id)] = tier !== 'design')}
+								onReady={() => (paintedBodies[String(m.id)] = true)} />
 						</div>
 						{#if attachmentsFor.get(String(m.id))?.length}
 							<div class="attachments">
@@ -596,7 +653,9 @@
 					{/if}
 				</section>
 			{/each}
-		{:else}
+			</div>
+		{/if}
+		{#if !showMessages || veiled}
 			<!-- Skeleton: the SAME message shell (avatar, sender, date, framed body) as
 			     the loaded reader, with the sender/date real and only the body shimmering. -->
 			<section class="message">
@@ -625,7 +684,16 @@
 	   and the wheel all act on the same element. min-height keeps the skeleton
 	   and short threads filling the pane. */
 	.thread {
+		position: relative;
 		min-height: 100%;
+	}
+	/* Loaded but held behind the skeleton: laid out (so its body frame loads
+	   and measures) and invisible, out of the flow so the skeleton keeps its place. */
+	.messages.veiled {
+		position: absolute;
+		inset: 0 0 auto 0;
+		visibility: hidden;
+		pointer-events: none;
 	}
 	.placeholder {
 		display: flex;

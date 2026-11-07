@@ -313,12 +313,123 @@
 	// yanking the reader back to the top mid-read with nothing visibly changed.
 	// A derived that recomputes to an equal string doesn't notify dependents,
 	// so this now fires only when a genuinely different thread shows.
-	const preview_scroll_id = $derived(previewThread ? String(previewThread.id) : null);
+	// The reader shows `shownId`, not the cursor (see the reader slots below), so
+	// it scrolls back to the top when a different thread is actually swapped in —
+	// not while the previous one is still on screen.
 	$effect(() => {
-		void openId;
-		void preview_scroll_id;
+		void shownId;
 		readingEl?.scrollTo({ top: 0 });
 	});
+	// --- Reader slots: never show a half-loaded thread ---
+	// Two readers: the thread on screen and the incoming one, rendered invisibly
+	// (laid out, so its body frame loads and measures). The incoming one swaps
+	// in only once it's fully painted. If that takes longer than READER_HOLD_MS
+	// it swaps in early showing its skeleton — and a skeleton, once shown, stays
+	// at least SKELETON_MIN_MS so it reads as loading UI, never as a flash.
+	const READER_HOLD_MS = 200;
+	const SKELETON_MIN_MS = 500;
+	let slots = $state<[string | null, string | null]>([null, null]);
+	let shownSlot = $state<0 | 1>(0);
+	/** The thread each slot has reported fully painted (ReadingPane `onReady`). */
+	let slotReady = $state<[string | null, string | null]>([null, null]);
+	/** A skeleton is on screen (or was, until this time) — hold it until then. */
+	let skeletonUntil = $state(0);
+	let skeletonHeld = $state(false);
+	const shownId = $derived(slots[shownSlot]);
+	let holdTimer: ReturnType<typeof setTimeout> | null = null;
+	let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function slotThread(id: string | null): Thread | null {
+		return id ? (docs.find((d) => String(d.id) === id) ?? null) : null;
+	}
+	function showSlot(i: 0 | 1) {
+		if (holdTimer) clearTimeout(holdTimer);
+		holdTimer = null;
+		const was = shownSlot;
+		shownSlot = i;
+		// Swapping in a thread that isn't painted yet means its skeleton shows.
+		const id = slots[i];
+		if (id && slotReady[i] !== id) {
+			if (!skeletonOnScreen(was)) skeletonUntil = performance.now() + SKELETON_MIN_MS;
+			holdSkeletonUntilDue();
+		}
+	}
+	function skeletonOnScreen(i: 0 | 1): boolean {
+		const id = slots[i];
+		return skeletonHeld || (!!id && slotReady[i] !== id);
+	}
+	/** Keep the skeleton up until `skeletonUntil`, even if the content arrives first. */
+	function holdSkeletonUntilDue() {
+		const wait = skeletonUntil - performance.now();
+		if (releaseTimer) clearTimeout(releaseTimer);
+		if (wait <= 0) {
+			skeletonHeld = false;
+			return;
+		}
+		skeletonHeld = true;
+		releaseTimer = setTimeout(() => {
+			releaseTimer = null;
+			skeletonHeld = false;
+			// Something was waiting for the skeleton to finish.
+			tryShowStaged();
+		}, wait);
+	}
+	function tryShowStaged() {
+		const staged = (1 - shownSlot) as 0 | 1;
+		const id = slots[staged];
+		if (!id || id !== openId || slotReady[staged] !== id) return;
+		// Mid-skeleton: let it finish its minimum time first.
+		if (skeletonOnScreen(shownSlot) && performance.now() < skeletonUntil) {
+			holdSkeletonUntilDue();
+			return;
+		}
+		showSlot(staged);
+	}
+	function onSlotReady(i: 0 | 1, id: string) {
+		if (slots[i] !== id) return;
+		const next: [string | null, string | null] = [...slotReady];
+		next[i] = id;
+		slotReady = next;
+		if (i !== shownSlot) tryShowStaged();
+	}
+	$effect(() => {
+		const target = openId;
+		untrack(() => {
+			if (slots[shownSlot] === target) {
+				// Back to what's on screen: drop whatever was being staged.
+				if (holdTimer) clearTimeout(holdTimer);
+				holdTimer = null;
+				return;
+			}
+			// Nothing to keep on screen (closing, the first open, or the phone's
+			// full-screen reader): show the target straight away.
+			if (!target || !slots[shownSlot] || isMobile.current) {
+				const next: [string | null, string | null] = [...slots];
+				next[shownSlot] = target;
+				slots = next;
+				if (target && slotReady[shownSlot] !== target) {
+					skeletonUntil = performance.now() + SKELETON_MIN_MS;
+				}
+				return;
+			}
+			const staged = (1 - shownSlot) as 0 | 1;
+			const next: [string | null, string | null] = [...slots];
+			next[staged] = target;
+			slots = next;
+			if (slotReady[staged] === target) {
+				tryShowStaged();
+				return;
+			}
+			// Not painted yet: keep the current thread up for a moment, then fall
+			// back to the skeleton. A thread change mid-wait restarts the wait.
+			if (holdTimer) clearTimeout(holdTimer);
+			holdTimer = setTimeout(() => {
+				holdTimer = null;
+				if (slots[staged] === openId && slotReady[staged] !== openId) showSlot(staged);
+			}, READER_HOLD_MS);
+		});
+	});
+
 	/** How long the cursor must rest on a row before its body loads. Short enough to
 	 *  feel instant when you land, long enough that a fast scroll loads nothing. */
 	const PREVIEW_SETTLE_MS = 120;
@@ -1413,20 +1524,32 @@
 	class:mobile-open={!!openId}
 	bind:this={readingEl}
 	onmousedowncapture={() => openId && focus.set('reading')}>
-	<ReadingPane
-		{db}
-		threadId={openId}
-		{previewThread}
-		folder={((previewThread?.folder ?? openThread?.folder) as string | undefined) ?? null}
-		markReadActive={focus.is('list') || focus.is('reading')}
-		onDocs={(m) => (openMessages = m)}
-		onReply={reply}
-		onAct={act}
-		onBack={() => {
-			commit(null);
-			focus.set('list');
-		}}
-		onEditDraft={() => openThread && void openDraft(openThread)} />
+	{#each [0, 1] as const as i (i)}
+		{@const slotId = slots[i]}
+		{@const slotDoc = slotThread(slotId)}
+		<div class="reader-slot" class:staged={i !== shownSlot} aria-hidden={i !== shownSlot}>
+			<ReadingPane
+				{db}
+				threadId={slotId}
+				previewThread={slotDoc}
+				folder={(slotDoc?.folder as string | undefined) ?? null}
+				markReadActive={focus.is('list') || focus.is('reading')}
+				holdSkeleton={i === shownSlot && skeletonHeld}
+				onScreen={i === shownSlot}
+				onReady={(id) => onSlotReady(i, id)}
+				onDocs={(m) => {
+					// Reply/forward act on the thread you've moved to, staged or shown.
+					if (slotId === openId) openMessages = m;
+				}}
+				onReply={reply}
+				onAct={act}
+				onBack={() => {
+					commit(null);
+					focus.set('list');
+				}}
+				onEditDraft={() => openThread && void openDraft(openThread)} />
+		</div>
+	{/each}
 </div>
 
 <!-- Mobile reader action bar: thumb-reachable stand-ins for r/R/w/a/d and [/]. -->
@@ -1590,10 +1713,24 @@
 		min-height: 0;
 	}
 	.reading-pane {
+		position: relative;
 		flex: 1;
 		min-width: 0;
 		overflow-y: auto;
 		overscroll-behavior-y: contain;
+	}
+	.reader-slot {
+		min-height: 100%;
+	}
+	/* The incoming thread: full size (so its body frame lays out and measures
+	   exactly as it will on screen) but invisible, inert, and clipped so it
+	   adds nothing to the pane's scroll height. */
+	.reader-slot.staged {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		visibility: hidden;
+		pointer-events: none;
 	}
 
 	/* Shared touch-target icon button (header, selection bar, reader bar). */

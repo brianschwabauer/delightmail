@@ -20,8 +20,10 @@
 		 * without a card. Decided server-side (dark-mail.ts classifyBody).
 		 */
 		onTier?: (tier: 'design' | 'plain' | 'flip') => void;
+		/** Called once the body has painted (frame sized, or the excerpt fallback). */
+		onReady?: () => void;
 	}
-	const { messageId, excerpt, hasHtml = false, onTier }: Props = $props();
+	const { messageId, excerpt, hasHtml = false, onTier, onReady }: Props = $props();
 
 	let bare = $state(false);
 	function readTier(doc: Document) {
@@ -34,7 +36,14 @@
 	$effect(() => {
 		if (failed || !hasHtml) onTier?.('plain');
 	});
+	// Painted: the frame has its real height (it is invisible until then), or the
+	// excerpt is showing instead. The reader uses this to swap threads only once
+	// the new one is fully on screen.
+	$effect(() => {
+		if (sized || failed || !hasHtml) untrack(() => onReady?.());
+	});
 
+	import { untrack } from 'svelte';
 	import { scheme as liveScheme } from '$lib/theme';
 	import { bodyUrl } from '$lib/mail/body-url';
 	import { warmBody } from '$lib/mail/warm-threads';
