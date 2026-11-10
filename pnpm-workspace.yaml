@@ -10,16 +10,7 @@ allowBuilds:
   sharp: false
   workerd: true
 minimumReleaseAgeExclude:
-  - "@delightstack/ai"
-  - "@delightstack/auth"
-  - "@delightstack/components"
-  - "@delightstack/database"
-  - "@delightstack/editor"
-  - "@delightstack/images"
-  - "@delightstack/rate-limiter"
-  - "@delightstack/styles"
-  - "@delightstack/utilities"
-  - "@delightstack/websocket"
+  - "@delightstack/*"
 onlyBuiltDependencies:
   - esbuild
   - workerd
