@@ -35,9 +35,9 @@ function fakeDb() {
 			}
 			if (/FROM label WHERE name = \?/.test(sql)) {
 				const l = Object.values(storeFor('label')).find((r) => r.name === bindings[0]);
-				return l ? [{ id: l.id, json: JSON.stringify(l) }] : [];
+				return l ? [{ id: l.id, provider_map: JSON.stringify(l.provider_map ?? null) }] : [];
 			}
-			if (/json_extract\(json, '\$\.provider_ids\.gmail_thread_id'\)/.test(sql)) {
+			if (/json_extract\(provider_ids, '\$\.gmail_thread_id'\)/.test(sql)) {
 				const m = Object.values(messages).find(
 					(r) => (r.provider_ids as { gmail_thread_id?: string })?.gmail_thread_id === bindings[0],
 				);
@@ -49,7 +49,7 @@ function fakeDb() {
 					.map((t) => ({
 						id: t.id,
 						last_message_at: t.last_message_at,
-						json: JSON.stringify({ participants: t.participants ?? [] }),
+						participants: JSON.stringify(t.participants ?? []),
 					}));
 			}
 			if (

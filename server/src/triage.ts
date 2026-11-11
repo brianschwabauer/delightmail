@@ -316,11 +316,21 @@ function ruleFolder(action: SenderRule['action']): string | null {
 }
 
 function loadSenderRules(mb: TriageMailbox): SenderRule[] {
-	const rows = mb.exec(`SELECT json FROM sender_rule LIMIT 500`) as Array<{ json?: string }>;
+	// `action` and `label_id` are scalar columns. `matcher` is an object: its own
+	// column since database v3, the `json` blob on rows the v3 move hasn't reached.
+	const rows = mb.exec(
+		`SELECT COALESCE(matcher, json_extract(json, '$.matcher')) AS matcher, action, label_id
+		 FROM sender_rule LIMIT 500`,
+	) as Array<{ matcher?: string; action?: string; label_id?: string | null }>;
 	const out: SenderRule[] = [];
 	for (const r of rows) {
-		const j = safeJson(r.json);
-		if (j.matcher) out.push({ matcher: j.matcher, action: j.action, label_id: j.label_id });
+		const matcher = safeJson(r.matcher) as SenderRule['matcher'];
+		if (!Object.keys(matcher).length || !r.action) continue;
+		out.push({
+			matcher,
+			action: r.action as SenderRule['action'],
+			label_id: r.label_id ?? undefined,
+		});
 	}
 	return out;
 }

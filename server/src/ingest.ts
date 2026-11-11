@@ -239,7 +239,8 @@ function makeLookups(db: DbLike): ThreadLookups {
 		byGmailThreadId(gmail_thread_id) {
 			const rows = db.exec(
 				`SELECT thread_id FROM message
-				 WHERE json_extract(json, '$.provider_ids.gmail_thread_id') = ? LIMIT 1`,
+				 WHERE COALESCE(json_extract(provider_ids, '$.gmail_thread_id'),
+				                json_extract(json, '$.provider_ids.gmail_thread_id')) = ? LIMIT 1`,
 				gmail_thread_id,
 			);
 			return rows[0]?.thread_id as string | undefined;
@@ -253,13 +254,14 @@ function makeLookups(db: DbLike): ThreadLookups {
 		},
 		bySubject(subject_normalized) {
 			const rows = db.exec(
-				`SELECT id, last_message_at, json FROM thread
+				`SELECT id, last_message_at,
+				        COALESCE(participants, json_extract(json, '$.participants')) AS participants
+				 FROM thread
 				 WHERE subject_normalized = ? ORDER BY last_message_at DESC LIMIT 20`,
 				subject_normalized,
 			);
 			return rows.map((r) => {
-				const json = safeJson(r.json as string);
-				const parts = (json.participants as Address[] | undefined) ?? [];
+				const parts = safeArray(r.participants as string | null) as Address[];
 				return {
 					id: r.id as string,
 					subject_normalized,
@@ -447,16 +449,17 @@ function ensureLabel(
 	account_id: string,
 	provider_id: string,
 ): string | undefined {
-	const rows = db.exec(`SELECT id, json FROM label WHERE name = ? LIMIT 1`, name) as Array<{
-		id: string;
-		json?: string;
-	}>;
+	const rows = db.exec(
+		`SELECT id, COALESCE(provider_map, json_extract(json, '$.provider_map')) AS provider_map
+		 FROM label WHERE name = ? LIMIT 1`,
+		name,
+	) as Array<{ id: string; provider_map?: string | null }>;
 	if (rows.length) {
 		const id = rows[0].id;
-		const existing =
-			(safeJson(rows[0].json).provider_map as
-				| Array<{ account_id: string; provider_id: string }>
-				| undefined) ?? [];
+		const existing = safeArray(rows[0].provider_map ?? null) as Array<{
+			account_id: string;
+			provider_id: string;
+		}>;
 		if (!existing.some((p) => p.account_id === account_id && p.provider_id === provider_id)) {
 			db.update('label', id, {
 				provider_map: [...existing, { account_id, provider_id }],
@@ -550,11 +553,13 @@ function addressText(a: Address): string {
 	return [a.name, a.email].filter(Boolean).join(' ');
 }
 
-function safeJson(s: string | undefined): Record<string, unknown> {
-	if (!s) return {};
+/** A JSON array column's value, or `[]` when it is missing or unreadable. */
+function safeArray(s: string | null): unknown[] {
+	if (!s) return [];
 	try {
-		return JSON.parse(s);
+		const parsed: unknown = JSON.parse(s);
+		return Array.isArray(parsed) ? parsed : [];
 	} catch {
-		return {};
+		return [];
 	}
 }

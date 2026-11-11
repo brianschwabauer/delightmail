@@ -332,7 +332,9 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		if (!thread_ids.length) return map;
 		const placeholders = thread_ids.map(() => '?').join(', ');
 		const rows = this.exec(
-			`SELECT account_id, json_extract(json, '$.provider_ids.gmail_id') AS gmail_id
+			`SELECT account_id,
+			        COALESCE(json_extract(provider_ids, '$.gmail_id'),
+			                 json_extract(json, '$.provider_ids.gmail_id')) AS gmail_id
 			 FROM message WHERE thread_id IN (${placeholders})`,
 			...thread_ids,
 		) as Array<{ account_id: string; gmail_id: string | null }>;
@@ -430,7 +432,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		if (payload.op === 'labels' && this.hasPendingProviderOp(payload.gmail_id)) return;
 		const rows = this.exec(
 			`SELECT id, thread_id FROM message
-			 WHERE json_extract(json, '$.provider_ids.gmail_id') = ? LIMIT 1`,
+			 WHERE COALESCE(json_extract(provider_ids, '$.gmail_id'),
+			                json_extract(json, '$.provider_ids.gmail_id')) = ? LIMIT 1`,
 			payload.gmail_id,
 		) as Array<{ id: string; thread_id: string }>;
 		if (!rows.length) return;
@@ -1095,10 +1098,12 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		const settings = await this.ensureSettings();
 		if (withinQuietHours(settings.quiet_hours ?? undefined, settings.timezone ?? undefined)) return;
 		const { sendWebPush } = await import('./webpush');
-		const subs = this.exec(`SELECT id, json FROM push_subscription`) as Array<{
-			id: string;
-			json?: string;
-		}>;
+		// `keys` is an object field: its own column since database v3, the `json`
+		// blob on rows the v3 column move hasn't reached yet.
+		const subs = this.exec(
+			`SELECT id, endpoint, COALESCE("keys", json_extract(json, '$.keys')) AS "keys"
+			 FROM push_subscription`,
+		) as Array<{ id: string; endpoint?: string; keys?: string }>;
 		const unread = this.exec(
 			`SELECT COUNT(*) AS n FROM thread WHERE folder = 'inbox' AND unread_count > 0`,
 		) as Array<{ n: number }>;
@@ -1109,13 +1114,10 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			badge: unread[0]?.n ?? 0,
 		});
 		for (const row of subs) {
-			const sub = safeParse(row.json ?? '') as {
-				endpoint?: string;
-				keys?: { p256dh: string; auth: string };
-			};
-			if (!sub.endpoint || !sub.keys) continue;
+			const { p256dh, auth } = safeParse(row.keys ?? '') as { p256dh?: string; auth?: string };
+			if (!row.endpoint || !p256dh || !auth) continue;
 			try {
-				const res = await sendWebPush({ endpoint: sub.endpoint, keys: sub.keys }, body, {
+				const res = await sendWebPush({ endpoint: row.endpoint, keys: { p256dh, auth } }, body, {
 					publicKey: VAPID_PUBLIC_KEY,
 					privateKey: VAPID_PRIVATE_KEY,
 					subject: VAPID_SUBJECT ?? 'mailto:admin@delightmail',
@@ -1313,7 +1315,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				since,
 			) as Array<{ n: number }>;
 			const topSenders = this.exec(
-				`SELECT json_extract(json, '$.from.email') AS email, COUNT(*) AS n FROM message
+				`SELECT COALESCE(json_extract("from", '$.email'), json_extract(json, '$.from.email')) AS email,
+				        COUNT(*) AS n FROM message
 				 WHERE folder IN ('quarantine','spam','trash') AND date >= ?
 				 GROUP BY email ORDER BY n DESC LIMIT 3`,
 				since,
