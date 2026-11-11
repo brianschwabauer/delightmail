@@ -39,6 +39,30 @@ export interface MailboxEnv {
 
 const SETTINGS_ID = 'main';
 
+/**
+ * Each settings field with its schema default (booleans as stored, 0/1). Used
+ * once, to recover saved values from the duplicate rows the old
+ * `ensureSettings()` left behind: without `preserve_id`, `create()` minted a
+ * fresh id, so `main` never existed and every read made another row.
+ */
+const SETTINGS_DEFAULTS: Record<string, string | number | null> = {
+	triage_prompt: null,
+	triage_enabled: 0,
+	triage_mode: 'quarantine',
+	undo_send_seconds: 10,
+	keyboard_overrides: null,
+	density: 'comfortable',
+	theme: 'system',
+	auto_unsubscribe: 0,
+	push_mode: 'important',
+	quiet_hours: null,
+	timezone: null,
+	sounds: 0,
+};
+const SETTINGS_BOOLEANS = new Set(['triage_enabled', 'auto_unsubscribe', 'sounds']);
+/** Duplicate settings rows deleted per unit of `migrationTick()` work. */
+const SETTINGS_JUNK_BATCH = 250;
+
 // Exponential backoff ladder: 30s, 1m, 2m, 4m, 8m, 16m, then give up.
 // The cap must be reachable — the old ×5/attempts<5 form topped out at 4m.
 const MAX_JOB_ATTEMPTS = 7;
@@ -254,14 +278,18 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		// to the measured worst case (5 × ~4.6s ≈ 23s, under the 30s limit) in
 		// case timer yields ever stop advancing the clock again.
 		//
-		// The retired v2 tables are emptied only once the library's own work is
-		// done: nothing reads them, and one unit of work per iteration keeps the
-		// iteration cap's arithmetic true.
+		// One unit of work per iteration keeps the iteration cap's arithmetic
+		// true. Duplicate settings rows go first, since every one of them is also
+		// rebuild work; the retired v2 tables go last, since nothing reads them.
 		const started = Date.now();
 		let iterations = 0;
-		const pending = () => this.#searchMigrationPending() || this.#retiredSearchTables().length > 0;
+		const pending = () =>
+			this.#settingsJunkPending() ||
+			this.#searchMigrationPending() ||
+			this.#retiredSearchTables().length > 0;
 		while (pending() && Date.now() - started < 8_000 && iterations++ < 5) {
-			if (this.#searchMigrationPending()) await super.alarm();
+			if (this.#settingsJunkPending()) await this.#deleteSettingsJunkChunk();
+			else if (this.#searchMigrationPending()) await super.alarm();
 			else this.#dropRetiredSearchChunk();
 			await new Promise((resolve) => setTimeout(resolve, 1));
 		}
@@ -286,8 +314,60 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		try {
 			return this.get('settings', SETTINGS_ID) as Settings;
 		} catch {
-			return this.create('settings', { id: SETTINGS_ID } as never) as Settings;
+			// `preserve_id`, or the library mints a random id and `main` never exists.
+			return this.create('settings', { ...this.#recoveredSettings(), id: SETTINGS_ID } as never, {
+				preserve_id: true,
+			}) as Settings;
 		}
+	}
+
+	/**
+	 * The newest non-default value of each field across the duplicate rows, so
+	 * whatever the user saved survives the move to a real `main` row.
+	 */
+	#recoveredSettings(): Record<string, unknown> {
+		const recovered: Record<string, unknown> = {};
+		for (const [field, fallback] of Object.entries(SETTINGS_DEFAULTS)) {
+			const rows = (
+				fallback === null
+					? this.exec(
+							`SELECT "${field}" AS v FROM settings WHERE "${field}" IS NOT NULL AND "${field}" != ''
+							 ORDER BY updated_at DESC LIMIT 1`,
+						)
+					: this.exec(
+							`SELECT "${field}" AS v FROM settings WHERE "${field}" IS NOT NULL AND "${field}" != ?
+							 ORDER BY updated_at DESC LIMIT 1`,
+							fallback,
+						)
+			) as Array<{ v: string | number }>;
+			if (!rows.length) continue;
+			recovered[field] = SETTINGS_BOOLEANS.has(field) ? rows[0].v === 1 : rows[0].v;
+		}
+		return recovered;
+	}
+
+	/** Whether any settings row other than `main` is left. */
+	#settingsJunkPending(): boolean {
+		return (
+			(this.exec(`SELECT 1 FROM settings WHERE id != ? LIMIT 1`, SETTINGS_ID) as unknown[]).length >
+			0
+		);
+	}
+
+	/** Delete one chunk of duplicate settings rows, after `main` holds their values. */
+	async #deleteSettingsJunkChunk(): Promise<void> {
+		await this.ensureSettings();
+		const ids = (
+			this.exec(
+				`SELECT id FROM settings WHERE id != ? LIMIT ${SETTINGS_JUNK_BATCH}`,
+				SETTINGS_ID,
+			) as Array<{
+				id: string;
+			}>
+		).map((row) => row.id);
+		if (!ids.length) return;
+		console.log(`[MailboxServer] deleting ${ids.length} duplicate settings rows`);
+		this.transaction(ids.map((id) => ({ delete: { type: 'settings', id } })) as never);
 	}
 
 	// -------------------------------------------------------------------------
