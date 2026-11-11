@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button, ButtonGroup, Toggle, Input, toast } from '@delightstack/components';
-	import { DEFAULT_TRIAGE_PROMPT } from '$lib/mail/triage';
+	import { DEFAULT_TRIAGE_PROMPT } from '#lib/mail/triage.ts';
 
 	type Mode = 'label_only' | 'quarantine' | 'full_auto';
 	const MODES: Array<[Mode, string]> = [

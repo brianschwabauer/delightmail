@@ -1,14 +1,14 @@
-/// <reference types="@sveltejs/kit" />
-/// <reference lib="webworker" />
 /**
  * PWA service worker. Precaches the app shell, serves immutable message
  * bodies + attachments cache-first (they never change), and network-only for
  * everything else — the real offline data layer is the DatabaseClient's IndexedDB
  * mirror, not the SW. Also displays web-push notifications and deep-links on click.
  */
-import { build, files, version } from '$service-worker';
-
-const sw = self as unknown as ServiceWorkerGlobalScope;
+import { self as sw } from '$app/service-worker';
+import { version } from '$app/env';
+import { immutable, assets } from '$app/manifest';
+import { asset } from '$app/paths';
+import type { AssetPath } from '$app/types';
 
 const SHELL_CACHE = `dm-shell-${version}`;
 // Bodies, attachments and email images are immutable, so this cache is NOT tied
@@ -19,7 +19,11 @@ const SHELL_CACHE = `dm-shell-${version}`;
 // page, which fills it in the background (mail/body-downloader.ts).
 const BODY_CACHE = 'dm-bodies';
 const PAGE_CACHE = `dm-pages-${version}`;
-const SHELL_ASSETS = [...build, ...files];
+// Manifest paths are relative to the base path; `asset()` turns them into the
+// absolute pathnames the fetch handler compares against.
+const SHELL_ASSETS: string[] = [...immutable, ...assets].map((file) =>
+	asset(file.path as AssetPath),
+);
 
 sw.addEventListener('install', (event) => {
 	event.waitUntil(

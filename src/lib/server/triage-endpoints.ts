@@ -3,7 +3,7 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
-import { safeUnsubscribePost } from '$lib/mail/safe-fetch';
+import { safeUnsubscribePost } from '#lib/mail/safe-fetch.ts';
 
 /** POST /api/triage/test { prompt, count } — run the prompt without acting. */
 export async function handleTriageTest(event: RequestEvent): Promise<Response> {

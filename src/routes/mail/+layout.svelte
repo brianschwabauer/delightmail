@@ -3,21 +3,21 @@
 	import { goto } from '$app/navigation';
 	import { onMount, setContext, untrack } from 'svelte';
 	import { toast } from '@delightstack/components';
-	import Icon from '$lib/components/Icon.svelte';
-	import FolderRail from '$lib/components/FolderRail.svelte';
-	import StatusBar from '$lib/components/StatusBar.svelte';
-	import PasskeyPrompt from '$lib/components/PasskeyPrompt.svelte';
-	import KeyboardHelp from '$lib/components/KeyboardHelp.svelte';
-	import ChordHint from '$lib/components/ChordHint.svelte';
-	import CommandPalette from '$lib/components/CommandPalette.svelte';
-	import SetupWizard from '$lib/components/SetupWizard.svelte';
-	import type { ComposeInit } from '$lib/components/Compose.svelte';
-	import { provideKeyboard } from '$lib/keyboard/keyboard.svelte';
-	import { provideActions } from '$lib/mail/actions-client.svelte';
-	import { provideScope } from '$lib/mail/scope.svelte';
-	import { provideFocus } from '$lib/mail/focus.svelte';
-	import { takeUndoSend } from '$lib/mail/undo-send';
-	import { startBodyDownloader } from '$lib/mail/body-downloader';
+	import Icon from '#lib/components/Icon.svelte';
+	import FolderRail from '#lib/components/FolderRail.svelte';
+	import StatusBar from '#lib/components/StatusBar.svelte';
+	import PasskeyPrompt from '#lib/components/PasskeyPrompt.svelte';
+	import KeyboardHelp from '#lib/components/KeyboardHelp.svelte';
+	import ChordHint from '#lib/components/ChordHint.svelte';
+	import CommandPalette from '#lib/components/CommandPalette.svelte';
+	import SetupWizard from '#lib/components/SetupWizard.svelte';
+	import type { ComposeInit } from '#lib/components/Compose.svelte';
+	import { provideKeyboard } from '#lib/keyboard/keyboard.svelte.ts';
+	import { provideActions } from '#lib/mail/actions-client.svelte.ts';
+	import { provideScope } from '#lib/mail/scope.svelte.ts';
+	import { provideFocus } from '#lib/mail/focus.svelte.ts';
+	import { takeUndoSend } from '#lib/mail/undo-send.ts';
+	import { startBodyDownloader } from '#lib/mail/body-downloader.ts';
 
 	const { data, children } = $props();
 	const { auth, db, ws } = $derived(data);
@@ -50,7 +50,7 @@
 	// Compose pulls in the whole rich-text editor (ProseMirror — the single
 	// largest chunk in the app). Load it on first open — preloaded during idle
 	// below, so by the time a human presses `c` it's almost always warm.
-	const importCompose = () => import('$lib/components/Compose.svelte').then((m) => m.default);
+	const importCompose = () => import('#lib/components/Compose.svelte').then((m) => m.default);
 	let ComposeComponent = $state<Awaited<ReturnType<typeof importCompose>> | null>(null);
 	async function loadCompose() {
 		if (!ComposeComponent) ComposeComponent = await importCompose();

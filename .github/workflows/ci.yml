@@ -20,6 +20,8 @@ jobs:
         run: pnpm exec svelte-kit sync
       - name: Typecheck (app)
         run: pnpm exec svelte-check --tsconfig ./tsconfig.json
+      - name: Typecheck (service worker)
+        run: pnpm exec tsc --noEmit -p src/service-worker/tsconfig.json
       - name: Typecheck (server)
         run: cd server && pnpm exec tsc --noEmit -p tsconfig.json
       - name: Unit tests

@@ -9,9 +9,9 @@
  * fetched as soon as it is announced. Bodies are immutable and keyed by URL
  * (mail/body-url.ts), so anything already cached is skipped with a cheap lookup.
  */
-import type { MailDatabaseClient } from '$lib/clients';
+import type { MailDatabaseClient } from '#lib/clients.ts';
 import { bodyUrl } from './body-url';
-import { resolvedScheme } from '$lib/theme';
+import { resolvedScheme } from '#lib/theme.ts';
 
 /** Must match BODY_CACHE in service-worker.ts. */
 const CACHE_NAME = 'dm-bodies';
@@ -133,7 +133,7 @@ export function startBodyDownloader(db: MailDatabaseClient): {
 			for (let i = 0; i < threads.length && !stopped; i += 50) {
 				const ids = threads.slice(i, i + 50).map((t) => String(t.id));
 				const res = (await db
-					.list('message', { where: { thread_id: ids }, limit: 1000 } as never)
+					.list('message', { where: { thread_id: { in: ids } }, limit: 1000 } as never)
 					.load()) as unknown as { hits?: Array<{ document?: MessageDoc }> };
 				const messages = (res.hits ?? [])
 					.map((h) => h.document)

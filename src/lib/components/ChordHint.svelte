@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Keyboard } from '$lib/keyboard/keyboard.svelte';
+	import type { Keyboard } from '#lib/keyboard/keyboard.svelte.ts';
 
 	interface Props {
 		kb: Keyboard;

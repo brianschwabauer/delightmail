@@ -242,7 +242,7 @@ async function fullMode() {
 		if (existsSync(resolve(ROOT, dir)))
 			watch(resolve(ROOT, dir), { recursive: true }, (_e, f) => trigger(f));
 	}
-	for (const file of ['svelte.config.js', 'vite.config.ts']) {
+	for (const file of ['vite.config.ts']) {
 		if (existsSync(resolve(ROOT, file))) watch(resolve(ROOT, file), () => trigger(file));
 	}
 }

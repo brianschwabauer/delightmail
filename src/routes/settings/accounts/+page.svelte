@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { accountColor } from '$lib/mail/account-color';
+	import { accountColor } from '#lib/mail/account-color.ts';
 	import { Button, Input, toast } from '@delightstack/components';
 
 	const { data } = $props();

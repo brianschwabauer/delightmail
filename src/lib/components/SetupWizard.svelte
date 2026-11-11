@@ -10,7 +10,7 @@
 	 * email() handler), and `imap`.
 	 */
 	import { Button, Input, toast } from '@delightstack/components';
-	import Icon from '$lib/components/Icon.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 
 	const { onSkip }: { onSkip?: () => void } = $props();
 

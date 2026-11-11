@@ -13,6 +13,8 @@
  *   `.indexable()`; `.indexable()` (strings/numbers) only adds a SQLite index for
  *   server-side `exec()` lookups.
  * - `.sortable()` implies searchable and enables `order`.
+ * - Opaque values (ids, keys) use `.keyword()`: indexed whole as an exact-match
+ *   enum. Database v3 refuses `.searchable()` on fields named `*_id`/`*_ids`.
  * - Date-like sortable fields are epoch-ms numbers so cursor pagination is scalar.
  * - Arbitrary-key maps → arrays of typed pairs; opaque editor JSON → JSON string.
  */
@@ -125,7 +127,8 @@ export const threadTable = Database.table('thread', (s) => ({
 	snippet: s.string().searchable().optional(),
 	participants: s.array(s.object(addressShape(s))).optional(),
 	participant_text: s.string().searchable().optional(),
-	account_ids: s.array(s.string()).searchable().optional(),
+	// Ids are exact-match keywords: full text would split each into fragments.
+	account_ids: s.array(s.string()).keyword().optional(),
 	// sortable/searchable: these drive the LIST UI (unread dot, count pill,
 	// paperclip) and search operators (is:unread, has:attachment) — a field
 	// must be in the search index to appear in sparse docs or be filterable.
@@ -134,7 +137,7 @@ export const threadTable = Database.table('thread', (s) => ({
 	starred: s.boolean().searchable().default(false),
 	has_attachments: s.boolean().searchable().default(false),
 	folder: s.enum(FOLDERS).searchable().default('inbox'),
-	label_ids: s.array(s.string()).searchable().optional(),
+	label_ids: s.array(s.string()).keyword().optional(),
 	category: s.enum(CATEGORIES).searchable().optional(),
 	last_message_at: s.number().sortable().default(0),
 	snoozed_until: s.number().sortable().optional(),

@@ -229,7 +229,10 @@ export async function parseEmail(
 	const attachments: ParsedAttachment[] = (email.attachments ?? []).map((a) => ({
 		filename: a.filename || 'attachment',
 		mime_type: a.mimeType || 'application/octet-stream',
-		disposition: a.disposition,
+		// postal-mime 4 passes any token through; RFC 2183 treats an unknown one as
+		// `attachment`.
+		disposition:
+			a.disposition === null ? null : a.disposition === 'inline' ? 'inline' : 'attachment',
 		content_id: a.contentId,
 		size_bytes:
 			typeof a.content === 'string'

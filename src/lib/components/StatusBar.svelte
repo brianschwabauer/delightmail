@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { AuthClient } from '@delightstack/auth/client';
 	import type { WebsocketClient } from '@delightstack/websocket/client';
-	import { useFocus } from '$lib/mail/focus.svelte';
-	import { connectionState } from '$lib/mail/connection.svelte';
+	import { useFocus } from '#lib/mail/focus.svelte.ts';
+	import { connectionState } from '#lib/mail/connection.svelte.ts';
 
 	interface Props {
 		auth: AuthClient;

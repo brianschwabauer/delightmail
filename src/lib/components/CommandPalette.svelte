@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { CommandPalette as DSCommandPalette } from '@delightstack/components';
 	import type { CommandOption } from '@delightstack/components';
-	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
+	import { useKeyboard } from '#lib/keyboard/keyboard.svelte.ts';
 
 	const kb = useKeyboard();
 

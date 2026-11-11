@@ -2,11 +2,11 @@
 	import { Avatar, Checkbox } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
-	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
-	import { threadSenderLabel, threadParticipants } from '$lib/mail/participants';
-	import { useScope } from '$lib/mail/scope.svelte';
-	import { isMobile } from '$lib/mobile';
-	import type { Thread } from '$lib/schema';
+	import { verifiedAvatarUrl } from '#lib/mail/avatar.svelte.ts';
+	import { threadSenderLabel, threadParticipants } from '#lib/mail/participants.ts';
+	import { useScope } from '#lib/mail/scope.svelte.ts';
+	import { isMobile } from '#lib/mobile.ts';
+	import type { Thread } from '#lib/schema.ts';
 
 	const scope = useScope();
 

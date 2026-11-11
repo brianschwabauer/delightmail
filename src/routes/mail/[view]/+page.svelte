@@ -1,28 +1,28 @@
 <script lang="ts">
 	import { tick, onMount, untrack, getContext } from 'svelte';
-	import { afterNavigate, pushState, replaceState } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Button, Input, toast } from '@delightstack/components';
-	import { isMobile } from '$lib/mobile';
-	import Icon from '$lib/components/Icon.svelte';
-	import { viewToQuery, viewTitle, folderOfView } from '$lib/mail/views';
-	import { parseSearchInput } from '$lib/mail/search-operators';
-	import SnoozeChordMenu from '$lib/components/SnoozeChordMenu.svelte';
-	import { currentDensity, resolvedScheme, type Density } from '$lib/theme';
-	import { isWarm, warmThread } from '$lib/mail/warm-threads';
-	import { connectionState } from '$lib/mail/connection.svelte';
-	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
-	import { useActions } from '$lib/mail/actions-client.svelte';
-	import { useScope } from '$lib/mail/scope.svelte';
-	import { useFocus } from '$lib/mail/focus.svelte';
-	import { replySubject, replyRecipients, buildQuoteDoc } from '$lib/mail/compose';
-	import { resolveReplyIdentity, type IdentityLike } from '$lib/mail/identity';
-	import { parseParticipantText } from '$lib/mail/participants';
-	import ThreadList from '$lib/components/ThreadList.svelte';
-	import ReadingPane from '$lib/components/ReadingPane.svelte';
-	import type { ComposeInit } from '$lib/components/Compose.svelte';
-	import type { Thread, Message, Identity } from '$lib/schema';
-	import type { ThreadActionName } from '$lib/mail/actions';
+	import { isMobile } from '#lib/mobile.ts';
+	import Icon from '#lib/components/Icon.svelte';
+	import { viewToQuery, viewTitle, folderOfView } from '#lib/mail/views.ts';
+	import { parseSearchInput } from '#lib/mail/search-operators.ts';
+	import SnoozeChordMenu from '#lib/components/SnoozeChordMenu.svelte';
+	import { currentDensity, resolvedScheme, type Density } from '#lib/theme.ts';
+	import { isWarm, warmThread } from '#lib/mail/warm-threads.ts';
+	import { connectionState } from '#lib/mail/connection.svelte.ts';
+	import { useKeyboard } from '#lib/keyboard/keyboard.svelte.ts';
+	import { useActions } from '#lib/mail/actions-client.svelte.ts';
+	import { useScope } from '#lib/mail/scope.svelte.ts';
+	import { useFocus } from '#lib/mail/focus.svelte.ts';
+	import { replySubject, replyRecipients, buildQuoteDoc } from '#lib/mail/compose.ts';
+	import { resolveReplyIdentity, type IdentityLike } from '#lib/mail/identity.ts';
+	import { parseParticipantText } from '#lib/mail/participants.ts';
+	import ThreadList from '#lib/components/ThreadList.svelte';
+	import ReadingPane from '#lib/components/ReadingPane.svelte';
+	import type { ComposeInit } from '#lib/components/Compose.svelte';
+	import type { Thread, Message, Identity } from '#lib/schema.ts';
+	import type { ThreadActionName } from '#lib/mail/actions.ts';
 
 	const compose = getContext<{ open: (init?: ComposeInit) => void }>('mail:compose');
 	const drawer = getContext<{ open: () => void }>('mail:drawer');
@@ -74,7 +74,7 @@
 	// their threads and merge into the list below.
 	const messageHits = db.list('message', () => {
 		const active = searching && searchTerm && (parsed.term || parsed.from);
-		if (!active) return { where: { thread_id: ['__none__'] }, limit: 1 };
+		if (!active) return { where: { thread_id: { in: ['__none__'] } }, limit: 1 };
 		const where: Record<string, unknown> = {};
 		if (parsed.unread) where.is_read = false;
 		if (parsed.starred) where.is_starred = true;
@@ -92,15 +92,15 @@
 	const attachmentHits = db.list('attachment', () =>
 		searching && parsed.term
 			? { term: parsed.term, limit: 100 }
-			: { where: { message_id: ['__none__'] }, limit: 1 },
+			: { where: { message_id: { in: ['__none__'] } }, limit: 1 },
 	);
 	const attachmentMessageIds = $derived(
 		[...new Set((attachmentHits.items ?? []).map((a) => String(a.message_id)))].filter(Boolean),
 	);
 	const attachmentMessages = db.list('message', () =>
 		attachmentMessageIds.length
-			? { where: { id: attachmentMessageIds }, limit: 100 }
-			: { where: { id: ['__none__'] }, limit: 1 },
+			? { where: { id: { in: attachmentMessageIds } }, limit: 100 }
+			: { where: { id: { in: ['__none__'] } }, limit: 1 },
 	);
 	const bodyThreadIds = $derived.by(() => {
 		if (!(searching && searchTerm)) return [] as string[];
@@ -123,8 +123,8 @@
 	});
 	const bodyThreads = db.list('thread', () =>
 		bodyThreadIds.length
-			? { where: { id: bodyThreadIds }, limit: 200 }
-			: { where: { id: ['__none__'] }, limit: 1 },
+			? { where: { id: { in: bodyThreadIds } }, limit: 200 }
+			: { where: { id: { in: ['__none__'] } }, limit: 1 },
 	);
 
 	// Apply the optimistic action overlay (hidden threads + flag patches), then
@@ -229,7 +229,7 @@
 	// the full-screen reader instead of leaving the app; in-app closes pop that
 	// same entry so stale reader states never pile up in history.
 	let pushedReader = false;
-	// pushState/replaceState THROW before the router initializes — and on a ?t=
+	// Shallow goto() fails before the router initializes — and on a ?t=
 	// deep link the mirror effect's first run DOES carry a change (openId is set
 	// in onMount, before the router is up). The throw didn't just skip the
 	// mirror: an exception in an effect aborts the whole flush, freezing every
@@ -247,11 +247,11 @@
 			if (id) {
 				url.searchParams.set('t', id);
 				if (isMobile.current && !page.state.threadOpen) {
-					pushState(url, { threadOpen: true });
+					void goto(url, { shallow: true, state: { threadOpen: true } });
 					pushedReader = true;
 				} else if (current !== id) {
 					// Desktop, or moving thread→thread inside an already-pushed reader.
-					replaceState(url, page.state);
+					void goto(url, { shallow: true, replace: true, state: page.state });
 				}
 			} else if (pushedReader) {
 				// In-app close (back arrow, Escape, archive-from-reader): pop our own
@@ -260,7 +260,7 @@
 				history.back();
 			} else if (current !== null) {
 				url.searchParams.delete('t');
-				replaceState(url, page.state);
+				void goto(url, { shallow: true, replace: true, state: page.state });
 			}
 		});
 	});
@@ -933,7 +933,7 @@
 		let atts: AttDoc[] = [];
 		try {
 			const res = await db
-				.list('attachment', { where: { message_id: ids }, limit: 100 } as never)
+				.list('attachment', { where: { message_id: { in: ids } }, limit: 100 } as never)
 				.load();
 			atts = (res.items ?? []) as unknown as AttDoc[];
 		} catch {
@@ -1010,7 +1010,7 @@
 		try {
 			const res = await db
 				.list('message', {
-					where: { thread_id: threadId },
+					where: { thread_id: { eq: threadId } },
 					order: [{ field: 'date', direction: 'DESC' }],
 					limit: 1,
 				})

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, toast } from '@delightstack/components';
-	import type { UnsubscribeTask } from '$lib/schema';
+	import type { UnsubscribeTask } from '#lib/schema.ts';
 
 	const { data } = $props();
 	const { db } = $derived(data);

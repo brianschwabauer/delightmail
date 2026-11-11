@@ -2,7 +2,8 @@
  * Custom mail endpoints (mailHandle). Routing lives here so every branch
  * shares the org/session guard. Handlers are added per-phase.
  */
-import type { Handle, RequestEvent } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit/hooks';
+import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
 import {
 	handleGoogleStart,

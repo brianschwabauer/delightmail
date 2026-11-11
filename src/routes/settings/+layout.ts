@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { dev } from '$app/environment';
-import { createClients } from '$lib/clients';
+import { dev } from '$app/env';
+import { createClients } from '#lib/clients.ts';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ parent, fetch }) => {

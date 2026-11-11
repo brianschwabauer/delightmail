@@ -6,7 +6,7 @@
 		nextWeekdayMorning,
 		fmtWake,
 		type SnoozeOption,
-	} from '$lib/mail/snooze';
+	} from '#lib/mail/snooze.ts';
 
 	interface Props {
 		/** How many conversations the snooze will act on (for the title). */

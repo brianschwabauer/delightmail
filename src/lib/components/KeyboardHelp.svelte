@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { Input } from '@delightstack/components';
-	import type { Keyboard, Binding } from '$lib/keyboard/keyboard.svelte';
+	import type { Keyboard, Binding } from '#lib/keyboard/keyboard.svelte.ts';
 
 	interface Props {
 		kb: Keyboard;

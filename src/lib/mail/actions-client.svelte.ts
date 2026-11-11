@@ -18,8 +18,8 @@
  */
 import { getContext, setContext } from 'svelte';
 import { toast } from '@delightstack/components';
-import type { Thread } from '$lib/schema';
-import type { MailDatabaseClient } from '$lib/clients';
+import type { Thread } from '#lib/schema.ts';
+import type { MailDatabaseClient } from '#lib/clients.ts';
 import { computeThreadPatch, type ThreadActionName, type ThreadStateForAction } from './actions';
 import { playTick } from './sound';
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Avatar, Popover } from '@delightstack/components';
-	import { verifiedAvatarUrl } from '$lib/mail/avatar.svelte';
+	import { verifiedAvatarUrl } from '#lib/mail/avatar.svelte.ts';
 
 	/** The sender name in a message head, with a hover popover revealing who it
 	 *  actually is — display name plus the real address (selectable, so a

@@ -3,7 +3,7 @@
  * the mail layout's `load` (see routes/mail/+layout.ts). Mirrors the delightstack
  * example app's clients.ts, specialized for the mail schema.
  */
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { DatabaseClient, type DatabaseClientConfig } from '@delightstack/database/client';
 import { WebsocketClient } from '@delightstack/websocket/client';
 import { AiClient } from '@delightstack/ai/client';

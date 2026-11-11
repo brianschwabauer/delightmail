@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, onMount, getContext } from "svelte";
-	import { armUndoSend, takeUndoSend } from "$lib/mail/undo-send";
+	import { armUndoSend, takeUndoSend } from "#lib/mail/undo-send.ts";
 	import { Editor as EditorClass, defaultBlocks } from "@delightstack/editor";
 	// The package's generated Editor.svelte.d.ts has an internal name collision
 	// (component `Editor` vs the core `Editor` type it imports), so the named
@@ -25,12 +25,12 @@
 	} from "@delightstack/components";
 	import type { InputOption } from "@delightstack/components";
 	import Icon from "./Icon.svelte";
-	import type { MailDatabaseClient } from "$lib/clients";
-	import type { Address, Identity } from "$lib/schema";
-	import { verifiedAvatarUrl } from "$lib/mail/avatar.svelte";
-	import { mergeSignatureDoc, docToText } from "$lib/mail/compose";
-	import { resolveComposeIdentity } from "$lib/mail/identity";
-	import { DraftAutosaver } from "$lib/mail/draft-autosave";
+	import type { MailDatabaseClient } from "#lib/clients.ts";
+	import type { Address, Identity } from "#lib/schema.ts";
+	import { verifiedAvatarUrl } from "#lib/mail/avatar.svelte.ts";
+	import { mergeSignatureDoc, docToText } from "#lib/mail/compose.ts";
+	import { resolveComposeIdentity } from "#lib/mail/identity.ts";
+	import { DraftAutosaver } from "#lib/mail/draft-autosave.ts";
 
 	export interface ComposeInit {
 		/** What started this compose — sets the title. Omitted = a new message. */

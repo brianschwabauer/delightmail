@@ -9,8 +9,8 @@
  * downloader) remains the durable layer underneath, so warming a thread is
  * usually a local cache read.
  */
-import type { MailDatabaseClient } from '$lib/clients';
-import type { Message } from '$lib/schema';
+import type { MailDatabaseClient } from '#lib/clients.ts';
+import type { Message } from '#lib/schema.ts';
 import { bodyUrl } from './body-url';
 
 const MAX_THREADS = 60;
@@ -68,7 +68,7 @@ export function warmThread(
 			if (!messages) {
 				const res = await db
 					.list('message', {
-						where: { thread_id },
+						where: { thread_id: { eq: thread_id } },
 						order: [{ field: 'date', direction: 'ASC' }],
 						limit: 200,
 					})

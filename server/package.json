@@ -8,19 +8,19 @@
 		"dev": "wrangler dev --config wrangler.jsonc --persist-to ./../.wrangler/state"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^4.20260401.1",
-		"typescript": "^5.9.3",
-		"wrangler": "^4.79.0"
+		"@cloudflare/workers-types": "^5.20261110.1",
+		"typescript": "^6.0.3",
+		"wrangler": "^4.159.0"
 	},
 	"dependencies": {
-		"@delightstack/ai": "^1.1.12",
-		"@delightstack/auth": "^1.4.0",
-		"@delightstack/database": "^2.6.0",
-		"@delightstack/rate-limiter": "^1.0.0",
-		"@delightstack/utilities": "^1.0.1",
-		"@delightstack/websocket": "^2.2.0",
-		"mimetext": "^3.0.24",
-		"postal-mime": "^2.4.3",
-		"zod": "^4.3.6"
+		"@delightstack/ai": "^1.1.15",
+		"@delightstack/auth": "^1.4.2",
+		"@delightstack/database": "^3.0.2",
+		"@delightstack/rate-limiter": "^1.0.1",
+		"@delightstack/utilities": "^1.3.0",
+		"@delightstack/websocket": "^2.2.3",
+		"mimetext": "^3.0.28",
+		"postal-mime": "^4.2.0",
+		"zod": "^4.6.7"
 	}
 }

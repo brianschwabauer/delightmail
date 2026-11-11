@@ -6,7 +6,7 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { DelightError } from '@delightstack/utilities';
 import { renderHTML, renderText } from '@delightstack/editor/render';
-import type { Address } from '$lib/schema';
+import type { Address } from '#lib/schema.ts';
 
 interface SendAttachment {
 	r2_key: string;

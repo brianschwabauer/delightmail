@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button, ButtonGroup, Input, toast } from '@delightstack/components';
-	import { applyTheme, applyDensity, currentTheme, currentDensity, type Theme, type Density } from '$lib/theme';
-	import { enablePush, isPushSupported } from '$lib/push-client';
-	import { soundsEnabled, setSoundsEnabled, playTick } from '$lib/mail/sound';
+	import { applyTheme, applyDensity, currentTheme, currentDensity, type Theme, type Density } from '#lib/theme.ts';
+	import { enablePush, isPushSupported } from '#lib/push-client.ts';
+	import { soundsEnabled, setSoundsEnabled, playTick } from '#lib/mail/sound.ts';
 
 	const { data } = $props();
 	const { db } = $derived(data);

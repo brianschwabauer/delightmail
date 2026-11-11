@@ -44,9 +44,9 @@
 	});
 
 	import { untrack } from 'svelte';
-	import { scheme as liveScheme } from '$lib/theme';
-	import { bodyUrl } from '$lib/mail/body-url';
-	import { warmBody } from '$lib/mail/warm-threads';
+	import { scheme as liveScheme } from '#lib/theme.ts';
+	import { bodyUrl } from '#lib/mail/body-url.ts';
+	import { warmBody } from '#lib/mail/warm-threads.ts';
 	// Reactive: a theme flip (including the OS switching while on 'system')
 	// reloads the frame with the body rendered for the new scheme.
 	const scheme = $derived(liveScheme.current);

@@ -5,13 +5,13 @@
 	import Icon from './Icon.svelte';
 	import Hint from './Hint.svelte';
 	import Sender from './Sender.svelte';
-	import type { MailDatabaseClient } from '$lib/clients';
-	import type { Message, Thread } from '$lib/schema';
-	import type { ThreadActionName } from '$lib/mail/actions';
-	import { docToText } from '$lib/mail/compose';
-	import { threadSenderLabel, parseParticipantText } from '$lib/mail/participants';
-	import { useScope } from '$lib/mail/scope.svelte';
-	import { warmMessages, rememberMessages } from '$lib/mail/warm-threads';
+	import type { MailDatabaseClient } from '#lib/clients.ts';
+	import type { Message, Thread } from '#lib/schema.ts';
+	import type { ThreadActionName } from '#lib/mail/actions.ts';
+	import { docToText } from '#lib/mail/compose.ts';
+	import { threadSenderLabel, parseParticipantText } from '#lib/mail/participants.ts';
+	import { useScope } from '#lib/mail/scope.svelte.ts';
+	import { warmMessages, rememberMessages } from '#lib/mail/warm-threads.ts';
 	import MessageBody from './MessageBody.svelte';
 
 	const scope = useScope();
@@ -81,7 +81,7 @@
 	const messages = db.list(
 		'message',
 		() => ({
-			where: { thread_id: threadId ?? '' },
+			where: { thread_id: { eq: threadId ?? '' } },
 			order: [{ field: 'date', direction: 'ASC' }],
 			limit: 200,
 		}),
@@ -122,7 +122,7 @@
 		try {
 			const res = (await db
 				.list('message', {
-					where: { thread_id: tid },
+					where: { thread_id: { eq: tid } },
 					order: [{ field: 'date', direction: 'ASC' }],
 					sparse: false,
 					limit: 200,
@@ -170,7 +170,7 @@
 		'attachment',
 		() => ({
 			where: {
-				message_id: docs.length ? docs.map((m) => String(m.id)) : ['__none__'],
+				message_id: { in: docs.length ? docs.map((m) => String(m.id)) : ['__none__'] },
 			},
 			limit: 100,
 		}),
@@ -225,7 +225,7 @@
 		try {
 			const res = (await db
 				.list('ai_review', {
-					where: { message_id: ids },
+					where: { message_id: { in: ids } },
 					sparse: false,
 					limit: 10,
 				} as never)

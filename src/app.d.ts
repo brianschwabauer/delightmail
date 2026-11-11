@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { AuthLocals } from '@delightstack/auth/server';
-import type { MailboxRpc } from '$lib/mailbox-rpc';
+import type { MailboxRpc } from '#lib/mailbox-rpc.ts';
 
 declare global {
 	namespace App {
@@ -33,9 +33,8 @@ declare global {
 		}
 
 		interface Platform {
+			/** Rebuilt per request in hooks.server.ts from `cloudflare:workers`. */
 			ctx: ExecutionContext;
-			/** @deprecated adapter-cloudflare alias of `ctx` */
-			context: ExecutionContext;
 			env: CloudflareEnv;
 			cf: CfProperties;
 			caches: CacheStorage & { default: Cache };

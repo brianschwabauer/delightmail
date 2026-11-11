@@ -4,11 +4,11 @@
 	import { List, ListItem } from '@delightstack/components';
 	import Icon, { type IconName } from './Icon.svelte';
 	import type { AuthClient } from '@delightstack/auth/client';
-	import type { MailDatabaseClient } from '$lib/clients';
-	import { useScope } from '$lib/mail/scope.svelte';
-	import { useFocus } from '$lib/mail/focus.svelte';
-	import { useKeyboard } from '$lib/keyboard/keyboard.svelte';
-	import { accountColor, accountDetails } from '$lib/mail/account-color';
+	import type { MailDatabaseClient } from '#lib/clients.ts';
+	import { useScope } from '#lib/mail/scope.svelte.ts';
+	import { useFocus } from '#lib/mail/focus.svelte.ts';
+	import { useKeyboard } from '#lib/keyboard/keyboard.svelte.ts';
+	import { accountColor, accountDetails } from '#lib/mail/account-color.ts';
 
 	interface Props {
 		db: MailDatabaseClient;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Input, toast } from '@delightstack/components';
-	import { docToText, textToDoc } from '$lib/mail/compose';
+	import { docToText, textToDoc } from '#lib/mail/compose.ts';
 
 	const { data } = $props();
 	const { db } = $derived(data);

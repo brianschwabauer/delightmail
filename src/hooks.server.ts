@@ -1,5 +1,5 @@
-import type { Handle, HandleServerError, RequestEvent } from '@sveltejs/kit';
-import { sequence } from '@sveltejs/kit/hooks';
+import type { RequestEvent } from '@sveltejs/kit';
+import { sequence, type Handle, type HandleServerError } from '@sveltejs/kit/hooks';
 import {
 	createAuthHandle,
 	defineAuthConfig,
@@ -11,15 +11,16 @@ import { createWebsocketHandle } from '@delightstack/websocket/server';
 import { createDatabaseHandle } from '@delightstack/database/server';
 import { createAiHandle } from '@delightstack/ai/server';
 import { DelightError, createDevHandle } from '@delightstack/utilities';
-import { env } from '$env/dynamic/private';
-import { env as public_env } from '$env/dynamic/public';
-import { building, dev } from '$app/environment';
-import { tables } from '$lib/schema';
-import { sendTransactionalEmail } from '$lib/server/email';
-import { createMailHandle } from '$lib/server/mail-handle';
-import { reportEnvOnce } from '$lib/server/env-check';
-import { isDevEnv } from '$lib/server/is-dev';
-import { limitMagicLink, type RateLimiterNamespace } from '$lib/server/rate-limit';
+import { JWT_KEY_SECRET, SIGNUPS_ENABLED, OWNER_EMAIL, DEV_WORKER_URL } from '$app/env/private';
+import { PUBLIC_APP_URL } from '$app/env/public';
+import { building, dev } from '$app/env';
+import { env as worker_env, waitUntil } from 'cloudflare:workers';
+import { tables } from '#lib/schema.ts';
+import { sendTransactionalEmail } from '#lib/server/email.ts';
+import { createMailHandle } from '#lib/server/mail-handle.ts';
+import { reportEnvOnce } from '#lib/server/env-check.ts';
+import { isDevEnv } from '#lib/server/is-dev.ts';
+import { limitMagicLink, type RateLimiterNamespace } from '#lib/server/rate-limit.ts';
 
 // A valid 64-char hex secret for dev only; production MUST set JWT_KEY_SECRET.
 const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000deadbeef';
@@ -34,7 +35,7 @@ const DEV_SECRET = '00000000000000000000000000000000000000000000000000000000dead
  * production build — where refusing to boot is the correct outcome.
  */
 function resolveAuthSecret(): string {
-	if (env.JWT_KEY_SECRET) return env.JWT_KEY_SECRET;
+	if (JWT_KEY_SECRET) return JWT_KEY_SECRET;
 	if (isDevEnv()) return DEV_SECRET;
 	throw new Error(
 		'JWT_KEY_SECRET is not set. Set it to a 64-char hex value (openssl rand -hex 32) on ' +
@@ -45,17 +46,17 @@ function resolveAuthSecret(): string {
 /**
  * The canonical origin of this deployment, or undefined when none is pinned.
  *
- * PUBLIC_APP_URL must be read from `$env/dynamic/public`: SvelteKit filters the
- * public prefix *out* of `$env/dynamic/private`, so `env.PUBLIC_APP_URL` there is
- * always undefined — even in production with the var set. Reading it from the
- * wrong module is what pointed every deployed magic link at localhost.
+ * PUBLIC_APP_URL is declared `public` and non-static in src/env.ts, so it comes
+ * from `$app/env/public` and is read when the worker starts, never inlined at
+ * build time. (Under SvelteKit 2 it once came from the private module, where the
+ * public prefix is filtered out: every deployed magic link pointed at localhost.)
  *
  * Undefined is a meaningful return: it makes the auth library fall back to the
  * origin of the incoming request, which is correct for a deployment that has not
  * pinned a canonical URL. Never guess localhost here.
  */
 function appOrigin(): string | undefined {
-	return public_env.PUBLIC_APP_URL || undefined;
+	return PUBLIC_APP_URL || undefined;
 }
 
 function rpId(): string | undefined {
@@ -70,8 +71,8 @@ function rpId(): string | undefined {
 
 /** Whether a given email is allowed to create an account. */
 function signupAllowed(email: string): boolean {
-	if (env.SIGNUPS_ENABLED === 'true') return true;
-	const owners = (env.OWNER_EMAIL ?? '')
+	if (SIGNUPS_ENABLED === 'true') return true;
+	const owners = (OWNER_EMAIL ?? '')
 		.split(/[,\s]+/)
 		.map((e) => e.trim().toLowerCase())
 		.filter(Boolean);
@@ -342,7 +343,7 @@ const devSigninHandle: Handle = async ({ event, resolve }) => {
 	const body = (await event.request.json().catch(() => ({}))) as { email?: string };
 	// Under `vite dev` the private env comes from `.env`, not `.dev.vars` — the
 	// platform env (getPlatformProxy) is where OWNER_EMAIL actually lives there.
-	const owner = env.OWNER_EMAIL || (event.platform as App.Platform | undefined)?.env?.OWNER_EMAIL;
+	const owner = OWNER_EMAIL || (event.platform as App.Platform | undefined)?.env?.OWNER_EMAIL;
 	const email = (body.email ?? owner?.split(/[,\s]+/)[0] ?? '').trim().toLowerCase();
 	if (!email) return DelightError.badRequest('No email (set OWNER_EMAIL or pass one)').toResponse();
 	if (!signupAllowed(email)) return DelightError.forbidden('Not an allowed address').toResponse();
@@ -658,6 +659,24 @@ const settingsHandle: Handle = async ({ event, resolve }) => {
  * auth CSRF check included) refuses the request. Dev only: trust the proxy's
  * X-Forwarded-Proto.
  */
+// adapter-cloudflare 8 (SvelteKit 3) no longer sets `event.platform`: bindings
+// come from `cloudflare:workers` and `cf` rides on the request. Everything here
+// (and delightstack's handles) reads `event.platform`, so rebuild it once per
+// request, first in the sequence. Under `vite dev` the adapter backs
+// `cloudflare:workers` with wrangler's platform proxy.
+const platformHandle: Handle = async ({ event, resolve }) => {
+	if (!event.platform) {
+		const platform: App.Platform = {
+			env: worker_env as unknown as App.CloudflareEnv,
+			ctx: { waitUntil, passThroughOnException() {}, props: {} } as ExecutionContext,
+			cf: (event.request as Request & { cf?: CfProperties }).cf as CfProperties,
+			caches: caches as App.Platform['caches'],
+		};
+		(event as { platform?: App.Platform }).platform = platform;
+	}
+	return resolve(event);
+};
+
 const forwardedProtoHandle: Handle = async ({ event, resolve }) => {
 	if (event.request.headers.get('x-forwarded-proto') === 'https') {
 		event.url.protocol = 'https:';
@@ -669,6 +688,7 @@ const forwardedProtoHandle: Handle = async ({ event, resolve }) => {
 // @sveltejs/kit; cast to the local Handle so sequence() accepts them (they are
 // structurally identical at runtime).
 export const handle = sequence(
+	platformHandle,
 	...(dev ? [forwardedProtoHandle] : []),
 	// `vite dev` only: the Durable Objects live in the server worker (`pnpm dev`
 	// starts it on :8710), reached over delightstack's HTTP RPC bridge. `override`
@@ -679,7 +699,7 @@ export const handle = sequence(
 	...((dev
 		? [
 				createDevHandle({
-					url: env.DEV_WORKER_URL || 'http://localhost:8710',
+					url: DEV_WORKER_URL || 'http://localhost:8710',
 					bindings: ['AUTH', 'MAILBOX', 'SYNC', 'WS', 'RATE_LIMITER'],
 					override: true,
 				}),
@@ -698,7 +718,11 @@ export const handle = sequence(
 	mailHandle,
 );
 
-export const handleError: HandleServerError = ({ error }) => {
+// Kit 3 routes every error through here, `error()` and its own 404s included.
+// Those already carry the right status and message; only map unknown throws
+// (DelightErrors, DO errors that crossed RPC) onto theirs.
+export const handleError: HandleServerError = ({ error, kind }) => {
+	if (kind !== 'unknown') return;
 	const err = DelightError.from(error);
 	return { message: err.message, status: err.status };
 };

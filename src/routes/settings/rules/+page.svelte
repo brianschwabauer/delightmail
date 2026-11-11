@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Input, Select, toast } from '@delightstack/components';
 	import type { SelectOption } from '@delightstack/components';
-	import type { SenderRule } from '$lib/schema';
+	import type { SenderRule } from '#lib/schema.ts';
 
 	const { data } = $props();
 	const { db } = $derived(data);
@@ -81,7 +81,9 @@
 	<Select
 		value={matchType}
 		options={MATCH_OPTIONS}
-		onchange={({ value: v }) => (matchType = v as MatchType)} />
+		onchange={({ value: v }) => {
+			matchType = v as MatchType;
+		}} />
 	<div class="grow">
 		<Input
 			bind:value
@@ -90,7 +92,9 @@
 	<Select
 		value={action}
 		options={ACTION_OPTIONS}
-		onchange={({ value: v }) => (action = v as RuleAction)} />
+		onchange={({ value: v }) => {
+			action = v as RuleAction;
+		}} />
 	<Button dense disabled={adding} onclick={addRule}>{adding ? '…' : 'Add rule'}</Button>
 </form>
 

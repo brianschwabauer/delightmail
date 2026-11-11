@@ -23,6 +23,7 @@
 		"../src/lib/mail/actions-client.svelte.ts",
 		"../src/lib/mail/**/*.svelte.ts",
 		"../src/lib/mail/sound.ts",
-		"../src/lib/mail/body-downloader.ts"
+		"../src/lib/mail/body-downloader.ts",
+		"../src/lib/mail/warm-threads.ts"
 	]
 }

@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { countDocs, type ListableDb } from '$lib/server/db-list';
+import { countDocs, type ListableDb } from '#lib/server/db-list.ts';
 import type { LayoutServerLoad } from './$types';
 
 export const load: LayoutServerLoad = async ({ locals }) => {
