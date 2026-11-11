@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick, onMount, untrack, getContext } from 'svelte';
+	import { tick, onMount, onDestroy, untrack, getContext } from 'svelte';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { Button, Input, toast } from '@delightstack/components';
@@ -126,6 +126,15 @@
 			? { where: { id: { in: bodyThreadIds } }, limit: 200 }
 			: { where: { id: { in: ['__none__'] } }, limit: 1 },
 	);
+
+	// A handle stops a microtask after its last reader goes away, and until then its
+	// query effect still runs. Leaving the mail layout (e.g. for settings) would run it
+	// against this page's destroyed deriveds (Svelte's derived_inert warning), so stop
+	// the handles with the page.
+	onDestroy(() => {
+		for (const handle of [results, messageHits, attachmentHits, attachmentMessages, bodyThreads])
+			handle.destroy();
+	});
 
 	// Apply the optimistic action overlay (hidden threads + flag patches), then
 	// the client-only yazi filter over the loaded docs.

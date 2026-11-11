@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { Avatar, Button, Popover, toast } from '@delightstack/components';
 	import { ripple } from '@delightstack/utilities';
 	import Icon from './Icon.svelte';
@@ -176,6 +176,12 @@
 		}),
 		{ debounce: 0 },
 	);
+	// Stop both handles with the pane: left to their own microtask teardown, their
+	// query effects run once more against this component's destroyed props.
+	onDestroy(() => {
+		messages.destroy();
+		attachmentDocs.destroy();
+	});
 	const attachmentsFor = $derived.by(() => {
 		const map = new Map<string, AttachmentDoc[]>();
 		for (const a of (attachmentDocs.items ?? []) as unknown as AttachmentDoc[]) {
