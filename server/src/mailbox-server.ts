@@ -48,6 +48,49 @@ function retryBackoffMs(attempts: number): number {
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * The database v2 search engine's tables. Database v3 indexes into new tables
+ * and drops these in its constructor with a plain `DROP TABLE`, which DO
+ * SQLite runs row by row: on a real mailbox (hundreds of thousands of
+ * postings) that blows the 30s CPU limit on every wake, the exact wedge this
+ * mailbox has hit before. So they are renamed out of the library's sight
+ * before `super()` (a rename touches no rows) and emptied in bounded chunks
+ * from `migrationTick()`.
+ */
+const V2_SEARCH_TABLES = ['search_postings', 'search_tokens', 'search_docs', 'search_field_stats'];
+const RETIRED_PREFIX = '_retired_';
+/** Retired rows deleted per chunk. Postings rows are small (four short keys). */
+const RETIRED_DROP_BATCH = 1000;
+
+/** Rename any v2 search tables to `_retired_<name>`. Runs before `super()`. */
+function retireV2SearchTables(sql: SqlStorage): void {
+	try {
+		const present = new Set(
+			sql
+				.exec(`SELECT name FROM sqlite_schema WHERE type = 'table'`)
+				.toArray()
+				.map((row) => String(row.name)),
+		);
+		for (const name of V2_SEARCH_TABLES) {
+			// A name already taken means an earlier wake retired one; let the
+			// library drop this newer (small) copy itself.
+			if (!present.has(name) || present.has(RETIRED_PREFIX + name)) continue;
+			sql.exec(`ALTER TABLE "${name}" RENAME TO "${RETIRED_PREFIX}${name}"`);
+			console.log(`[MailboxServer] retired v2 search table ${name}`);
+		}
+	} catch (err) {
+		console.error('[MailboxServer] retiring v2 search tables failed:', err);
+	}
+}
+
+/** Tables with object/array fields, which database v3 moves out of `json`. */
+const JSON_FIELD_TABLES = Object.entries(tables)
+	.filter(([, table]) => {
+		const fields = (table as { config?: { json_fields?: unknown } }).config?.json_fields;
+		return Array.isArray(fields) && fields.length > 0;
+	})
+	.map(([name]) => name);
+
+/**
  * How long a pending_provider_op row suppresses inbound flag/folder reconcile
  * before it's considered abandoned. Generous: a provider_action can legally sit
  * behind a retrying sync job for minutes. If the write-back ultimately never
@@ -72,6 +115,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			env.WS.get(env.WS.idFromName(ws_name)) as unknown as DatabaseBroadcast & {
 				broadcast?(message: Record<string, unknown>): void;
 			};
+		retireV2SearchTables(ctx.storage.sql);
 		super(tables, getWs, ctx, env as never);
 		this.#menv = env;
 		this.#orgName = ws_name;
@@ -120,17 +164,23 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		return false;
 	}
 
-	/** Whether search-migration work (rebuild cursors or legacy tables) remains. */
+	/**
+	 * Whether the library still has migration work: a search rebuild cursor, the
+	 * v3 move of object/array fields out of `json`, or v1 legacy tables.
+	 */
 	#searchMigrationPending(): boolean {
 		const rows = this.exec(`SELECT json FROM state WHERE id = 'main' LIMIT 1`) as Array<{
 			json: string;
 		}>;
 		try {
-			const native = (JSON.parse(rows[0]?.json ?? '{}').native_search ?? {}) as Record<
-				string,
-				{ rebuild?: unknown }
-			>;
+			const state = JSON.parse(rows[0]?.json ?? '{}') as {
+				native_search?: Record<string, { rebuild?: unknown }>;
+				json_columns_moved?: Record<string, unknown>;
+			};
+			const native = state.native_search ?? {};
 			if (Object.values(native).some((entry) => entry?.rebuild !== undefined)) return true;
+			const moved = state.json_columns_moved ?? {};
+			if (JSON_FIELD_TABLES.some((name) => !moved[name])) return true;
 		} catch {
 			/* unreadable state — let the legacy-table check decide */
 		}
@@ -138,6 +188,45 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			`SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('search_index', 'search_journal')`,
 		) as unknown[];
 		return legacy.length > 0;
+	}
+
+	/** The `_retired_*` v2 search tables still waiting to be emptied. */
+	#retiredSearchTables(): string[] {
+		const names = this.exec(
+			`SELECT name FROM sqlite_schema WHERE type = 'table' AND substr(name, 1, ?) = ?`,
+			RETIRED_PREFIX.length,
+			RETIRED_PREFIX,
+		) as Array<{ name: string }>;
+		return names.map((row) => row.name);
+	}
+
+	/**
+	 * Delete one bounded chunk from the first retired table, or drop it once a
+	 * chunk comes back short (an empty table drops cheaply). Logs before the
+	 * delete: a chunk that dies on the CPU limit never reaches a later line.
+	 */
+	#dropRetiredSearchChunk(): void {
+		const table = this.#retiredSearchTables()[0];
+		if (!table) return;
+		const keys = (this.exec(`PRAGMA table_info("${table}")`) as Array<{ name: string; pk: number }>)
+			.filter((column) => column.pk > 0)
+			.sort((a, b) => a.pk - b.pk)
+			.map((column) => `"${column.name}"`)
+			.join(', ');
+		const count = (this.exec(`SELECT 1 FROM "${table}" LIMIT ${RETIRED_DROP_BATCH}`) as unknown[])
+			.length;
+		if (count >= RETIRED_DROP_BATCH && keys) {
+			console.log(`[MailboxServer] ${table} teardown: clearing ${count} rows`);
+			this.ctx.storage.transactionSync(() => {
+				this.exec(
+					`DELETE FROM "${table}" WHERE (${keys}) IN
+					 (SELECT ${keys} FROM "${table}" LIMIT ${RETIRED_DROP_BATCH})`,
+				);
+			});
+			return;
+		}
+		console.log(`[MailboxServer] ${table} teardown: dropping (${count} rows left)`);
+		this.exec(`DROP TABLE IF EXISTS "${table}"`);
 	}
 
 	/**
@@ -164,13 +253,19 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		// drain many slices per tick. The iteration cap is a second belt sized
 		// to the measured worst case (5 × ~4.6s ≈ 23s, under the 30s limit) in
 		// case timer yields ever stop advancing the clock again.
+		//
+		// The retired v2 tables are emptied only once the library's own work is
+		// done: nothing reads them, and one unit of work per iteration keeps the
+		// iteration cap's arithmetic true.
 		const started = Date.now();
 		let iterations = 0;
-		while (this.#searchMigrationPending() && Date.now() - started < 8_000 && iterations++ < 5) {
-			await super.alarm();
+		const pending = () => this.#searchMigrationPending() || this.#retiredSearchTables().length > 0;
+		while (pending() && Date.now() - started < 8_000 && iterations++ < 5) {
+			if (this.#searchMigrationPending()) await super.alarm();
+			else this.#dropRetiredSearchChunk();
 			await new Promise((resolve) => setTimeout(resolve, 1));
 		}
-		return { pending: this.#searchMigrationPending() };
+		return { pending: pending() };
 	}
 
 	#wsForEvents: () => { broadcast?(message: Record<string, unknown>): void };
