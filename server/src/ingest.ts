@@ -14,7 +14,7 @@ import {
 	type ThreadCandidate,
 	type ThreadLookups,
 } from '../../src/lib/mail/threading';
-import { toExcerpt } from '../../src/lib/mail/mime';
+import { toExcerpt, toPreview } from '../../src/lib/mail/mime';
 
 /** A source-agnostic message ready for ingest. */
 export interface NormalizedMessage {
@@ -85,6 +85,12 @@ export interface DbLike {
 	 * reconcileExistingMessage.
 	 */
 	hasPendingProviderOp?(gmail_id: string): boolean;
+	/**
+	 * True while database 3 is still moving object fields out of `json` into
+	 * their own columns. Lookups by Gmail id then also read the old location;
+	 * after it, they use only the indexed column expression.
+	 */
+	jsonColumnsMovePending?(): boolean;
 }
 
 export interface IngestResult {
@@ -187,6 +193,7 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 				// Already stripped + excerpted by the parse path; this is a
 				// byte-accurate clamp for any adapter that hands over raw text.
 				text_excerpt: msg.text_excerpt ? toExcerpt(msg.text_excerpt) : undefined,
+				preview: toPreview(msg.text_excerpt),
 				body_keys: msg.body_keys,
 				date: msg.date,
 				is_read: msg.is_read ?? !!msg.is_outbound,
@@ -237,10 +244,15 @@ export function ingestBatch(db: DbLike, batch: NormalizedMessage[]): IngestResul
 function makeLookups(db: DbLike): ThreadLookups {
 	return {
 		byGmailThreadId(gmail_thread_id) {
+			// The plain expression matches idx_message_gmail_thread_id (MailboxServer);
+			// the COALESCE form can't use it and scans every message.
 			const rows = db.exec(
-				`SELECT thread_id FROM message
-				 WHERE COALESCE(json_extract(provider_ids, '$.gmail_thread_id'),
-				                json_extract(json, '$.provider_ids.gmail_thread_id')) = ? LIMIT 1`,
+				db.jsonColumnsMovePending?.()
+					? `SELECT thread_id FROM message
+					   WHERE COALESCE(json_extract(provider_ids, '$.gmail_thread_id'),
+					                  json_extract(json, '$.provider_ids.gmail_thread_id')) = ? LIMIT 1`
+					: `SELECT thread_id FROM message
+					   WHERE json_extract(provider_ids, '$.gmail_thread_id') = ? LIMIT 1`,
 				gmail_thread_id,
 			);
 			return rows[0]?.thread_id as string | undefined;

@@ -14,7 +14,13 @@ import { tables, type Thread, type Message, type Settings } from '../../src/lib/
 import { ingestBatch, maintainContacts, type NormalizedMessage } from './ingest';
 import { applyThreadActionLocal } from './actions';
 import { runTriageJob } from './triage';
-import { parseEmail, stripQuotedText, toExcerpt } from '../../src/lib/mail/mime';
+import {
+	parseEmail,
+	PREVIEW_CHARS,
+	stripQuotedText,
+	toExcerpt,
+	toPreview,
+} from '../../src/lib/mail/mime';
 import { sanitizeEmailHtml } from '../../src/lib/mail/sanitize';
 import { messagePrefix, writeBodies, writeAttachments, buildCidMap } from './body-store';
 
@@ -123,6 +129,24 @@ const JSON_FIELD_TABLES = Object.entries(tables)
  */
 const PENDING_OP_TTL_MS = 15 * 60_000;
 
+/**
+ * Expression indexes for the Gmail-id lookups (ingest threading, inbound label
+ * changes). Those ids live inside the provider_ids JSON column, and the table
+ * `indexes` option takes plain columns only, so they are created here. The
+ * library only drops indexes it created, so these survive every wake.
+ */
+const GMAIL_ID_INDEXES = [
+	`CREATE INDEX IF NOT EXISTS idx_message_gmail_id ON message (json_extract(provider_ids, '$.gmail_id'))`,
+	`CREATE INDEX IF NOT EXISTS idx_message_gmail_thread_id ON message (json_extract(provider_ids, '$.gmail_thread_id'))`,
+];
+
+/**
+ * Rows per preview-backfill chunk. Small, because every row is caught up after
+ * the raw UPDATE (reindex, sync, broadcast), and draft rows can be large.
+ */
+const PREVIEW_BACKFILL_BATCH = 50;
+const PREVIEW_MISSING = `preview IS NULL AND text_excerpt IS NOT NULL AND text_excerpt != ''`;
+
 // The delightstack `Database.Table` type resolves to an over-narrow
 // `table_definition` when used as a generic *constraint*, so `typeof tables`
 // (correct at runtime) trips the `DatabaseServer<Config>` bound. The example app
@@ -144,6 +168,34 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		this.#menv = env;
 		this.#orgName = ws_name;
 		this.#wsForEvents = getWs;
+		try {
+			for (const statement of GMAIL_ID_INDEXES) ctx.storage.sql.exec(statement);
+		} catch (err) {
+			console.error('[MailboxServer] creating Gmail-id indexes failed:', err);
+		}
+	}
+
+	/** Set once the v3 move of object fields out of `json` is done; it never reverts. */
+	#json_columns_moved = false;
+
+	/**
+	 * Whether rows may still hold object fields (provider_ids) in the old `json`
+	 * location. Raw lookups then read both places; after it, only the indexed one.
+	 */
+	jsonColumnsMovePending(): boolean {
+		if (this.#json_columns_moved) return false;
+		const rows = this.exec(`SELECT json FROM state WHERE id = 'main' LIMIT 1`) as Array<{
+			json: string;
+		}>;
+		try {
+			const moved =
+				(JSON.parse(rows[0]?.json ?? '{}') as { json_columns_moved?: Record<string, unknown> })
+					.json_columns_moved ?? {};
+			this.#json_columns_moved = JSON_FIELD_TABLES.every((name) => moved[name]);
+		} catch {
+			return true;
+		}
+		return !this.#json_columns_moved;
 	}
 
 	/**
@@ -286,11 +338,13 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		const pending = () =>
 			this.#settingsJunkPending() ||
 			this.#searchMigrationPending() ||
-			this.#retiredSearchTables().length > 0;
+			this.#retiredSearchTables().length > 0 ||
+			this.#previewBackfillPending();
 		while (pending() && Date.now() - started < 8_000 && iterations++ < 5) {
 			if (this.#settingsJunkPending()) await this.#deleteSettingsJunkChunk();
 			else if (this.#searchMigrationPending()) await super.alarm();
-			else this.#dropRetiredSearchChunk();
+			else if (this.#retiredSearchTables().length > 0) this.#dropRetiredSearchChunk();
+			else this.#backfillPreviewChunk();
 			await new Promise((resolve) => setTimeout(resolve, 1));
 		}
 		return { pending: pending() };
@@ -351,6 +405,28 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		return (
 			(this.exec(`SELECT 1 FROM settings WHERE id != ? LIMIT 1`, SETTINGS_ID) as unknown[]).length >
 			0
+		);
+	}
+
+	/** Set once no message is missing its preview; new rows get one at ingest. */
+	#preview_backfilled = false;
+
+	/** Whether messages written before `preview` existed still lack one. */
+	#previewBackfillPending(): boolean {
+		if (this.#preview_backfilled) return false;
+		const rows = this.exec(`SELECT 1 FROM message WHERE ${PREVIEW_MISSING} LIMIT 1`) as unknown[];
+		this.#preview_backfilled = rows.length === 0;
+		return !this.#preview_backfilled;
+	}
+
+	/**
+	 * Fill `preview` for one chunk of older messages. A raw write, so the library
+	 * catches each row up (fresh updated_at), and synced clients pull the preview.
+	 */
+	#backfillPreviewChunk(): void {
+		this.exec(
+			`UPDATE message SET preview = substr(text_excerpt, 1, ${PREVIEW_CHARS})
+			 WHERE id IN (SELECT id FROM message WHERE ${PREVIEW_MISSING} LIMIT ${PREVIEW_BACKFILL_BATCH})`,
 		);
 	}
 
@@ -605,10 +681,15 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		// Skip; the write-back's own history echo re-syncs after the guard clears.
 		// (`deleted` stays unguarded: a hard deletion at Gmail is authoritative.)
 		if (payload.op === 'labels' && this.hasPendingProviderOp(payload.gmail_id)) return;
+		// The plain expression matches idx_message_gmail_id; the COALESCE form
+		// (needed only until the v3 json move finishes) scans every message.
 		const rows = this.exec(
-			`SELECT id, thread_id FROM message
-			 WHERE COALESCE(json_extract(provider_ids, '$.gmail_id'),
-			                json_extract(json, '$.provider_ids.gmail_id')) = ? LIMIT 1`,
+			this.jsonColumnsMovePending()
+				? `SELECT id, thread_id FROM message
+				   WHERE COALESCE(json_extract(provider_ids, '$.gmail_id'),
+				                  json_extract(json, '$.provider_ids.gmail_id')) = ? LIMIT 1`
+				: `SELECT id, thread_id FROM message
+				   WHERE json_extract(provider_ids, '$.gmail_id') = ? LIMIT 1`,
 			payload.gmail_id,
 		) as Array<{ id: string; thread_id: string }>;
 		if (!rows.length) return;
@@ -775,6 +856,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			}
 		}
 
+		const excerpt = toExcerpt(stripQuotedText(payload.text));
 		const msg = this.create('message', {
 			thread_id,
 			account_id: identity.account_id,
@@ -791,7 +873,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			cc: payload.cc,
 			bcc: payload.bcc,
 			subject: payload.subject,
-			text_excerpt: toExcerpt(stripQuotedText(payload.text)),
+			text_excerpt: excerpt,
+			preview: toPreview(excerpt),
 			body_keys: { html: `${prefix}/body.html`, text: `${prefix}/body.txt` },
 			date: now,
 			is_read: true,

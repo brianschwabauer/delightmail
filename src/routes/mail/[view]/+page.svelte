@@ -71,7 +71,8 @@
 	// MESSAGE-scope search: the thread index only covers subject + participants,
 	// so "find that invoice" (body text) or from:alice need the message index —
 	// text_excerpt and from_text are indexed for exactly this. Hits map back to
-	// their threads and merge into the list below.
+	// their threads and merge into the list below. text_excerpt is server-only, and
+	// naming it in `fields` is what routes this query to the server.
 	const messageHits = db.list('message', () => {
 		const active = searching && searchTerm && (parsed.term || parsed.from);
 		if (!active) return { where: { thread_id: { in: ['__none__'] } }, limit: 1 };
@@ -83,6 +84,7 @@
 		if (scopeFolder) where.folder = { eq: scopeFolder };
 		return {
 			term: parsed.term || parsed.from,
+			fields: ['subject', 'from_text', 'text_excerpt'],
 			where: Object.keys(where).length ? where : undefined,
 			limit: 200,
 		};
@@ -808,7 +810,7 @@
 		try {
 			const res = await db
 				.list('unsubscribe_task', {
-					where: { sender_domain: [domain], status: { eq: 'suggested' } },
+					where: { sender_domain: { eq: domain }, status: { eq: 'suggested' } },
 					limit: 1,
 				})
 				.load();
@@ -918,9 +920,9 @@
 			// and snippet are progressively shorter fallbacks.
 			const res = await fetch(`/api/messages/${encodeURIComponent(String(m.id))}/body?format=text`);
 			const text = res.ok ? (await res.text()).trim() : '';
-			return copyText(text || m.text_excerpt || t.snippet || null, 'body text');
+			return copyText(text || m.text_excerpt || m.preview || t.snippet || null, 'body text');
 		} catch {
-			return copyText(m.text_excerpt || t.snippet || null, 'body text');
+			return copyText(m.text_excerpt || m.preview || t.snippet || null, 'body text');
 		}
 	}
 	async function yankAttachment(t: Thread): Promise<void> {

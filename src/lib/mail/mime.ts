@@ -148,6 +148,14 @@ function utf8Bytes(s: string): number {
 	return n;
 }
 
+/** Length of `message.preview`, the reader's collapsed-message line. */
+export const PREVIEW_CHARS = 160;
+
+/** The synced preview line for an excerpt (the excerpt itself is server-only). */
+export function toPreview(excerpt: string | undefined): string | undefined {
+	return excerpt ? excerpt.slice(0, PREVIEW_CHARS) : undefined;
+}
+
 /** First ~4 KB of plain text — the only body content that lands in SQLite. */
 export function toExcerpt(text: string): string {
 	if (utf8Bytes(text) <= EXCERPT_BYTES) return text;

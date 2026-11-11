@@ -640,7 +640,7 @@
 						<div class="body-surface" class:bare={bareBodies[String(m.id)]}>
 							<MessageBody
 								messageId={String(m.id)}
-								excerpt={m.text_excerpt ?? ''}
+								excerpt={m.text_excerpt ?? m.preview ?? ''}
 								hasHtml={hasHtmlBody(m)}
 								onTier={(tier) => (bareBodies[String(m.id)] = tier !== 'design')}
 								onReady={() => markPainted(String(m.id))} />
@@ -673,7 +673,7 @@
 							</div>
 						{/if}
 					{:else}
-						<button class="snippet" onclick={() => toggle(String(m.id))}>{m.text_excerpt?.slice(0, 160) ?? ''}</button>
+						<button class="snippet" onclick={() => toggle(String(m.id))}>{m.preview ?? ''}</button>
 					{/if}
 				</section>
 			{/each}

@@ -13,8 +13,15 @@
  *   `.indexable()`; `.indexable()` (strings/numbers) only adds a SQLite index for
  *   server-side `exec()` lookups.
  * - `.sortable()` implies searchable and enables `order`.
- * - Opaque values (ids, keys) use `.keyword()`: indexed whole as an exact-match
- *   enum. Database v3 refuses `.searchable()` on fields named `*_id`/`*_ids`.
+ * - Opaque values (ids, keys, MIME types, domains) use `.keyword()`: indexed whole
+ *   as an exact-match enum, never split into words. Database v3 refuses
+ *   `.searchable()` on fields named `*_id`/`*_ids`.
+ * - `.carried()` syncs a field the UI renders but nobody searches, with no index
+ *   rows. `.searchable().serverOnly()` indexes a field without syncing it.
+ * - Only text fields write search-index rows (one per word per row). Enums,
+ *   booleans, numbers, keywords and FKs are filters, answered from the table's
+ *   own columns, so they cost almost nothing in the index. They do scan the table
+ *   on the server unless an SQLite index covers them: see each table's `indexes`.
  * - Date-like sortable fields are epoch-ms numbers so cursor pagination is scalar.
  * - Arbitrary-key maps → arrays of typed pairs; opaque editor JSON → JSON string.
  */
@@ -119,12 +126,11 @@ export const threadTable = Database.table('thread', (s) => ({
 	id: s.primaryKey(),
 	subject: s.string().searchable(),
 	// Re:/Fwd:/[list]-stripped, lowercased subject — the threading match key.
-	subject_normalized: s.string().optional().indexable(),
-	// searchable so it enters the search index: sparse docs (client index + server
-	// search hits) are index projections, so a non-indexed snippet NEVER reached
-	// the thread list — rows rendered without preview text. Searching snippets is
-	// a bonus (matches how Gmail treats them).
-	snippet: s.string().searchable().optional(),
+	subject_normalized: s.string().optional(),
+	// carried: the thread list renders it from the synced (sparse) doc. Not indexed:
+	// it is the opening of the latest message, whose words message.text_excerpt
+	// already indexes, and it changes on every new message.
+	snippet: s.string().carried().optional(),
 	participants: s.array(s.object(addressShape(s))).optional(),
 	participant_text: s.string().searchable().optional(),
 	// Ids are exact-match keywords: full text would split each into fragments.
@@ -144,7 +150,14 @@ export const threadTable = Database.table('thread', (s) => ({
 	gmail_thread_ids: s
 		.array(s.object({ account_id: s.string(), thread_id: s.string() }))
 		.optional(),
-}));
+}), {
+	indexes: [
+		// Folder views (server-side lists): WHERE folder = ? ORDER BY last_message_at DESC.
+		{ columns: ['folder', { column: 'last_message_at', direction: 'DESC' }] },
+		// Ingest's subject threading: WHERE subject_normalized = ? ORDER BY last_message_at DESC.
+		{ columns: ['subject_normalized', { column: 'last_message_at', direction: 'DESC' }] },
+	],
+});
 
 // ---------------------------------------------------------------------------
 // message — one email
@@ -181,8 +194,13 @@ export const messageTable = Database.table('message', (s) => ({
 	bcc: s.array(s.object(addressShape(s))).optional(),
 	reply_to: s.array(s.object(addressShape(s))).optional(),
 	subject: s.string().searchable().optional(),
-	// First ~4KB of extracted plain text (quoted reply chains stripped) — the ONLY body content in SQLite.
-	text_excerpt: s.string().searchable().optional(),
+	// First ~4KB of extracted plain text (quoted reply chains stripped) — the ONLY body
+	// content in SQLite. Server-only: body search asks the server, so the excerpt
+	// stays off every device (bodies themselves download separately).
+	text_excerpt: s.string().searchable().serverOnly().optional(),
+	// The excerpt's first 160 characters, synced for the reader's collapsed-message
+	// line. Set at ingest; older rows are backfilled by MailboxServer.migrationTick.
+	preview: s.string().carried().optional(),
 	body_keys: s
 		.object({
 			raw: s.string().optional(),
@@ -220,7 +238,16 @@ export const messageTable = Database.table('message', (s) => ({
 			{ value: 'failed', label: 'Failed' },
 		])
 		.optional(),
-}));
+}), {
+	indexes: [
+		// The open thread (reader, ingest, actions) and ON DELETE CASCADE from thread.
+		{ columns: ['thread_id', 'date'] },
+		// Triage and push: WHERE folder = 'inbox' ORDER BY date DESC.
+		{ columns: ['folder', { column: 'date', direction: 'DESC' }] },
+	],
+});
+// Gmail-id lookups read inside the provider_ids JSON column; their expression
+// indexes are created by MailboxServer (the table `indexes` take columns only).
 
 // ---------------------------------------------------------------------------
 // attachment
@@ -234,12 +261,15 @@ export const attachmentTable = Database.table('attachment', (s) => ({
 	filename: s.string().searchable().optional(),
 	// searchable/sortable so the reading pane's attachment chips (icon by mime,
 	// human size) render straight from the local index — instant and offline.
-	mime_type: s.string().searchable().optional(),
+	mime_type: s.string().keyword().optional(),
 	size_bytes: s.number().sortable().default(0),
 	r2_key: s.string().optional(),
 	content_id: s.string().optional(),
 	image_id: s.string().optional(),
-}));
+}), {
+	// The reader's chips and ON DELETE CASCADE from message.
+	indexes: [{ columns: ['message_id'] }],
+});
 
 // ---------------------------------------------------------------------------
 // label — user labels, unified across accounts
@@ -259,7 +289,8 @@ export const labelTable = Database.table('label', (s) => ({
 // ---------------------------------------------------------------------------
 export const contactTable = Database.table('contact', (s) => ({
 	id: s.primaryKey(),
-	email: s.string().email().searchable().indexable().unique(),
+	// unique() already indexes it; indexable() would add a second, identical index.
+	email: s.string().email().searchable().unique(),
 	name: s.string().searchable().optional(),
 	// sortable: the compose autocomplete's empty-query suggestions rank by it.
 	send_count: s.number().sortable().default(0),
@@ -318,7 +349,10 @@ export const aiReviewTable = Database.table('ai_review', (s) => ({
 	overridden: s.boolean().default(false),
 	latency_ms: s.number().optional(),
 	tokens: s.number().optional(),
-}));
+}), {
+	// Triage's "no review yet" anti-join and ON DELETE CASCADE from message.
+	indexes: [{ columns: ['message_id'] }],
+});
 
 // ---------------------------------------------------------------------------
 // unsubscribe_task — unsubscribe pipeline state
@@ -326,7 +360,8 @@ export const aiReviewTable = Database.table('ai_review', (s) => ({
 export const unsubscribeTaskTable = Database.table('unsubscribe_task', (s) => ({
 	id: s.primaryKey(),
 	message_id: s.string().optional(),
-	sender_domain: s.string().searchable(),
+	// keyword: matched whole (where: { sender_domain }), never searched as words.
+	sender_domain: s.string().keyword(),
 	method: s.enum([
 		{ value: 'http_oneclick', label: 'One-click (HTTP)' },
 		{ value: 'mailto', label: 'Email' },
@@ -350,7 +385,7 @@ export const unsubscribeTaskTable = Database.table('unsubscribe_task', (s) => ({
 // ---------------------------------------------------------------------------
 export const pushSubscriptionTable = Database.table('push_subscription', (s) => ({
 	id: s.primaryKey(),
-	endpoint: s.string().indexable().unique(),
+	endpoint: s.string().unique(),
 	keys: s.object({ p256dh: s.string(), auth: s.string() }),
 	device_label: s.string().optional(),
 	failed_count: s.number().default(0),
