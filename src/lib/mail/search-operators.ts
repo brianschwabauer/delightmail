@@ -24,6 +24,8 @@ export interface ParsedSearch {
 const FOLDER_VALUES = new Set([
 	'inbox',
 	'quarantine',
+	'notifications',
+	'pitches',
 	'sent',
 	'drafts',
 	'archive',

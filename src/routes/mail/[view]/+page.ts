@@ -4,6 +4,8 @@ import type { PageLoad } from './$types';
 const VIEWS = new Set([
 	'inbox',
 	'filtered',
+	'notifications',
+	'pitches',
 	'starred',
 	'snoozed',
 	'sent',

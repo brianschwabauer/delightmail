@@ -39,6 +39,8 @@
 
 	const ALL_FOLDERS: Array<{ id: string; label: string; icon: IconName }> = [
 		{ id: 'inbox', label: 'Inbox', icon: 'inbox' },
+		{ id: 'notifications', label: 'Notifications', icon: 'bell' },
+		{ id: 'pitches', label: 'Pitches', icon: 'megaphone' },
 		{ id: 'filtered', label: 'AI Filtered', icon: 'sparkles' },
 		{ id: 'starred', label: 'Starred', icon: 'star' },
 		{ id: 'snoozed', label: 'Snoozed', icon: 'clock' },

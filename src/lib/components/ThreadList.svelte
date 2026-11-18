@@ -58,6 +58,8 @@
 	const EMPTY_COPY: Record<string, { title: string; sub: string }> = {
 		inbox: { title: 'Inbox zero', sub: 'Nothing needs you.' },
 		filtered: { title: 'The filter is holding', sub: 'Nothing quarantined for review.' },
+		notifications: { title: 'All quiet', sub: 'No alerts, builds or bot mail right now.' },
+		pitches: { title: 'Nobody selling', sub: 'Cold outreach lands here, not in your inbox.' },
 		starred: { title: 'No stars', sub: 'Press s on anything worth keeping close.' },
 		snoozed: { title: 'Nothing sleeping', sub: 'b snoozes a thread until it matters.' },
 		sent: { title: 'Nothing sent yet', sub: 'c starts a message.' },

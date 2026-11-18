@@ -201,6 +201,8 @@
 			{ keys: 'c', description: 'Compose', group: 'Global', context: 'global', when: free, handler: () => openCompose() },
 			{ keys: 'g i', description: 'Go to Inbox', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/inbox') },
 			{ keys: 'g f', description: 'Go to AI Filtered', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/filtered') },
+			{ keys: 'g n', description: 'Go to Notifications', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/notifications') },
+			{ keys: 'g p', description: 'Go to Pitches', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/pitches') },
 			{ keys: 'g s', description: 'Go to Starred', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/starred') },
 			{ keys: 'g t', description: 'Go to Sent', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/sent') },
 			{ keys: 'g d', description: 'Go to Drafts', group: 'Go to', context: 'global', when: free, handler: () => goto('/mail/drafts') },

@@ -28,6 +28,9 @@ export function viewToQuery(
 			return { ...base, where: { ...folderIs('inbox'), ...account } };
 		case 'filtered':
 			return { ...base, where: { ...folderIs('quarantine'), ...account } };
+		case 'notifications':
+		case 'pitches':
+			return { ...base, where: { ...folderIs(view), ...account } };
 		case 'starred':
 			return { ...base, where: { starred: true, ...account } };
 		case 'snoozed':
@@ -64,6 +67,8 @@ export function folderOfView(view: string): string | undefined {
 	const map: Record<string, string> = {
 		inbox: 'inbox',
 		filtered: 'quarantine',
+		notifications: 'notifications',
+		pitches: 'pitches',
 		sent: 'sent',
 		drafts: 'drafts',
 		archive: 'archive',
@@ -79,6 +84,8 @@ export function viewTitle(view: string): string {
 	const map: Record<string, string> = {
 		inbox: 'Inbox',
 		filtered: 'AI Filtered',
+		notifications: 'Notifications',
+		pitches: 'Pitches',
 		starred: 'Starred',
 		snoozed: 'Snoozed',
 		sent: 'Sent',

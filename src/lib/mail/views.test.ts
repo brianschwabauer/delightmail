@@ -12,6 +12,11 @@ describe('viewToQuery', () => {
 		expect(viewToQuery('filtered').where).toEqual({ folder: { eq: 'quarantine' } });
 	});
 
+	it('maps notifications and pitches to their own folders', () => {
+		expect(viewToQuery('notifications').where).toEqual({ folder: { eq: 'notifications' } });
+		expect(viewToQuery('pitches').where).toEqual({ folder: { eq: 'pitches' } });
+	});
+
 	it('maps starred to a boolean filter', () => {
 		expect(viewToQuery('starred').where).toEqual({ starred: true });
 	});

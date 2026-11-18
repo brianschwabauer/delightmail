@@ -204,19 +204,22 @@
 		return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
-	// --- AI triage receipt (quarantined threads) ---
+	// --- AI triage receipt (threads triage filed out of the inbox) ---
+	const FILED_FOLDERS = new Set(['quarantine', 'notifications', 'pitches']);
 	// The audit row is the trust loop: the quarantine must say WHY something is
 	// here, and offer the one-key way out ("never filter this sender").
 	interface AiVerdict {
 		category?: string;
 		summary?: string;
 		confidence?: number;
+		/** The ai_review's model: a model id, or rule/builtin/inherit for code decisions. */
+		model?: string;
 	}
 	let aiReview = $state<AiVerdict | null>(null);
 	let reviewThread = $state<string | null>(null);
 	$effect(() => {
 		const tid = threadId;
-		if (!tid || folder !== 'quarantine' || docs.length === 0) {
+		if (!tid || !FILED_FOLDERS.has(folder ?? '') || docs.length === 0) {
 			if (untrack(() => aiReview)) aiReview = null;
 			return;
 		}
@@ -235,9 +238,12 @@
 					sparse: false,
 					limit: 10,
 				} as never)
-				.load()) as unknown as { hits?: Array<{ document?: { verdict?: AiVerdict } }> };
+				.load()) as unknown as {
+				hits?: Array<{ document?: { verdict?: AiVerdict; model?: string } }>;
+			};
 			const rows = (res.hits ?? []).map((h) => h.document).filter(Boolean);
-			aiReview = rows.length ? (rows[rows.length - 1]?.verdict ?? null) : null;
+			const last = rows[rows.length - 1];
+			aiReview = last?.verdict ? { ...last.verdict, model: last.model } : null;
 		} catch {
 			aiReview = null;
 		}
@@ -601,14 +607,18 @@
 			</div>
 		</header>
 
-		{#if folder === 'quarantine' && showMessages}
+		{#if FILED_FOLDERS.has(folder ?? '') && showMessages}
 			<div class="triage-note" role="note">
 				<Icon name="shield-check" size={15} />
 				<span class="tn-text">
-					AI filed this{aiReview?.category ? ` as ${aiReview.category}` : ''}{aiReview?.summary
-						? ` — ${aiReview.summary}`
-						: ''}
-					{#if aiReview?.confidence != null}
+					{#if aiReview && ['rule', 'builtin', 'inherit'].includes(aiReview.model ?? '')}
+						Filed by rule{aiReview.summary ? ` — ${aiReview.summary}` : ''}
+					{:else}
+						AI filed this{aiReview?.category ? ` as ${aiReview.category}` : ''}{aiReview?.summary
+							? ` — ${aiReview.summary}`
+							: ''}
+					{/if}
+					{#if aiReview?.confidence != null && !['rule', 'builtin', 'inherit'].includes(aiReview.model ?? '')}
 						<span class="tn-conf"
 							>{Math.round(
 								aiReview.confidence <= 1 ? aiReview.confidence * 100 : aiReview.confidence,
