@@ -222,15 +222,32 @@
 		}
 	});
 
-	// Snap the cursor onto a deep-linked thread once the list is available, so the
-	// instant preview header (driven by the cursor) matches the opened thread.
+	// Snap the cursor onto a deep-linked thread (a reload, or a notification tap)
+	// once the list has it, so the highlighted row (and the list's scroll, which
+	// follows the cursor) matches the thread the reader shows. The first rows to
+	// arrive can be a partial or stale local page, so keep looking until the
+	// query and the initial sync have both settled before giving up on it.
 	$effect(() => {
 		if (!deepLinkPending || !docs.length) return;
 		const id = openId;
+		const settled =
+			results.status !== 'loading' && results.status !== 'refreshing' && db.synced;
 		untrack(() => {
 			const i = docs.findIndex((d) => String(d.id) === id);
-			if (i >= 0) cursor = i;
+			if (i >= 0) {
+				cursor = i;
+				deepLinkPending = false;
+				return;
+			}
+			if (!settled) return;
 			deepLinkPending = false;
+			// The thread has left this view (filed by triage, archived elsewhere,
+			// deleted). On desktop, open the newest thread instead of showing one
+			// the list can't point at; on mobile the reader is the whole screen and
+			// the list isn't visible, so the deep-linked thread stays open.
+			if (isMobile.current) return;
+			cursor = 0;
+			commit(String(docs[0].id));
 		});
 	});
 
