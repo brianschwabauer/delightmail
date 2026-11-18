@@ -110,6 +110,41 @@ const RETIRED_PREFIX = '_retired_';
 /** Retired rows deleted per chunk. Postings rows are small (four short keys). */
 const RETIRED_DROP_BATCH = 1000;
 
+/**
+ * The org id this mailbox belongs to: the name it is addressed by (the WS room
+ * clients join, and the R2 key prefix).
+ *
+ * `ctx.id.name` is only set when the wake came from someone holding the name.
+ * An alarm scheduled before 2026-03-15, or rescheduled from inside such an
+ * alarm, carries no name, so a mailbox woken by its job queue saw `undefined`
+ * and fell back to the hex id: every change broadcast for that instance's
+ * lifetime went to an empty WS room, and open tabs never heard about triage
+ * moves or synced mail until they reloaded from scratch. So the name is saved
+ * whenever it is known and read back when it isn't. Runs before `super()`.
+ */
+function resolveOrgName(ctx: DurableObjectState): string {
+	const sql = ctx.storage.sql;
+	const named = (ctx.id as unknown as { name?: string }).name;
+	try {
+		sql.exec(`CREATE TABLE IF NOT EXISTS mailbox_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+		if (named) {
+			sql.exec(
+				`INSERT INTO mailbox_meta (key, value) VALUES ('org_name', ?)
+				 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+				named,
+			);
+			return named;
+		}
+		const row = sql.exec(`SELECT value FROM mailbox_meta WHERE key = 'org_name'`).toArray()[0];
+		if (row?.value) return String(row.value);
+	} catch (err) {
+		console.error('[MailboxServer] resolving the org name failed:', err);
+	}
+	if (named) return named;
+	console.warn('[MailboxServer] woke without a name and none is stored; broadcasts will miss clients');
+	return ctx.id.toString();
+}
+
 /** Rename any v2 search tables to `_retired_<name>`. Runs before `super()`. */
 function retireV2SearchTables(sql: SqlStorage): void {
 	try {
@@ -177,7 +212,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 
 	constructor(ctx: DurableObjectState, env: MailboxEnv) {
 		// The WS DO shares the same name (the org_id) that clients connect to.
-		const ws_name = (ctx.id as unknown as { name?: string }).name ?? ctx.id.toString();
+		const ws_name = resolveOrgName(ctx);
 		const getWs = () =>
 			env.WS.get(env.WS.idFromName(ws_name)) as unknown as DatabaseBroadcast & {
 				broadcast?(message: Record<string, unknown>): void;
@@ -187,6 +222,14 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		this.#menv = env;
 		this.#orgName = ws_name;
 		this.#wsForEvents = getWs;
+		// Re-arm a pending alarm from a wake that knows the name, so the alarm
+		// carries it from now on (an alarm set inside a nameless alarm never would).
+		if ((ctx.id as unknown as { name?: string }).name) {
+			void ctx.storage
+				.getAlarm()
+				.then((at) => (at != null ? ctx.storage.setAlarm(at) : undefined))
+				.catch(() => {});
+		}
 		try {
 			for (const statement of GMAIL_ID_INDEXES) ctx.storage.sql.exec(statement);
 		} catch (err) {
