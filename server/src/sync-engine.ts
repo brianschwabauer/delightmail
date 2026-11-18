@@ -1088,6 +1088,11 @@ export class SyncEngine extends DurableObject<SyncEnv> {
 				await gmail.modify(id, ['INBOX'], ['SPAM']);
 				return;
 			case 'archive':
+			// Local-only folders: Gmail's copy just leaves the inbox.
+			case 'snoozed':
+			case 'quarantine':
+			case 'notifications':
+			case 'pitches':
 				await gmail.untrash(id);
 				await gmail.modify(id, [], ['INBOX', 'SPAM']);
 				return;

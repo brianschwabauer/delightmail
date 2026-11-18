@@ -298,6 +298,9 @@ function makeLookups(db: DbLike): ThreadLookups {
  * reappear ~10s after archiving, then vanish again" jank). Local intent wins
  * until the SyncEngine confirms the provider write.
  */
+/** Local-only folders that Gmail represents as plain archive. */
+const PARKED_FOLDERS = new Set(['snoozed', 'quarantine', 'notifications', 'pitches']);
+
 function reconcileExistingMessage(
 	db: DbLike,
 	existing: { id: string; thread_id: string },
@@ -327,7 +330,11 @@ function reconcileExistingMessage(
 	const patch: Record<string, unknown> = {};
 	if (!!cur.is_read !== nextRead) patch.is_read = nextRead;
 	if (!!cur.is_starred !== nextStarred) patch.is_starred = nextStarred;
-	if (cur.folder !== nextFolder) patch.folder = nextFolder;
+	// Gmail has no Notifications/Pitches/Snoozed/AI Filtered: those archive
+	// there, so Gmail reporting "archived" for them is agreement, not a move.
+	if (cur.folder !== nextFolder && !(nextFolder === 'archive' && PARKED_FOLDERS.has(cur.folder ?? ''))) {
+		patch.folder = nextFolder;
+	}
 	if (!Object.keys(patch).length) return;
 
 	try {
@@ -403,7 +410,9 @@ function updateThreadCounters(
 		thread.folder === 'snoozed' ||
 		thread.folder === 'trash' ||
 		thread.folder === 'spam' ||
-		thread.folder === 'quarantine';
+		thread.folder === 'quarantine' ||
+		thread.folder === 'notifications' ||
+		thread.folder === 'pitches';
 
 	// A new inbound message promotes a parked thread back to inbox — a reply is
 	// exactly what a snooze is waiting for.

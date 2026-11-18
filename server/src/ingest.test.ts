@@ -158,6 +158,22 @@ describe('ingestBatch', () => {
 		expect(t.folder).toBe('archive');
 	});
 
+	it('treats Gmail "archived" as agreement for local-only folders (Notifications, Pitches, Snoozed)', () => {
+		for (const folder of ['notifications', 'pitches', 'snoozed', 'quarantine']) {
+			const { db, messages } = fakeDb();
+			const id = `<parked-${folder}@x>`;
+			ingestBatch(db, [msg({ rfc822_message_id: id, account_id: 'acc-1', folder: 'inbox' })]);
+			const m = Object.values(messages)[0];
+			db.update('message', m.id as string, { folder });
+			// Gmail's copy was archived by the provider write-back; a re-list sees that.
+			ingestBatch(db, [msg({ rfc822_message_id: id, account_id: 'acc-1', folder: 'archive' })]);
+			expect((messages[m.id as string] as { folder?: string }).folder).toBe(folder);
+			// But Gmail moving it back to the inbox is a real move.
+			ingestBatch(db, [msg({ rfc822_message_id: id, account_id: 'acc-1', folder: 'inbox' })]);
+			expect((messages[m.id as string] as { folder?: string }).folder).toBe('inbox');
+		}
+	});
+
 	it('does NOT reconcile flags/folder while a provider write-back is pending for the message', () => {
 		const { db, threads, messages } = fakeDb();
 		ingestBatch(db, [
