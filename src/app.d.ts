@@ -61,6 +61,7 @@ declare global {
 			MAIL_FROM?: string;
 			GOOGLE_CLIENT_ID?: string;
 			GOOGLE_CLIENT_SECRET?: string;
+			ANTHROPIC_API_KEY?: string;
 			AI_GATEWAY_ACCOUNT_ID?: string;
 			AI_GATEWAY_NAME?: string;
 			AI_GATEWAY_TOKEN?: string;

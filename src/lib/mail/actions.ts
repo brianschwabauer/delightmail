@@ -24,7 +24,9 @@ export type Folder =
 	| 'sent'
 	| 'drafts'
 	| 'snoozed'
-	| 'quarantine';
+	| 'quarantine'
+	| 'notifications'
+	| 'pitches';
 
 export interface ThreadStateForAction {
 	folder: Folder;

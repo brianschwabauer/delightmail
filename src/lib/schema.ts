@@ -39,6 +39,8 @@ const FOLDERS = [
 	{ value: 'drafts', label: 'Drafts' },
 	{ value: 'snoozed', label: 'Snoozed' },
 	{ value: 'quarantine', label: 'AI Filtered' },
+	{ value: 'notifications', label: 'Notifications' },
+	{ value: 'pitches', label: 'Pitches' },
 ];
 
 const CATEGORIES = [
@@ -49,6 +51,8 @@ const CATEGORIES = [
 	{ value: 'newsletters', label: 'Newsletters' },
 	{ value: 'receipts', label: 'Receipts' },
 	{ value: 'forums', label: 'Forums' },
+	{ value: 'notifications', label: 'Notifications' },
+	{ value: 'pitches', label: 'Pitches' },
 ];
 
 /** A `{name,email}` address pair used across from/to/cc/participants. */
@@ -308,9 +312,14 @@ export const senderRuleTable = Database.table('sender_rule', (s) => ({
 		from_domain: s.string().optional(),
 		from_address: s.string().optional(),
 		list_id: s.string().optional(),
+		// Subject pattern: plain text matches as a substring, `*` is a wildcard
+		// over the whole subject. Case-insensitive. ANDed with the sender fields.
+		subject: s.string().optional(),
 	}),
 	action: s.enum([
 		{ value: 'inbox', label: 'Keep in Inbox' },
+		{ value: 'notifications', label: 'Notifications' },
+		{ value: 'pitches', label: 'Pitches' },
 		{ value: 'archive', label: 'Archive' },
 		{ value: 'trash', label: 'Trash' },
 		{ value: 'spam', label: 'Spam' },
@@ -349,6 +358,9 @@ export const aiReviewTable = Database.table('ai_review', (s) => ({
 	overridden: s.boolean().default(false),
 	latency_ms: s.number().optional(),
 	tokens: s.number().optional(),
+	input_tokens: s.number().optional(),
+	output_tokens: s.number().optional(),
+	cost_usd: s.number().optional(),
 }), {
 	// Triage's "no review yet" anti-join and ON DELETE CASCADE from message.
 	indexes: [{ columns: ['message_id'] }],
@@ -437,6 +449,12 @@ export const settingsTable = Database.table('settings', (s) => ({
 	timezone: s.string().optional(),
 	// Play a subtle synthesized tick on archive/trash actions.
 	sounds: s.boolean().default(false),
+	// Days before mail filed in Notifications / Pitches moves to trash. Unset =
+	// the default (30 / 90), 0 = never. Optional on purpose: the library adds a
+	// new number column as NOT NULL DEFAULT 0 whatever the schema default says,
+	// which would turn every existing mailbox's retention off.
+	notifications_retention_days: s.number().optional(),
+	pitches_retention_days: s.number().optional(),
 }));
 
 // ---------------------------------------------------------------------------

@@ -149,7 +149,8 @@ you explicitly set `SIGNUPS_ENABLED`.
 | `MAIL_FROM` | ✓ | Sender for magic links (via the Email binding or an SMTP relay) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | – | Gmail OAuth (omit → Gmail connect is hidden) |
 | `GMAIL_PUBSUB_TOPIC` / `GMAIL_PUSH_AUDIENCE` / `GMAIL_PUSH_SA_EMAIL` | – | Gmail push (omit → poll every `GMAIL_POLL_SECONDS`, default 90) |
-| `AI_GATEWAY_NAME` / `AI_TRIAGE_ROUTE` | – | AI triage via a Cloudflare AI Gateway dynamic route |
+| `ANTHROPIC_API_KEY` | – | AI triage with Claude (server worker) |
+| `AI_GATEWAY_NAME` / `AI_TRIAGE_ROUTE` | – | AI triage via a Cloudflare AI Gateway dynamic route, when no Anthropic key is set |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | – | Web push |
 | `SMTP_RELAY_HOST` / `_PORT` / `_USER` / `_PASS` | – | Sending without Cloudflare Email Service |
 | `SEND_DAILY_LIMIT` / `IMAGE_PROXY` / `GMAIL_FULL_SCOPE` | – | Tunables (defaults: 100 / off / off) |

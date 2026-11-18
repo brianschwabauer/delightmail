@@ -25,7 +25,13 @@ import {
 import { handleOrgConsolidate } from './orgs';
 import { handleThreadActions } from './thread-actions';
 import { handleSend, handleUndoSend, handleSaveDraft, handleDeleteDraft } from './send';
-import { handleTriageTest, handleUnsubscribe, handleUnsubscribeBulk } from './triage-endpoints';
+import {
+	handleTriageTest,
+	handleTriageUsage,
+	handleRuleSuggestions,
+	handleUnsubscribe,
+	handleUnsubscribeBulk,
+} from './triage-endpoints';
 import { handleVapidKey, handlePushSubscribe, handlePushUnsubscribe } from './push';
 import { handleDevSeed } from './dev-seed';
 import { isDevEnv } from './is-dev';
@@ -144,6 +150,10 @@ async function route(event: RequestEvent): Promise<Response> {
 	// --- AI triage + unsubscribe (P5) ---
 	if (pathname === '/api/triage/test' && method === 'POST') {
 		return handleTriageTest(event);
+	}
+	if (pathname === '/api/triage/usage' && method === 'GET') return handleTriageUsage(event);
+	if (pathname === '/api/triage/rule-suggestions' && method === 'GET') {
+		return handleRuleSuggestions(event);
 	}
 	if (parts[1] === 'unsubscribe' && parts[2] === 'bulk' && method === 'POST') {
 		return handleUnsubscribeBulk(event);

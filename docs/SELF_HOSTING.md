@@ -102,11 +102,11 @@ Add the domain to **Email Routing**, enable **catch-all → Send to Worker →
 `delightmail-server`**. Register it in Settings → Accounts. For sending, onboard
 the domain to **Email Service**, or point it at any SMTP relay via `SMTP_RELAY_*`.
 
-### AI triage (AI Gateway) — `docs/providers/ai.md`
+### AI triage — `docs/providers/ai.md`
 
-Create an AI Gateway with a **dynamic route** named `email-triage`. Set
-`AI_GATEWAY_NAME` (+ `AI_TRIAGE_ROUTE=dynamic/email-triage`). Pick the actual
-model in the dashboard — swap it anytime with no deploy.
+Set `ANTHROPIC_API_KEY` on the server worker. Without it, triage can use a
+Cloudflare AI Gateway dynamic route instead (`AI_GATEWAY_NAME` +
+`AI_TRIAGE_ROUTE`).
 
 ### Web push — `docs/providers/push.md`
 

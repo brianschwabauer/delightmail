@@ -17,6 +17,21 @@ export async function handleTriageTest(event: RequestEvent): Promise<Response> {
 	return Response.json({ results });
 }
 
+/** GET /api/triage/usage?days=30 — what triage has cost, per model. */
+export async function handleTriageUsage(event: RequestEvent): Promise<Response> {
+	const db = event.locals.db;
+	if (!db) return DelightError.badRequest('No mailbox').toResponse();
+	const days = Number(event.url.searchParams.get('days') ?? 30) || 30;
+	return Response.json(await db.triageUsage(days));
+}
+
+/** GET /api/triage/rule-suggestions — rules learned from manual filing. */
+export async function handleRuleSuggestions(event: RequestEvent): Promise<Response> {
+	const db = event.locals.db;
+	if (!db) return DelightError.badRequest('No mailbox').toResponse();
+	return Response.json({ suggestions: await db.ruleSuggestions() });
+}
+
 interface UnsubTask {
 	id: string;
 	method?: string;

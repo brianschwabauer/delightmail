@@ -30,7 +30,10 @@ MAIL_FROM="mail@example.com"
 # GMAIL_PUSH_SA_EMAIL="pubsub@xxx.iam.gserviceaccount.com"
 # GMAIL_POLL_SECONDS="90"
 
-# AI Gateway triage (omit → triage disabled)
+# AI triage with Claude (omit both this and the gateway → triage disabled)
+# ANTHROPIC_API_KEY=""
+
+# AI triage via an AI Gateway dynamic route (used only without ANTHROPIC_API_KEY)
 # AI_GATEWAY_ACCOUNT_ID=""
 # AI_GATEWAY_NAME="delightmail"
 # AI_GATEWAY_TOKEN=""

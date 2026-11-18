@@ -13,7 +13,20 @@ import type { WebsocketServer } from '@delightstack/websocket/worker';
 import { tables, type Thread, type Message, type Settings } from '../../src/lib/schema';
 import { ingestBatch, maintainContacts, type NormalizedMessage } from './ingest';
 import { applyThreadActionLocal } from './actions';
-import { runTriageJob } from './triage';
+import {
+	runTriageJob,
+	decide,
+	loadTriageContext,
+	triageConfigured,
+	type TriageEnv,
+} from './triage';
+import {
+	subjectTemplate,
+	matchSenderRule,
+	BUILTIN_RULES,
+	DEFAULT_RETENTION_DAYS,
+	type SenderRule,
+} from '../../src/lib/mail/triage';
 import {
 	parseEmail,
 	PREVIEW_CHARS,
@@ -32,6 +45,7 @@ export interface MailboxEnv {
 	R2: R2Bucket;
 	KV: KVNamespace;
 	AI: unknown;
+	ANTHROPIC_API_KEY?: string;
 	AI_GATEWAY_ACCOUNT_ID?: string;
 	AI_GATEWAY_NAME?: string;
 	AI_GATEWAY_TOKEN?: string;
@@ -64,6 +78,8 @@ const SETTINGS_DEFAULTS: Record<string, string | number | null> = {
 	quiet_hours: null,
 	timezone: null,
 	sounds: 0,
+	notifications_retention_days: null,
+	pitches_retention_days: null,
 };
 const SETTINGS_BOOLEANS = new Set(['triage_enabled', 'auto_unsubscribe', 'sounds']);
 /** Duplicate settings rows deleted per unit of `migrationTick()` work. */
@@ -75,7 +91,10 @@ const MAX_JOB_ATTEMPTS = 7;
 function retryBackoffMs(attempts: number): number {
 	return Math.min(16 * 60_000, 30_000 * 2 ** (attempts - 1));
 }
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+/** Threads moved to trash per run of the retention job. */
+const EXPIRE_BATCH = 200;
 
 /**
  * The database v2 search engine's tables. Database v3 indexes into new tables
@@ -521,8 +540,9 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				}
 			}
 		}
-		// Ensure the weekly digest is scheduled (safety net).
+		// Ensure the weekly digest and the daily retention sweep are scheduled.
 		await this.#ensureDigestScheduled();
+		await this.#ensureExpireScheduled();
 		return { ingested: result.ingested, skipped: result.skipped };
 	}
 
@@ -1207,18 +1227,12 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	// Triage preview — run the prompt against recent mail without acting.
 	// -------------------------------------------------------------------------
 	async triageTest(prompt: string, count: number): Promise<unknown[]> {
-		if (!this.#menv.AI || !this.#menv.AI_GATEWAY_NAME) {
-			return [{ error: 'AI Gateway is not configured on this instance.' }];
+		const env = this.#triageEnv();
+		if (!triageConfigured(env)) {
+			return [{ error: 'No AI key is configured on this instance (ANTHROPIC_API_KEY).' }];
 		}
-		const { createAiGateway } = await import('@delightstack/ai/server');
-		const { buildTriageMessages, parseVerdict, applyGuardrails } =
-			await import('../../src/lib/mail/triage');
-		const gateway = createAiGateway({
-			ai: this.#menv.AI as never,
-			gateway: this.#menv.AI_GATEWAY_NAME,
-		});
-		const model = this.#menv.AI_TRIAGE_ROUTE ?? 'dynamic/email-triage';
-
+		const settings = await this.ensureSettings();
+		const ctx = loadTriageContext(this as never, env, settings as never, prompt);
 		const rows = this.exec(
 			`SELECT id FROM message WHERE is_outbound = 0 AND folder = 'inbox' ORDER BY date DESC LIMIT ?`,
 			Math.min(20, Math.max(1, count)),
@@ -1232,39 +1246,164 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			} catch {
 				continue;
 			}
-			const from = msg.from as { email?: string; name?: string } | undefined;
-			const headers = (msg.headers_subset ?? {}) as Record<string, string>;
 			try {
-				const messages = buildTriageMessages(prompt, {
-					from: from?.email,
-					subject: msg.subject ?? undefined,
-					has_unsubscribe: !!headers.list_unsubscribe,
-					text: msg.text_excerpt ?? '',
-					known_correspondent_domains: [],
-				});
-				const result = await gateway.complete({
-					messages,
-					model,
-					temperature: 0,
-					max_tokens: 200,
-					response_format: { type: 'json_object' },
-				} as never);
-				const json = safeParse(
-					result.content.slice(result.content.indexOf('{'), result.content.lastIndexOf('}') + 1),
-				);
-				const { verdict } = parseVerdict(json);
-				const guarded = applyGuardrails(verdict, { is_known_correspondent: false });
+				const d = await decide(ctx, id, msg as unknown as Record<string, unknown>);
 				out.push({
 					subject: msg.subject,
-					from: from?.email,
-					verdict: guarded.verdict,
-					overridden: guarded.overridden,
+					from: msg.from?.email,
+					verdict: d.verdict,
+					folder: d.folder,
+					stage: d.stage,
+					model: d.model,
+					cost_usd: d.cost_usd,
+					overridden: d.overridden,
 				});
 			} catch (err) {
 				out.push({ subject: msg.subject, error: (err as Error).message });
 			}
 		}
 		return out;
+	}
+
+	#triageEnv(): TriageEnv {
+		return {
+			ANTHROPIC_API_KEY: this.#menv.ANTHROPIC_API_KEY,
+			AI: this.#menv.AI,
+			AI_GATEWAY_NAME: this.#menv.AI_GATEWAY_NAME,
+			AI_TRIAGE_ROUTE: this.#menv.AI_TRIAGE_ROUTE,
+		};
+	}
+
+	// -------------------------------------------------------------------------
+	// Triage audit — what the model has cost, and rules worth adding.
+	// -------------------------------------------------------------------------
+	/** Per-model counts, tokens and cost of triage decisions over the last `days`. */
+	triageUsage(days = 30): {
+		days: number;
+		configured: boolean;
+		rows: Array<{
+			model: string;
+			decisions: number;
+			moved: number;
+			input_tokens: number;
+			output_tokens: number;
+			cost_usd: number;
+		}>;
+	} {
+		const since = Date.now() - Math.max(1, Math.min(365, days)) * DAY_MS;
+		const rows = this.exec(
+			`SELECT COALESCE(model, '?') AS model,
+			        COUNT(*) AS decisions,
+			        SUM(CASE WHEN action_taken IS NOT NULL AND action_taken != 'keep' THEN 1 ELSE 0 END) AS moved,
+			        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+			        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+			        COALESCE(SUM(cost_usd), 0) AS cost_usd
+			 FROM ai_review WHERE created_at >= ?
+			 GROUP BY model ORDER BY decisions DESC`,
+			since,
+		) as Array<{
+			model: string;
+			decisions: number;
+			moved: number;
+			input_tokens: number;
+			output_tokens: number;
+			cost_usd: number;
+		}>;
+		return { days, configured: triageConfigured(this.#triageEnv()), rows };
+	}
+
+	/**
+	 * Rules worth adding, learned from what the user files by hand: three or
+	 * more mails from one sender with one subject template that the user (not
+	 * triage) archived or trashed in the last 90 days, in threads they never
+	 * replied to, and that no rule covers yet. A sender whose mail all goes the
+	 * same way under varying subjects is suggested as a whole-sender rule.
+	 */
+	ruleSuggestions(): Array<{
+		matcher: { from_address: string; subject?: string };
+		from_name?: string;
+		count: number;
+		folder: string;
+		samples: string[];
+	}> {
+		const since = Date.now() - 90 * DAY_MS;
+		const rows = this.exec(
+			`SELECT lower(COALESCE(json_extract(m."from", '$.email'), json_extract(m.json, '$.from.email'))) AS email,
+			        COALESCE(json_extract(m."from", '$.name'), json_extract(m.json, '$.from.name')) AS name,
+			        m.subject AS subject, m.folder AS folder
+			 FROM message m
+			 LEFT JOIN ai_review r ON r.message_id = m.id
+			 WHERE m.is_outbound = 0 AND m.date >= ? AND m.folder IN ('archive', 'trash')
+			   AND (r.id IS NULL OR r.action_taken IS NULL OR r.action_taken = 'keep')
+			   AND NOT EXISTS (SELECT 1 FROM message o WHERE o.thread_id = m.thread_id AND o.is_outbound = 1)
+			 ORDER BY m.date DESC LIMIT 3000`,
+			since,
+		) as Array<{ email: string | null; name: string | null; subject: string | null; folder: string }>;
+
+		const rules = (
+			this.exec(
+				`SELECT COALESCE(matcher, json_extract(json, '$.matcher')) AS matcher, action FROM sender_rule LIMIT 500`,
+			) as Array<{ matcher?: string; action?: string }>
+		)
+			.map((r) => ({ matcher: safeParse(r.matcher ?? null), action: r.action }) as SenderRule)
+			.filter((r) => r.matcher && Object.keys(r.matcher).length);
+
+		interface Group {
+			email: string;
+			name?: string;
+			template: string;
+			subjects: string[];
+			folders: Record<string, number>;
+		}
+		const by_template = new Map<string, Group>();
+		const by_sender = new Map<string, Group>();
+		for (const r of rows) {
+			if (!r.email) continue;
+			const subject = r.subject ?? '';
+			const signals = { from_email: r.email, from_name: r.name ?? undefined, subject };
+			if (matchSenderRule(rules, signals) || matchSenderRule(BUILTIN_RULES, signals)) continue;
+			const template = subjectTemplate(subject);
+			for (const [map, key] of [
+				[by_template, `${r.email}\n${template}`],
+				[by_sender, r.email],
+			] as const) {
+				let g = map.get(key);
+				if (!g) {
+					g = { email: r.email, name: r.name ?? undefined, template, subjects: [], folders: {} };
+					map.set(key, g);
+				}
+				g.subjects.push(subject);
+				g.folders[r.folder] = (g.folders[r.folder] ?? 0) + 1;
+			}
+		}
+
+		const out: ReturnType<MailboxServer['ruleSuggestions']> = [];
+		const covered = new Set<string>();
+		// Whole-sender suggestions first: five or more, with several templates.
+		for (const g of by_sender.values()) {
+			const templates = new Set(g.subjects.map(subjectTemplate));
+			if (g.subjects.length < 5 || templates.size < 2) continue;
+			covered.add(g.email);
+			out.push(toSuggestion(g, undefined));
+		}
+		for (const g of by_template.values()) {
+			if (g.subjects.length < 3 || covered.has(g.email)) continue;
+			// A template that's all wildcard ("*") says nothing about the subject.
+			const subject = /[a-z]/.test(g.template) ? g.template : undefined;
+			out.push(toSuggestion(g, subject));
+		}
+		return out.sort((a, b) => b.count - a.count).slice(0, 15);
+
+		function toSuggestion(g: Group, subject: string | undefined) {
+			const folder = (g.folders.trash ?? 0) > (g.folders.archive ?? 0) ? 'trash' : 'archive';
+			return {
+				matcher: subject ? { from_address: g.email, subject } : { from_address: g.email },
+				from_name: g.name,
+				count: g.subjects.length,
+				folder,
+				samples: [...new Set(g.subjects)].slice(0, 3),
+			};
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -1455,11 +1594,7 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 	async #runJob(type: string, _payload: unknown): Promise<void> {
 		switch (type) {
 			case 'triage': {
-				const more = await runTriageJob(this as never, {
-					AI: this.#menv.AI,
-					AI_GATEWAY_NAME: this.#menv.AI_GATEWAY_NAME,
-					AI_TRIAGE_ROUTE: this.#menv.AI_TRIAGE_ROUTE,
-				});
+				const more = await runTriageJob(this as never, this.#triageEnv());
 				// Drain the queue: if a full batch ran there may be more.
 				if (more) await this.scheduleJob('triage', {}, 2000);
 				return;
@@ -1470,6 +1605,8 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 				return this.#sendPush(_payload as { title?: string; body?: string; thread_id?: string });
 			case 'digest':
 				return this.#sendDigest();
+			case 'expire':
+				return this.#expireFiledMail();
 			case 'unsnooze':
 				return this.#wakeSnoozedThreads();
 			case 'replay_r2':
@@ -1549,6 +1686,59 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 		await this.#menv.KV.delete(`pending-email:${raw_key}`).catch(() => {});
 	}
 
+	/** Schedule the daily retention sweep once (idempotent). */
+	async #ensureExpireScheduled(): Promise<void> {
+		this.#ensureJobTable();
+		const rows = this.exec(
+			`SELECT 1 FROM job_queue WHERE type = 'expire' AND status = 'pending' LIMIT 1`,
+		);
+		if (rows.length) return;
+		await this.scheduleJob('expire', {}, 10 * 60_000);
+	}
+
+	/**
+	 * Retention: threads that have sat in Notifications or Pitches longer than
+	 * the user's setting (default 30 / 90 days, by last message) move to trash,
+	 * through the normal action path so Gmail trashes them too (and Gmail empties
+	 * its trash 30 days later). Starred threads are kept. Reschedules itself daily.
+	 */
+	async #expireFiledMail(): Promise<void> {
+		let more = false;
+		try {
+			const settings = (await this.ensureSettings()) as unknown as Record<string, unknown>;
+			const limits: Array<[string, number]> = [
+				[
+					'notifications',
+					Number(settings.notifications_retention_days ?? DEFAULT_RETENTION_DAYS.notifications),
+				],
+				['pitches', Number(settings.pitches_retention_days ?? DEFAULT_RETENTION_DAYS.pitches)],
+			];
+			for (const [folder, days] of limits) {
+				if (!days || days <= 0) continue;
+				const cutoff = Date.now() - days * DAY_MS;
+				const ids = (
+					this.exec(
+						`SELECT id FROM thread
+						 WHERE folder = ? AND COALESCE(starred, 0) = 0 AND last_message_at < ?
+						 ORDER BY last_message_at ASC LIMIT ?`,
+						folder,
+						cutoff,
+						EXPIRE_BATCH,
+					) as Array<{ id: string }>
+				).map((r) => r.id);
+				if (!ids.length) continue;
+				await this.applyThreadAction({ thread_ids: ids, action: 'trash' }, 'retention');
+				console.log(`[MailboxServer] retention: trashed ${ids.length} ${folder} thread(s)`);
+				if (ids.length === EXPIRE_BATCH) more = true;
+			}
+		} finally {
+			// One pending sweep at a time (the row running now is deleted by the
+			// job loop after this returns). A full batch means there may be more.
+			this.exec(`DELETE FROM job_queue WHERE type = 'expire' AND status = 'pending'`);
+			await this.scheduleJob('expire', {}, more ? 60_000 : DAY_MS);
+		}
+	}
+
 	/** Schedule the recurring weekly digest once (idempotent). */
 	async #ensureDigestScheduled(): Promise<void> {
 		this.#ensureJobTable();
@@ -1569,13 +1759,13 @@ export class MailboxServer extends DatabaseServer<typeof tables> {
 			const since = Date.now() - WEEK_MS;
 			const filtered = this.exec(
 				`SELECT COUNT(*) AS n FROM message
-				 WHERE folder IN ('quarantine','spam','trash','archive') AND date >= ?`,
+				 WHERE folder IN ('quarantine','notifications','pitches','spam','trash','archive') AND date >= ?`,
 				since,
 			) as Array<{ n: number }>;
 			const topSenders = this.exec(
 				`SELECT COALESCE(json_extract("from", '$.email'), json_extract(json, '$.from.email')) AS email,
 				        COUNT(*) AS n FROM message
-				 WHERE folder IN ('quarantine','spam','trash') AND date >= ?
+				 WHERE folder IN ('quarantine','notifications','pitches','spam','trash') AND date >= ?
 				 GROUP BY email ORDER BY n DESC LIMIT 3`,
 				since,
 			) as Array<{ email: string | null; n: number }>;

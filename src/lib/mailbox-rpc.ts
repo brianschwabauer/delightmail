@@ -42,6 +42,28 @@ export interface ThreadAction {
  * is a Durable Object stub, so EVERY method resolves asynchronously — even the
  * ones DatabaseServer implements synchronously.
  */
+export interface TriageUsage {
+	days: number;
+	configured: boolean;
+	rows: Array<{
+		model: string;
+		decisions: number;
+		moved: number;
+		input_tokens: number;
+		output_tokens: number;
+		cost_usd: number;
+	}>;
+}
+
+export interface RuleSuggestion {
+	matcher: { from_address: string; subject?: string };
+	from_name?: string;
+	count: number;
+	/** Where the user has been putting this mail by hand. */
+	folder: 'archive' | 'trash';
+	samples: string[];
+}
+
 export interface MailboxRpc {
 	// --- generic DatabaseServer surface (subset used by the app) ---
 	get<K extends keyof Tables & string>(
@@ -89,6 +111,10 @@ export interface MailboxRpc {
 	listThreads(folder: string, limit?: number): Promise<Thread[]>;
 	/** Run the triage test harness against N recent messages without acting. */
 	triageTest(prompt: string, count: number): Promise<unknown[]>;
+	/** Per-model triage decisions, tokens and cost over the last `days`. */
+	triageUsage(days?: number): Promise<TriageUsage>;
+	/** Rules learned from what the user archives/trashes by hand. */
+	ruleSuggestions(): Promise<RuleSuggestion[]>;
 	/** Ensure the singleton settings row exists and return it. */
 	ensureSettings(): Promise<unknown>;
 }
