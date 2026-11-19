@@ -15,14 +15,14 @@ importers:
         specifier: ^1.4.2
         version: 1.4.2(@sveltejs/kit@3.1.1(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.3)(vite@8.3.7(esbuild@0.28.2)))(svelte@5.57.3)(typescript@6.0.3)(vite@8.3.7(esbuild@0.28.2)))(svelte@5.57.3)
       '@delightstack/components':
-        specifier: ^2.1.2
-        version: 2.1.2(@delightstack/styles@1.3.1)(svelte@5.57.3)
+        specifier: ^2.3.1
+        version: 2.3.1(@delightstack/styles@1.3.1)(svelte@5.57.3)
       '@delightstack/database':
         specifier: ^3.0.2
         version: 3.0.2(svelte@5.57.3)
       '@delightstack/editor':
         specifier: ^2.0.1
-        version: 2.0.1(@delightstack/components@2.1.2(@delightstack/styles@1.3.1)(svelte@5.57.3))(svelte@5.57.3)
+        version: 2.0.1(@delightstack/components@2.3.1(@delightstack/styles@1.3.1)(svelte@5.57.3))(svelte@5.57.3)
       '@delightstack/images':
         specifier: ^1.1.15
         version: 1.1.15(svelte@5.57.3)
@@ -33,8 +33,8 @@ importers:
         specifier: ^1.3.1
         version: 1.3.1
       '@delightstack/utilities':
-        specifier: ^1.3.0
-        version: 1.3.0(svelte@5.57.3)
+        specifier: ^1.3.3
+        version: 1.3.3(svelte@5.57.3)
       '@delightstack/websocket':
         specifier: ^2.2.3
         version: 2.2.3(svelte@5.57.3)
@@ -182,8 +182,8 @@ packages:
       svelte:
         optional: true
 
-  '@delightstack/components@2.1.2':
-    resolution: {integrity: sha512-sf6ZW+EApNXJrGslyew6qLFZUEq3raDP5VIOqcR/Nie/sUQLeuvbcXBtDM+zirR5JGk8BwsNFFVhv4XJlJxHWA==}
+  '@delightstack/components@2.3.1':
+    resolution: {integrity: sha512-k27Wn75a9od9+lyNgZHhhup0pUSgfcqXc7WdBqwji1tMP1IIbBIiDEaP/hPOaQhDtNITHuGA5+DziSFolAuTlg==}
     hasBin: true
     peerDependencies:
       '@delightstack/styles': ^1.3.1
@@ -230,6 +230,11 @@ packages:
 
   '@delightstack/utilities@1.3.0':
     resolution: {integrity: sha512-7Xbh9IIWCGomEvPzTb3MLZqEcVDWgKWmn0Me2orEQrI2A12wyHoeBw1TuOyhkJrMskNkYVY038Hx+aUwaOWkrQ==}
+    peerDependencies:
+      svelte: ^5.36.0
+
+  '@delightstack/utilities@1.3.3':
+    resolution: {integrity: sha512-kEgnHqcOZjv4DpqptvAFuZNOWC9PZ/h/f5TmL7VFcNedFsDofgyfwz1o5Uc4KzG8HHgluOgm8OMkqiUgnlrACQ==}
     peerDependencies:
       svelte: ^5.36.0
 
@@ -1634,11 +1639,11 @@ snapshots:
       '@sveltejs/kit': 3.1.1(@sveltejs/vite-plugin-svelte@7.3.1(svelte@5.57.3)(vite@8.3.7(esbuild@0.28.2)))(svelte@5.57.3)(typescript@6.0.3)(vite@8.3.7(esbuild@0.28.2))
       svelte: 5.57.3
 
-  '@delightstack/components@2.1.2(@delightstack/styles@1.3.1)(svelte@5.57.3)':
+  '@delightstack/components@2.3.1(@delightstack/styles@1.3.1)(svelte@5.57.3)':
     dependencies:
       '@delightstack/diff': 1.1.1
       '@delightstack/styles': 1.3.1
-      '@delightstack/utilities': 1.3.0(svelte@5.57.3)
+      '@delightstack/utilities': 1.3.3(svelte@5.57.3)
       svelte: 5.57.3
       thumbhash: 0.1.1
 
@@ -1652,9 +1657,9 @@ snapshots:
 
   '@delightstack/diff@1.1.1': {}
 
-  '@delightstack/editor@2.0.1(@delightstack/components@2.1.2(@delightstack/styles@1.3.1)(svelte@5.57.3))(svelte@5.57.3)':
+  '@delightstack/editor@2.0.1(@delightstack/components@2.3.1(@delightstack/styles@1.3.1)(svelte@5.57.3))(svelte@5.57.3)':
     dependencies:
-      '@delightstack/components': 2.1.2(@delightstack/styles@1.3.1)(svelte@5.57.3)
+      '@delightstack/components': 2.3.1(@delightstack/styles@1.3.1)(svelte@5.57.3)
       '@delightstack/utilities': 1.3.0(svelte@5.57.3)
       prosemirror-commands: 1.7.2
       prosemirror-gapcursor: 1.4.1
@@ -1691,6 +1696,15 @@ snapshots:
       selecto: 1.26.3
       svelte: 5.57.3
       zod: 4.4.3
+
+  '@delightstack/utilities@1.3.3(svelte@5.57.3)':
+    dependencies:
+      '@shopify/draggable': 1.2.1
+      dequal: 2.0.3
+      focus-trap: 7.8.0
+      selecto: 1.26.3
+      svelte: 5.57.3
+      zod: 4.6.7
 
   '@delightstack/websocket@2.2.3(svelte@5.57.3)':
     dependencies:
